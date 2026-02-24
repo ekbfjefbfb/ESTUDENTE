@@ -1,0 +1,18 @@
+# Archivo de configuración para Render.com
+services:
+  - type: web
+    name: mi-backend-super-api
+    runtime: python
+    plan: starter
+    buildCommand: "./build.sh"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.0
+      - key: ENVIRONMENT
+        value: production
+      - key: PORT
+        fromService: 
+          type: web
+          name: mi-backend-super-api
+          property: port

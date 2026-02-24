@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package notes;
+
+import "google/protobuf/timestamp.proto";
+
+service NotesService {
+  rpc CreateNoteFromAudio(CreateNoteFromAudioRequest) returns (CreateNoteResponse);
+  rpc CreateNoteFromText(CreateNoteFromTextRequest) returns (CreateNoteResponse);
+  rpc GetNote(GetNoteRequest) returns (GetNoteResponse);
+  rpc ListNotes(ListNotesRequest) returns (ListNotesResponse);
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+  rpc UpdateTask(UpdateTaskRequest) returns (Task);
+  rpc SummarizeRange(SummarizeRangeRequest) returns (SummarizeRangeResponse);
+}
+
+message Task {
+  string id = 1;
+  string note_id = 2;
+  string text = 3;
+  google.protobuf.Timestamp due_date = 4;
+  bool has_due_date = 5;
+  bool done = 6;
+  int32 priority = 7;
+}
+
+message Note {
+  string id = 1;
+  string title = 2;
+  string transcript = 3;
+  string summary = 4;
+  repeated string key_points = 5;
+  repeated Task tasks = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+message CreateNoteFromAudioRequest {
+  bytes audio = 1;
+  string audio_mime = 2;
+  string language = 3;
+  string title = 4;
+}
+
+message CreateNoteFromTextRequest {
+  string text = 1;
+  string language = 2;
+  string title = 3;
+}
+
+message CreateNoteResponse {
+  Note note = 1;
+}
+
+message GetNoteRequest {
+  string id = 1;
+}
+
+message GetNoteResponse {
+  Note note = 1;
+}
+
+message ListNotesRequest {
+  google.protobuf.Timestamp from_ts = 1;
+  bool has_from = 2;
+  google.protobuf.Timestamp to_ts = 3;
+  bool has_to = 4;
+  int32 limit = 5;
+  int32 offset = 6;
+}
+
+message ListNotesResponse {
+  repeated Note notes = 1;
+}
+
+message ListTasksRequest {
+  bool only_pending = 1;
+  bool only_with_due_date = 2;
+  google.protobuf.Timestamp due_before_ts = 3;
+  bool has_due_before = 4;
+  int32 limit = 5;
+  int32 offset = 6;
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+}
+
+message UpdateTaskRequest {
+  string id = 1;
+  bool done = 2;
+  bool has_done = 3;
+  google.protobuf.Timestamp due_date = 4;
+  bool has_due_date = 5;
+  int32 priority = 6;
+  bool has_priority = 7;
+}
+
+message SummarizeRangeRequest {
+  google.protobuf.Timestamp from_ts = 1;
+  bool has_from = 2;
+  google.protobuf.Timestamp to_ts = 3;
+  bool has_to = 4;
+}
+
+message SummarizeRangeResponse {
+  string summary = 1;
+  repeated string key_points = 2;
+  repeated Task pending_tasks = 3;
+}

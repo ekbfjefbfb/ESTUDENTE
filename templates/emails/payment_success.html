@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pago Confirmado</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+        .emoji {
+            font-size: 64px;
+            margin: 20px 0;
+        }
+        .content {
+            padding: 40px 30px;
+            color: #333;
+        }
+        .content h2 {
+            color: #10b981;
+            font-size: 24px;
+            margin-top: 0;
+        }
+        .content p {
+            line-height: 1.6;
+            font-size: 16px;
+        }
+        .payment-details {
+            background-color: #f0fdf4;
+            border: 2px solid #10b981;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .payment-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #d1fae5;
+        }
+        .payment-row:last-child {
+            border-bottom: none;
+            font-weight: bold;
+            font-size: 18px;
+            color: #10b981;
+        }
+        .button {
+            display: inline-block;
+            padding: 15px 40px;
+            margin: 20px 0;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .footer {
+            background-color: #f4f4f4;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="emoji">✅</div>
+            <h1>¡Pago Confirmado!</h1>
+        </div>
+        
+        <div class="content">
+            <h2>Hola {{ user_name }},</h2>
+            
+            <p>Tu pago ha sido procesado exitosamente. ¡Bienvenido al <strong>Plan {{ plan_name }}</strong>!</p>
+            
+            <div class="payment-details">
+                <div class="payment-row">
+                    <span>Plan:</span>
+                    <strong>{{ plan_name }}</strong>
+                </div>
+                <div class="payment-row">
+                    <span>Fecha:</span>
+                    <span>{{ date }}</span>
+                </div>
+                <div class="payment-row">
+                    <span>Total:</span>
+                    <span>${{ amount }} {{ currency }}</span>
+                </div>
+            </div>
+            
+            <p>Tu suscripción está ahora activa y puedes disfrutar de todas las funciones premium.</p>
+            
+            <p style="text-align: center;">
+                <a href="{{ dashboard_url }}" class="button">Ir al Dashboard</a>
+            </p>
+            
+            <p><strong>¿Qué incluye tu plan?</strong></p>
+            <ul>
+                <li>✅ Acceso completo a todos los servicios de IA</li>
+                <li>✅ Límites extendidos de uso mensual</li>
+                <li>✅ Soporte prioritario</li>
+                <li>✅ Nuevas funciones en primicia</li>
+            </ul>
+            
+            <p>Si tienes alguna pregunta sobre tu suscripción, no dudes en contactarnos.</p>
+            
+            <p>
+                Saludos,<br>
+                <strong>El equipo de Mi Backend Super IA</strong>
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>&copy; {{ year }} Mi Backend Super IA. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>

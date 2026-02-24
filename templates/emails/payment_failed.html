@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error en el Pago</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+        .emoji {
+            font-size: 64px;
+            margin: 20px 0;
+        }
+        .content {
+            padding: 40px 30px;
+            color: #333;
+        }
+        .error-box {
+            background-color: #fef2f2;
+            border: 2px solid #ef4444;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .button {
+            display: inline-block;
+            padding: 15px 40px;
+            margin: 20px 0;
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .footer {
+            background-color: #f4f4f4;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="emoji">❌</div>
+            <h1>Error en el Pago</h1>
+        </div>
+        
+        <div class="content">
+            <h2>Hola {{ user_name }},</h2>
+            
+            <p>Lamentablemente, no pudimos procesar tu pago para el <strong>Plan {{ plan_name }}</strong>.</p>
+            
+            <div class="error-box">
+                <p><strong>Razón del error:</strong></p>
+                <p>{{ error_message }}</p>
+            </div>
+            
+            <p><strong>¿Qué puedes hacer?</strong></p>
+            <ul>
+                <li>Verifica que tu tarjeta tenga fondos suficientes</li>
+                <li>Asegúrate de que los datos sean correctos</li>
+                <li>Intenta con otro método de pago</li>
+                <li>Contacta a tu banco si el problema persiste</li>
+            </ul>
+            
+            <p style="text-align: center;">
+                <a href="{{ retry_url }}" class="button">Intentar de Nuevo</a>
+            </p>
+            
+            <p>Si necesitas ayuda, puedes contactarnos en <strong>{{ support_email }}</strong></p>
+            
+            <p>
+                Saludos,<br>
+                <strong>El equipo de Mi Backend Super IA</strong>
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>&copy; {{ year }} Mi Backend Super IA. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>

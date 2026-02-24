@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Renovación de Suscripción</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        .emoji {
+            font-size: 64px;
+            margin: 20px 0;
+        }
+        .content {
+            padding: 40px 30px;
+            color: #333;
+        }
+        .info-box {
+            background-color: #eff6ff;
+            border: 2px solid #3b82f6;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .button {
+            display: inline-block;
+            padding: 15px 40px;
+            margin: 20px 0;
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .footer {
+            background-color: #f4f4f4;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="emoji">🔄</div>
+            <h1>Renovación de Suscripción</h1>
+        </div>
+        
+        <div class="content">
+            <h2>Hola {{ user_name }},</h2>
+            
+            <p>Tu suscripción al <strong>Plan {{ plan_name }}</strong> se renovará próximamente.</p>
+            
+            <div class="info-box">
+                <p><strong>📅 Fecha de renovación:</strong> {{ renewal_date }}</p>
+                <p><strong>💰 Monto:</strong> ${{ amount }} USD</p>
+            </div>
+            
+            <p>El cargo se realizará automáticamente con el método de pago registrado.</p>
+            
+            <p>Si deseas cambiar tu plan o método de pago:</p>
+            
+            <p style="text-align: center;">
+                <a href="{{ manage_url }}" class="button">Gestionar Suscripción</a>
+            </p>
+            
+            <p>Gracias por confiar en nosotros.</p>
+            
+            <p>
+                Saludos,<br>
+                <strong>El equipo de Mi Backend Super IA</strong>
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>&copy; {{ year }} Mi Backend Super IA. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>

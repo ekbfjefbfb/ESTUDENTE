@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invitación</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        .emoji {
+            font-size: 64px;
+            margin: 20px 0;
+        }
+        .content {
+            padding: 40px 30px;
+            color: #333;
+        }
+        .bonus-box {
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            border: 2px solid #f59e0b;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .bonus-box h3 {
+            color: #d97706;
+            margin-top: 0;
+        }
+        .referral-code {
+            background-color: white;
+            border: 2px dashed #f59e0b;
+            border-radius: 5px;
+            padding: 15px;
+            font-size: 24px;
+            font-weight: bold;
+            color: #d97706;
+            letter-spacing: 2px;
+            margin: 15px 0;
+        }
+        .button {
+            display: inline-block;
+            padding: 15px 40px;
+            margin: 20px 0;
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .footer {
+            background-color: #f4f4f4;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="emoji">🎁</div>
+            <h1>¡Tienes una Invitación!</h1>
+        </div>
+        
+        <div class="content">
+            <h2>Hola,</h2>
+            
+            <p><strong>{{ inviter_name }}</strong> te ha invitado a unirte a <strong>Mi Backend Super IA</strong>, la plataforma de inteligencia artificial más completa.</p>
+            
+            <div class="bonus-box">
+                <h3>🎉 Bonus Especial</h3>
+                <p>Al registrarte con esta invitación obtendrás:</p>
+                <p style="font-size: 18px; font-weight: bold; color: #d97706;">{{ bonus_description }}</p>
+                
+                <p style="margin-top: 20px;">Tu código de referido:</p>
+                <div class="referral-code">{{ referral_code }}</div>
+            </div>
+            
+            <p><strong>¿Qué puedes hacer con CentryAI?</strong></p>
+            <ul>
+                <li>🤖 Chat con IA avanzada </li>
+                <li>👁️ Análisis de imágenes y OCR</li>
+                <li>🎙️ Transcripción y síntesis de voz</li>
+                <li>🔍 Búsquedas en tiempo real</li>
+                <li>🖼️ Generación de imágenes</li>
+                <li>📄 Creación de documentos (Word, PDF, Excel)</li>
+                <li>☁️ Integración con Google Workspace</li>
+                <li>🤖 50 agentes personales especializados</li>
+            </ul>
+            
+            <p style="text-align: center;">
+                <a href="{{ signup_url }}" class="button">Registrarme Ahora</a>
+            </p>
+            
+            <p style="text-align: center; color: #666; font-size: 14px;">
+                Este código expira en 30 días
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>&copy; {{ year }} Mi Backend Super IA. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>

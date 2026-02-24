@@ -1,0 +1,203 @@
+version: '3.8'
+
+services:
+  # =====================================================
+  # SERVIDOR DE IA - Ollama + DeepSeek-VL 33B
+  # =====================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai-server-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - ai-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # =====================================================
+  # SEARXNG - Meta-buscador para LiveSearch
+  # =====================================================
+  searxng:
+    image: searxng/searxng:latest
+    container_name: livesearch-searxng
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - searxng_data:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080
+      - SEARXNG_SECRET=change-me-in-production
+    networks:
+      - ai-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # =====================================================
+  # BACKEND - FastAPI Application
+  # =====================================================
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: backend-super-ia
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Base de datos
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/backend_super
+      - DATABASE_URL_SYNC=postgresql://postgres:postgres@db:5432/backend_super
+      
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      
+      # AI Local (DeepSeek-VL 33B)
+      - AI_SERVER_URL=http://ollama:11434
+      - AI_MODEL=deepseek-vl:33b
+      - SEARXNG_URL=http://searxng:8080
+      - LIVESEARCH_ENABLED=true
+      
+      # Seguridad
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-jwt-secret}
+      
+      # Configuración
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - DEBUG=false
+      - CORS_ORIGINS=*
+      
+      # Rate Limiting
+      - RATE_LIMIT_ENABLED=true
+      - RATE_LIMIT_REQUESTS_PER_MINUTE=60
+      
+      # Métricas
+      - METRICS_ENABLED=true
+      
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      searxng:
+        condition: service_healthy
+    networks:
+      - ai-network
+      - db-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # =====================================================
+  # POSTGRESQL - Base de Datos
+  # =====================================================
+  db:
+    image: postgres:15-alpine
+    container_name: backend-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=backend_super
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - db-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =====================================================
+  # REDIS - Cache y Sessions
+  # =====================================================
+  redis:
+    image: redis:7-alpine
+    container_name: backend-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai-network
+      - db-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =====================================================
+  # CELERY WORKER - Tareas en Background
+  # =====================================================
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: backend-celery
+    restart: unless-stopped
+    command: celery -A celery_config worker --loglevel=info --concurrency=8
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/backend_super
+      - REDIS_URL=redis://redis:6379/0
+      - AI_SERVER_URL=http://ollama:11434
+      - SEARXNG_URL=http://searxng:8080
+    depends_on:
+      - db
+      - redis
+      - ollama
+    networks:
+      - ai-network
+      - db-network
+
+# =====================================================
+# NETWORKS
+# =====================================================
+networks:
+  ai-network:
+    driver: bridge
+  db-network:
+    driver: bridge
+
+# =====================================================
+# VOLUMES
+# =====================================================
+volumes:
+  ollama_data:
+    driver: local
+  searxng_data:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

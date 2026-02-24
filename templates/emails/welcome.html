@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bienvenido</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+        .content {
+            padding: 40px 30px;
+            color: #333;
+        }
+        .content h2 {
+            color: #667eea;
+            font-size: 24px;
+            margin-top: 0;
+        }
+        .content p {
+            line-height: 1.6;
+            font-size: 16px;
+        }
+        .button {
+            display: inline-block;
+            padding: 15px 40px;
+            margin: 20px 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+        .button:hover {
+            transform: translateY(-2px);
+        }
+        .features {
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .feature-item {
+            padding: 10px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .feature-item:last-child {
+            border-bottom: none;
+        }
+        .feature-item strong {
+            color: #667eea;
+        }
+        .footer {
+            background-color: #f4f4f4;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+        .emoji {
+            font-size: 48px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="emoji">🎉</div>
+            <h1>¡Bienvenido a {{ app_name }}!</h1>
+        </div>
+        
+        <div class="content">
+            <h2>Hola {{ user_name }},</h2>
+            
+            <p>¡Nos emociona tenerte con nosotros! Has dado el primer paso hacia una experiencia increíble con inteligencia artificial.</p>
+            
+            <p><strong>{{ app_name }}</strong> te ofrece acceso a las mejores capacidades de IA del mercado:</p>
+            
+            <div class="features">
+                <div class="feature-item">
+                    <strong>🤖 Chat con IA:</strong> Llama 3.2 90B Vision - uno de los modelos más avanzados
+                </div>
+                <div class="feature-item">
+                    <strong>👁️ Visión por Computadora:</strong> Análisis de imágenes, OCR, detección de objetos
+                </div>
+                <div class="feature-item">
+                    <strong>🎙️ Voz:</strong> Transcripción y síntesis de voz con modelos locales
+                </div>
+                <div class="feature-item">
+                    <strong>🔍 Búsqueda en tiempo real:</strong> Información actualizada de internet
+                </div>
+                <div class="feature-item">
+                    <strong>🖼️ Generación de imágenes:</strong> Crea imágenes con Stability AI
+                </div>
+                <div class="feature-item">
+                    <strong>📄 Documentos:</strong> Genera Word, PDF, Excel automáticamente
+                </div>
+                <div class="feature-item">
+                    <strong>☁️ Google Workspace:</strong> Integración con Drive, Docs, Gmail
+                </div>
+                <div class="feature-item">
+                    <strong>🤖 50 Agentes personales:</strong> Asistentes especializados para cada tarea
+                </div>
+            </div>
+            
+            <p style="text-align: center;">
+                <a href="{{ login_url }}" class="button">Comenzar Ahora</a>
+            </p>
+            
+            <p>Si tienes alguna pregunta, no dudes en contactarnos. ¡Estamos aquí para ayudarte!</p>
+            
+            <p>
+                Saludos,<br>
+                <strong>El equipo de {{ app_name }}</strong>
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>&copy; {{ year }} {{ app_name }}. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>
