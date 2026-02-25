@@ -81,12 +81,25 @@ async def lifespan(app: FastAPI):
     if ENVIRONMENT == "production":
         from utils.config_validator import validate_production_config
         validation = validate_production_config()
+
+        enforce_validation = os.getenv("ENFORCE_PROD_CONFIG_VALIDATION", "false").lower() in (
+            "true",
+            "1",
+            "t",
+            "yes",
+        )
         
         if not validation["valid"]:
             logger.error("❌ Production configuration validation FAILED")
             for error in validation["errors"]:
                 logger.error(error)
-            raise RuntimeError("Invalid production configuration. Fix errors and restart.")
+
+            if enforce_validation:
+                raise RuntimeError("Invalid production configuration. Fix errors and restart.")
+            else:
+                logger.warning(
+                    "⚠️ Continuing startup with invalid production configuration (ENFORCE_PROD_CONFIG_VALIDATION=false)"
+                )
         
         if validation["warnings"]:
             for warning in validation["warnings"]:
