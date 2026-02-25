@@ -1,3 +1,4 @@
+
 import os
 import logging
 import re
@@ -9,6 +10,7 @@ from jose import jwt, JWTError
 
 from database.db_enterprise import get_primary_session as get_async_db
 from services.auth_service import oauth_login_or_register, refresh_access_token_service
+from utils.resilience import CircuitBreaker
 
 # ---------------- Logger Config ----------------
 router = APIRouter()
@@ -25,7 +27,7 @@ logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
 # ---------------- Configuración General ----------------
 RATE_LIMIT_REQUESTS = 5
 RATE_LIMIT_PERIOD = 10  # segundos
-JWT_SECRET = os.getenv("JWT_SECRET", "default_secret")
+JWT_SECRET = os.getenv("JWT_SECRET_KEY", os.getenv("JWT_SECRET", "default_secret"))
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
 # ---------------- Circuit Breakers ----------------
@@ -62,7 +64,7 @@ def sanitize_input(value: str) -> str:
         raise HTTPException(status_code=400, detail="Entrada inválida detectada")
     return value
 
-@router.post("/auth/oauth")
+@router.post("/oauth")
 async def oauth_login(
     data: OAuthSchema,
     request: Request,
@@ -82,7 +84,7 @@ async def oauth_login(
         raise HTTPException(status_code=400, detail="Error al procesar login OAuth")
 
 
-@router.post("/auth/refresh")
+@router.post("/refresh")
 async def refresh_token_route(
     data: RefreshSchema,
     request: Request,

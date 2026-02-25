@@ -45,6 +45,7 @@ from routers import (
     smart_search_router,
     apa7_pdf_router,
     class_notes_router,
+    profile_router,
 )
 
 # Middlewares
@@ -364,6 +365,9 @@ app.include_router(apa7_pdf_router.router, tags=["Documents"])
 
 # Class notes
 app.include_router(class_notes_router.router, tags=["Class Notes"])
+
+# Profile
+app.include_router(profile_router.router, tags=["Profile"])
 
 # =============================================
 # STARTUP MESSAGE

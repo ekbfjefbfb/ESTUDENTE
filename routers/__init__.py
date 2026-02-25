@@ -20,6 +20,9 @@ from . import (
 
     # Class notes
     class_notes_router,
+
+    # Profile
+    profile_router,
     
     # Voice
     
@@ -41,6 +44,9 @@ __all__ = [
 
     # Class notes
     "class_notes_router",
+
+    # Profile
+    "profile_router",
 ]
 
 __version__ = "1.0.1"
