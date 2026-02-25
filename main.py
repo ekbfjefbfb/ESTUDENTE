@@ -43,6 +43,8 @@ from routers import (
     auth_routes,
     unified_chat_router,  # ✅ ACTIVADO v4.0 - Chat unificado con 17 capacidades
     smart_search_router,
+    apa7_pdf_router,
+    class_notes_router,
 )
 
 # Middlewares
@@ -356,6 +358,12 @@ app.include_router(unified_chat_router.router, prefix="/api", tags=["💬 Chat I
 
 # Búsqueda
 app.include_router(smart_search_router.router, tags=["Smart Search"])
+
+# Documents
+app.include_router(apa7_pdf_router.router, tags=["Documents"])
+
+# Class notes
+app.include_router(class_notes_router.router, tags=["Class Notes"])
 
 # =============================================
 # STARTUP MESSAGE

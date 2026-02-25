@@ -14,6 +14,12 @@ from . import (
     
     # Búsqueda
     smart_search_router,
+
+    # Documents
+    apa7_pdf_router,
+
+    # Class notes
+    class_notes_router,
     
     # Voice
     
@@ -29,6 +35,12 @@ __all__ = [
     
     # Búsqueda
     "smart_search_router",
+
+    # Documents
+    "apa7_pdf_router",
+
+    # Class notes
+    "class_notes_router",
 ]
 
 __version__ = "1.0.1"

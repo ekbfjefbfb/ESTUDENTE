@@ -19,6 +19,9 @@ aiosqlite==0.20.0
 # HTTP client
 httpx==0.27.2
 
+# PDF
+reportlab==4.2.5
+
 # Web search
 aiolimiter==1.1.0
 
