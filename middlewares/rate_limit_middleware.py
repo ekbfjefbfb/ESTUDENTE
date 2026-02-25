@@ -2,7 +2,7 @@
 import os
 import logging
 import json
-import jwt
+from jose import jwt
 import aioredis
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -29,7 +29,7 @@ if not logger.hasHandlers():
 
 # ---------------- Configuración ----------------
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-JWT_SECRET = os.getenv("JWT_SECRET", "default-jwt-secret-change-in-production")
+JWT_SECRET = os.getenv("JWT_SECRET_KEY", os.getenv("JWT_SECRET", "default-jwt-secret-change-in-production"))
 if not JWT_SECRET or JWT_SECRET == "default-jwt-secret-change-in-production":
     logger.warning("JWT_SECRET no configurado o usando valor por defecto. Configure JWT_SECRET en producción.")
 JWT_ALGORITHM = "HS256"

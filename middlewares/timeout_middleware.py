@@ -3,7 +3,7 @@ import os
 import asyncio
 from fastapi import Request, WebSocket, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
-import jwt
+from jose import jwt
 from sqlalchemy.future import select
 from database.db_enterprise import get_primary_session as get_async_db
 from models.models import User
@@ -39,7 +39,11 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
             return None
         token = auth_header.split(" ")[1]
         try:
-            payload = jwt.decode(token, os.getenv("JWT_SECRET"), algorithms=["HS256"])
+            payload = jwt.decode(
+                token,
+                os.getenv("JWT_SECRET_KEY", os.getenv("JWT_SECRET")),
+                algorithms=["HS256"],
+            )
             return int(payload.get("user_id"))
         except Exception:
             return None

@@ -1,11 +1,12 @@
 # utils/auth_ws.py
-import jwt
 import logging
 from fastapi import WebSocket, WebSocketDisconnect, status
 from starlette.websockets import WebSocketState
 from typing import Optional, Dict
 
-from config import SECRET_KEY, ALGORITHM
+from jose import jwt
+
+from config import JWT_ALGORITHM, JWT_SECRET_KEY
 from services.redis_service import get_redis  # Servicio centralizado de Redis
 
 # ---------------- Logger JSON ----------------
@@ -42,7 +43,7 @@ async def authenticate_websocket(websocket: WebSocket) -> Dict:
             raise WebSocketDisconnect("Token requerido para WebSocket")
 
         # Decodificar JWT
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("sub")
         if not user_id:
             raise ValueError("Token sin 'sub'")
