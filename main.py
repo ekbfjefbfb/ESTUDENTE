@@ -4,6 +4,7 @@
 # Optimizado para ultra alta carga, performance y producción real
 # Versión: 4.0 - Octubre 2025
 
+import os
 import logging
 import asyncio
 from contextlib import asynccontextmanager
