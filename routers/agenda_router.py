@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+import anyio
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -100,6 +102,14 @@ class CreateAgendaItemRequest(BaseModel):
 
 class FinalizeResponse(BaseModel):
     status: str
+
+
+class AppendAudioResponse(BaseModel):
+    ok: bool = True
+    text: str
+    relevance: Dict[str, Any]
+    state: Dict[str, Any] = Field(default_factory=dict)
+    items: List[AgendaItemDto] = Field(default_factory=list)
 
 
 # In-memory throttling to keep it fast/cheap
@@ -223,6 +233,221 @@ async def append_chunk(
     await db.commit()
 
     return {"ok": True}
+
+
+@router.post("/sessions/{session_id}/audio", response_model=AppendAudioResponse)
+async def append_audio(
+    session_id: str,
+    file: UploadFile,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_primary_session),
+):
+    api_key = (os.getenv("GROQ_API_KEY") or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=500, detail="missing_groq_api_key")
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty_audio_file")
+
+    filename = file.filename or "audio"
+
+    def _do_transcribe():
+        from groq import Groq
+
+        client = Groq(api_key=api_key)
+        transcription = client.audio.transcriptions.create(
+            file=(filename, raw),
+            model="whisper-large-v3-turbo",
+            temperature=0,
+            response_format="verbose_json",
+        )
+        text = getattr(transcription, "text", None) or ""
+        return str(text)
+
+    try:
+        text = await anyio.to_thread.run_sync(_do_transcribe)
+    except Exception:
+        raise HTTPException(status_code=502, detail="groq_transcription_failed")
+
+    text = (text or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="empty_transcription")
+
+    user_id = str(user.id) if hasattr(user, "id") else str(user.get("user_id"))
+    session = await _get_session_or_404(db, user_id, session_id)
+
+    relevance = await _classify_chunk_relevance(text)
+    rel_label = str(relevance.get("relevance_label") or "SECUNDARIO")
+    rel_signals = relevance.get("relevance_signals") or []
+
+    chunk = AgendaChunk(
+        session_id=session.id,
+        user_id=user_id,
+        text=text,
+        t_start_ms=None,
+        t_end_ms=None,
+        relevance_label=rel_label,
+        relevance_reason=relevance.get("relevance_reason"),
+        relevance_signals=rel_signals,
+        relevance_score=relevance.get("relevance_score"),
+    )
+    db.add(chunk)
+
+    transcript = (session.live_transcript or "") + ("\n" if session.live_transcript else "") + text
+    await db.execute(
+        update(AgendaSession)
+        .where(and_(AgendaSession.id == session_id, AgendaSession.user_id == user_id))
+        .values(live_transcript=transcript)
+    )
+    await db.commit()
+
+    # Run same extraction pipeline as WS (filtered transcript)
+    async with get_db_session() as db2:
+        session2 = await _get_session_or_404(db2, user_id, session_id)
+        state = session2.extracted_state or {}
+
+        rows = await db2.execute(
+            select(AgendaChunk)
+            .where(
+                and_(
+                    AgendaChunk.session_id == session_id,
+                    AgendaChunk.user_id == user_id,
+                    AgendaChunk.relevance_label.in_(["IMPORTANTE", "SECUNDARIO"]),
+                )
+            )
+            .order_by(AgendaChunk.created_at.asc())
+        )
+        chunks = rows.scalars().all()
+        filtered_transcript = "\n".join([c.text for c in chunks if (c.text or "").strip()]).strip()
+
+        important_signals: List[str] = []
+        for c in chunks:
+            if (c.relevance_label or "").upper() != "IMPORTANTE":
+                continue
+            if isinstance(getattr(c, "relevance_signals", None), list):
+                important_signals.extend([str(s).strip() for s in (c.relevance_signals or []) if str(s).strip()])
+        seen = set()
+        important_signals = [s for s in important_signals if not (s.lower() in seen or seen.add(s.lower()))]
+
+        extracted = await _extract_incremental_agenda(filtered_transcript, state)
+
+        if extracted:
+            extracted_meta = dict(extracted)
+            extracted_meta["relevance"] = {
+                "important_signals": important_signals[:50],
+            }
+            await db2.execute(
+                update(AgendaSession)
+                .where(and_(AgendaSession.id == session_id, AgendaSession.user_id == user_id))
+                .values(extracted_state=extracted_meta)
+            )
+
+            await db2.execute(
+                delete(AgendaItem).where(
+                    and_(
+                        AgendaItem.session_id == session_id,
+                        AgendaItem.user_id == user_id,
+                        AgendaItem.source == "ai",
+                        AgendaItem.item_type.in_([AgendaItemType.SUMMARY, AgendaItemType.KEY_POINT, AgendaItemType.TASK]),
+                    )
+                )
+            )
+
+            order = 0
+            notes_text = (extracted.get("lecture_notes") or "").strip()
+            summary = (extracted.get("summary") or "").strip()
+            main_text = notes_text or summary
+            if main_text:
+                db2.add(
+                    AgendaItem(
+                        session_id=session_id,
+                        user_id=user_id,
+                        item_type=AgendaItemType.SUMMARY,
+                        status=AgendaItemStatus.SUGGESTED,
+                        title=None,
+                        content=main_text,
+                        order_index=order,
+                        important=False,
+                        source="ai",
+                        confidence=None,
+                        item_metadata={},
+                    )
+                )
+                order += 1
+
+            for kp in extracted.get("key_points") or []:
+                kp_text = str(kp).strip()
+                if not kp_text:
+                    continue
+                db2.add(
+                    AgendaItem(
+                        session_id=session_id,
+                        user_id=user_id,
+                        item_type=AgendaItemType.KEY_POINT,
+                        status=AgendaItemStatus.SUGGESTED,
+                        title=None,
+                        content=kp_text,
+                        order_index=order,
+                        important=False,
+                        source="ai",
+                        confidence=None,
+                        item_metadata={},
+                    )
+                )
+                order += 1
+
+            signals_joined = " ".join([str(s).lower() for s in (important_signals or [])])
+            for t in extracted.get("tasks") or []:
+                text_t = str(t.get("text") or "").strip() if isinstance(t, dict) else str(t).strip()
+                if not text_t:
+                    continue
+                meta: Dict[str, Any] = {}
+                due_date = None
+                priority = None
+                if isinstance(t, dict):
+                    meta = {k: v for k, v in t.items() if k not in {"text"}}
+                    priority = t.get("priority")
+
+                important = False
+                important_reason = None
+                if any(k in signals_joined for k in ["examen", "quiz", "parcial", "fecha", "entrega", "tarea", "deadline"]):
+                    important = True
+                    important_reason = "signals"
+                if important_reason:
+                    meta = dict(meta)
+                    meta["important_reason"] = important_reason
+
+                db2.add(
+                    AgendaItem(
+                        session_id=session_id,
+                        user_id=user_id,
+                        item_type=AgendaItemType.TASK,
+                        status=AgendaItemStatus.SUGGESTED,
+                        title=None,
+                        content=text_t,
+                        due_date=due_date,
+                        priority=priority,
+                        order_index=order,
+                        important=important,
+                        source="ai",
+                        confidence=None,
+                        item_metadata=meta,
+                    )
+                )
+                order += 1
+
+            await db2.commit()
+            extracted = extracted_meta
+
+        items_res = await db2.execute(
+            select(AgendaItem)
+            .where(and_(AgendaItem.session_id == session_id, AgendaItem.user_id == user_id))
+            .order_by(AgendaItem.order_index.asc(), AgendaItem.created_at.asc())
+        )
+        items = items_res.scalars().all()
+
+    return AppendAudioResponse(text=text, relevance=relevance, state=extracted or {}, items=[_item_to_dto(i) for i in items])
 
 
 @router.post("/sessions/{session_id}/items", response_model=AgendaItemDto)
