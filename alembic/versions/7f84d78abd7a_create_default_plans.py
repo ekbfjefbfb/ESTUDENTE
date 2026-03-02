@@ -66,7 +66,7 @@ def upgrade():
     # ------------------
     op.create_table(
         'users',
-        sa.Column('id', Integer, primary_key=True),
+        sa.Column('id', String, primary_key=True),
         sa.Column('username', String(50), nullable=False, unique=True, index=True),
         sa.Column('email', String(100), nullable=False, unique=True, index=True),
         sa.Column('password', String, nullable=True),
@@ -87,7 +87,7 @@ def upgrade():
     op.create_table(
         'subscriptions',
         sa.Column('id', Integer, primary_key=True),
-        sa.Column('user_id', Integer, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+        sa.Column('user_id', String, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
         sa.Column('plan_id', Integer, sa.ForeignKey('plans.id', ondelete='SET NULL'), nullable=False),
         sa.Column('start_date', DateTime, default=func.now()),
         sa.Column('end_date', DateTime, nullable=True),
@@ -100,7 +100,7 @@ def upgrade():
     op.create_table(
         'payments',
         sa.Column('id', Integer, primary_key=True),
-        sa.Column('user_id', Integer, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+        sa.Column('user_id', String, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
         sa.Column('plan_id', Integer, sa.ForeignKey('plans.id', ondelete='SET NULL'), nullable=True),
         sa.Column('gateway', String, nullable=False),
         sa.Column('payment_id', String, nullable=False, unique=True),
@@ -117,7 +117,7 @@ def upgrade():
     op.create_table(
         'conversations',
         sa.Column('id', Integer, primary_key=True),
-        sa.Column('user_id', Integer, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+        sa.Column('user_id', String, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
         sa.Column('message', Text, nullable=False),
         sa.Column('role', String, default='user'),
         sa.Column('created_at', DateTime(timezone=True), server_default=func.now()),
@@ -130,7 +130,7 @@ def upgrade():
     op.create_table(
         'uploaded_files',
         sa.Column('id', Integer, primary_key=True),
-        sa.Column('user_id', Integer, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+        sa.Column('user_id', String, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
         sa.Column('filename', String, nullable=False),
         sa.Column('file_type', String, nullable=True),
         sa.Column('url', String, nullable=True),
@@ -143,7 +143,7 @@ def upgrade():
     op.create_table(
         'usage_logs',
         sa.Column('id', Integer, primary_key=True),
-        sa.Column('user_id', Integer, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+        sa.Column('user_id', String, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
         sa.Column('action', String, nullable=False),
         sa.Column('detail', JSON, nullable=True),
         sa.Column('created_at', DateTime(timezone=True), server_default=func.now()),
@@ -156,7 +156,7 @@ def upgrade():
     op.create_table(
         'media',
         sa.Column('id', Integer, primary_key=True),
-        sa.Column('user_id', Integer, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+        sa.Column('user_id', String, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
         sa.Column('type', String, nullable=False),
         sa.Column('url', String, nullable=False),
         sa.Column('created_at', DateTime(timezone=True), server_default=func.now()),
@@ -168,7 +168,7 @@ def upgrade():
     op.create_table(
         'history',
         sa.Column('id', Integer, primary_key=True),
-        sa.Column('user_id', Integer, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+        sa.Column('user_id', String, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
         sa.Column('conversation_id', Integer, sa.ForeignKey('conversations.id', ondelete='SET NULL'), nullable=True),
         sa.Column('type', String, nullable=False),
         sa.Column('content', Text, nullable=True),
@@ -183,7 +183,7 @@ def upgrade():
     op.create_table(
         'live_search_logs',
         sa.Column('id', Integer, primary_key=True),
-        sa.Column('user_id', Integer, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+        sa.Column('user_id', String, sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
         sa.Column('query', Text, nullable=False),
         sa.Column('created_at', DateTime(timezone=True), server_default=func.now()),
     )
