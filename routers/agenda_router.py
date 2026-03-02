@@ -344,6 +344,7 @@ async def _extract_incremental_agenda(transcript: str, state: Dict[str, Any]) ->
 
         return {
             "summary": extracted.summary,
+            "lecture_notes": getattr(extracted, "lecture_notes", ""),
             "key_points": extracted.key_points,
             "tasks": [
                 {
@@ -462,8 +463,10 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                             )
 
                             order = 0
+                            notes_text = (extracted.get("lecture_notes") or "").strip()
                             summary = (extracted.get("summary") or "").strip()
-                            if summary:
+                            main_text = notes_text or summary
+                            if main_text:
                                 db2.add(
                                     AgendaItem(
                                         session_id=session_id,
@@ -471,7 +474,7 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                                         item_type=AgendaItemType.SUMMARY,
                                         status=AgendaItemStatus.SUGGESTED,
                                         title=None,
-                                        content=summary,
+                                        content=main_text,
                                         order_index=order,
                                         important=False,
                                         source="ai",

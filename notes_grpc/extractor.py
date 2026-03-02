@@ -21,6 +21,7 @@ class ExtractedTask:
 class ExtractedNote:
     title: str
     summary: str
+    lecture_notes: str
     key_points: List[str]
     tasks: List[ExtractedTask]
 
@@ -29,7 +30,7 @@ SYSTEM_PROMPT = (
     "You extract study notes. Return STRICT JSON object only. "
     "Dates: if transcript mentions a due date, output ISO-8601 date-time in UTC if possible, "
     "otherwise omit due_date. If relative date like 'tomorrow', assume user's timezone is UTC and convert. "
-    "Schema: {title:string, summary:string, key_points:[string], tasks:[{text:string, due_date?:string, priority:int}]}"
+    "Schema: {title:string, summary:string, lecture_notes:string, key_points:[string], tasks:[{text:string, due_date?:string, priority:int}]}"
 )
 
 
@@ -51,7 +52,12 @@ async def extract_note_from_text(*, client: SiliconFlowClient, transcript: str, 
     user_prompt = (
         f"Transcript:\n{transcript}\n\n"
         f"Title hint (optional): {title_hint}\n\n"
-        "Generate title (short), summary (short), key points (bullets), and tasks with due dates if present."
+        "Generate: "
+        "(1) title (short), "
+        "(2) summary (very short), "
+        "(3) lecture_notes: detailed redacted class notes (as if written in a notebook), organized by topics and in the teacher's flow, "
+        "(4) key_points (bullets), "
+        "(5) tasks/assignments (include deliverables like 'draw a flowchart' if mentioned) with due dates if present."
     )
 
     data = await client.chat_json(system=SYSTEM_PROMPT, user=user_prompt)
@@ -63,6 +69,10 @@ async def extract_note_from_text(*, client: SiliconFlowClient, transcript: str, 
     summary = data.get("summary")
     if not isinstance(summary, str):
         summary = ""
+
+    lecture_notes = data.get("lecture_notes")
+    if not isinstance(lecture_notes, str):
+        lecture_notes = ""
 
     key_points_raw = data.get("key_points")
     key_points: List[str] = []
@@ -87,6 +97,7 @@ async def extract_note_from_text(*, client: SiliconFlowClient, transcript: str, 
     return ExtractedNote(
         title=title.strip()[:200],
         summary=summary.strip(),
+        lecture_notes=lecture_notes.strip(),
         key_points=key_points[:50],
         tasks=tasks[:50],
     )
@@ -164,7 +175,7 @@ async def extract_note_segmented(
 
     chunks = _chunk_text(transcript, max_chars=max_chunk_chars)
     if not chunks:
-        return ExtractedNote(title=title_hint or "Untitled", summary="", key_points=[], tasks=[])
+        return ExtractedNote(title=title_hint or "Untitled", summary="", lecture_notes="", key_points=[], tasks=[])
 
     # Run per-chunk extraction in parallel for speed.
     tasks = [
@@ -175,6 +186,7 @@ async def extract_note_segmented(
 
     merged_title = title_hint.strip() if title_hint.strip() else (parts[0].title if parts else "Untitled")
     merged_summary = "\n".join([p.summary for p in parts if p.summary.strip()]).strip()
+    merged_lecture_notes = "\n\n".join([p.lecture_notes for p in parts if p.lecture_notes.strip()]).strip()
 
     merged_key_points: List[str] = []
     for p in parts:
@@ -189,6 +201,7 @@ async def extract_note_segmented(
     return ExtractedNote(
         title=merged_title[:200],
         summary=merged_summary,
+        lecture_notes=merged_lecture_notes,
         key_points=merged_key_points,
         tasks=merged_tasks,
     )
