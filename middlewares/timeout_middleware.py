@@ -78,20 +78,33 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         user_key = user_id or request.client.host
 
         # Incrementa la métrica centralizada de requests
-        REQUESTS_TOTAL.labels(
-            user_id=str(user_key),
-            plan=str(plan_multiplier),
-            endpoint=request.url.path
-        ).inc()
+        try:
+            REQUESTS_TOTAL.labels(
+                method=request.method,
+                endpoint=request.url.path,
+                status_code="pending",
+                user_type=str(plan_multiplier),
+            ).inc()
+        except Exception:
+            pass
 
         try:
-            return await asyncio.wait_for(call_next(request), timeout=timeout)
+            response = await asyncio.wait_for(call_next(request), timeout=timeout)
+            try:
+                REQUESTS_TOTAL.labels(
+                    method=request.method,
+                    endpoint=request.url.path,
+                    status_code=str(getattr(response, "status_code", "200")),
+                    user_type=str(plan_multiplier),
+                ).inc()
+            except Exception:
+                pass
+            return response
         except asyncio.TimeoutError:
-            TIMEOUT_COUNT.labels(
-                user_id=str(user_key),
-                plan=str(plan_multiplier),
-                endpoint=request.url.path
-            ).inc()
+            try:
+                TIMEOUT_COUNT.labels(endpoint=request.url.path, method=request.method).inc()
+            except Exception:
+                pass
             raise HTTPException(
                 status_code=504,
                 detail=f"Timeout: la solicitud excedió los {timeout:.2f}s de espera"

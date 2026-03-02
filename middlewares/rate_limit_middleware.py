@@ -111,7 +111,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if current > max_requests:
                 ttl = await redis.ttl(key)
                 ttl = max(ttl or 0, 0)
-                RATE_LIMIT_HITS.labels(str(user_id), plan_name, endpoint, ip).inc()
+                try:
+                    RATE_LIMIT_HITS.labels(endpoint=endpoint, user_type=str(plan_name)).inc()
+                except Exception:
+                    pass
 
                 return JSONResponse(
                     status_code=HTTP_429_TOO_MANY_REQUESTS,
@@ -125,10 +128,29 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             logger.error({"event": "redis_error", "user_id": user_id, "endpoint": endpoint, "error": str(e)})
             return await call_next(request)
 
-        # Registrar request total
-        REQUESTS_TOTAL.labels(str(user_id), plan_name, endpoint, ip).inc()
+        # Registrar request total (labels correctos)
+        try:
+            REQUESTS_TOTAL.labels(
+                method=request.method,
+                endpoint=endpoint,
+                status_code="pending",
+                user_type=str(plan_name),
+            ).inc()
+        except Exception:
+            pass
 
-        return await call_next(request)
+        response = await call_next(request)
+        try:
+            REQUESTS_TOTAL.labels(
+                method=request.method,
+                endpoint=endpoint,
+                status_code=str(getattr(response, "status_code", "200")),
+                user_type=str(plan_name),
+            ).inc()
+        except Exception:
+            pass
+
+        return response
 
     async def __del__(self):
         if self.redis:
