@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = 'add_personal_agents_profiles'
-down_revision = 'fix_model_inconsistencies'
+down_revision = 'fix_inconsistencies_001'
 branch_labels = None
 depends_on = None
 
