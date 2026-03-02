@@ -20,15 +20,15 @@ def upgrade():
     # Create device_tokens table
     op.create_table(
         'device_tokens',
-        sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('user_id', sa.Integer(), nullable=False),
-        sa.Column('token', sa.String(length=512), nullable=False),
+        sa.Column('id', sa.String(length=255), nullable=False),
+        sa.Column('user_id', sa.String(), nullable=False),
+        sa.Column('token', sa.Text(), nullable=False),
         sa.Column('platform', sa.String(length=20), nullable=False),
         sa.Column('device_id', sa.String(length=255), nullable=True),
-        sa.Column('device_name', sa.String(length=255), nullable=True),
-        sa.Column('is_active', sa.Boolean(), nullable=False, server_default='true'),
-        sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('now()')),
-        sa.Column('last_used_at', sa.DateTime(), nullable=True),
+        sa.Column('device_name', sa.String(length=200), nullable=True),
+        sa.Column('is_active', sa.Boolean(), nullable=False, server_default=sa.text('true')),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.Column('last_used_at', sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
         sa.UniqueConstraint('token', name='uq_device_tokens_token')
