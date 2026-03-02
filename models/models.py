@@ -1176,6 +1176,11 @@ class AgendaChunk(Base):
     t_start_ms = Column(Integer, nullable=True)
     t_end_ms = Column(Integer, nullable=True)
 
+    relevance_label = Column(String(16), nullable=True)
+    relevance_reason = Column(Text, nullable=True)
+    relevance_signals = Column(JSON, default=list)
+    relevance_score = Column(Float, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("AgendaSession", back_populates="chunks")

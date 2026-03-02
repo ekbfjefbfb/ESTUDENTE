@@ -359,6 +359,66 @@ async def _extract_incremental_agenda(transcript: str, state: Dict[str, Any]) ->
         return {}
 
 
+async def _classify_chunk_relevance(text: str) -> Dict[str, Any]:
+    """Classify a transcript chunk as IMPORTANTE/SECUNDARIO/IRRELEVANTE.
+
+    Returns keys:
+    - relevance_label: str
+    - relevance_reason: str
+    - relevance_signals: list[str]
+    - relevance_score: float (0..1)
+    """
+    try:
+        from notes_grpc.siliconflow_client import SiliconFlowClient
+
+        client = SiliconFlowClient()
+        system = (
+            "Eres un clasificador de fragmentos de una clase. Devuelve SOLO JSON estricto. "
+            "Clasifica relevance_label en: IMPORTANTE, SECUNDARIO, IRRELEVANTE. "
+            "IMPORTANTE: definiciones, conceptos clave, tareas/entregables, fechas, examen/quiz, instrucciones del profesor. "
+            "SECUNDARIO: ejemplos largos, repeticiones, aclaraciones menores. "
+            "IRRELEVANTE: bromas, conversación fuera de tema. "
+            "Devuelve schema: {relevance_label:string, relevance_reason:string, relevance_signals:[string], relevance_score:number}. "
+            "relevance_score: 0..1."
+        )
+        user = f"Fragmento:\n{text}\n"
+        data = await client.chat_json(system=system, user=user)
+
+        label = data.get("relevance_label")
+        if not isinstance(label, str):
+            label = "SECUNDARIO"
+        label = label.strip().upper()
+        if label not in {"IMPORTANTE", "SECUNDARIO", "IRRELEVANTE"}:
+            label = "SECUNDARIO"
+
+        reason = data.get("relevance_reason")
+        if not isinstance(reason, str):
+            reason = ""
+
+        signals_raw = data.get("relevance_signals")
+        signals: List[str] = []
+        if isinstance(signals_raw, list):
+            signals = [str(x).strip() for x in signals_raw if str(x).strip()]
+
+        score = data.get("relevance_score")
+        if not isinstance(score, (int, float)):
+            score = None
+
+        return {
+            "relevance_label": label,
+            "relevance_reason": reason.strip(),
+            "relevance_signals": signals[:20],
+            "relevance_score": float(score) if score is not None else None,
+        }
+    except Exception:
+        return {
+            "relevance_label": "SECUNDARIO",
+            "relevance_reason": "",
+            "relevance_signals": [],
+            "relevance_score": None,
+        }
+
+
 @router.websocket("/live/{session_id}/ws")
 async def live_session_ws(websocket: WebSocket, session_id: str):
     """JWT-authenticated realtime session.
@@ -400,6 +460,10 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                 if not text:
                     continue
 
+                relevance = await _classify_chunk_relevance(text)
+                rel_label = str(relevance.get("relevance_label") or "SECUNDARIO")
+                rel_signals = relevance.get("relevance_signals") or []
+
                 async with get_db_session() as db:
                     session = await _get_session_or_404(db, user_id, session_id)
 
@@ -409,6 +473,10 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                         text=text,
                         t_start_ms=msg.get("t_start_ms"),
                         t_end_ms=msg.get("t_end_ms"),
+                        relevance_label=rel_label,
+                        relevance_reason=relevance.get("relevance_reason"),
+                        relevance_signals=rel_signals,
+                        relevance_score=relevance.get("relevance_score"),
                     )
                     db.add(chunk)
 
@@ -420,6 +488,16 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                     )
 
                     await db.commit()
+
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "event": "chunk_relevance",
+                            "session_id": session_id,
+                            "relevance": relevance,
+                        }
+                    )
+                )
 
                 # Throttle AI extraction
                 lock = _session_ai_lock.setdefault(session_id, asyncio.Lock())
@@ -435,13 +513,43 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                     async with get_db_session() as db2:
                         session2 = await _get_session_or_404(db2, user_id, session_id)
                         state = session2.extracted_state or {}
-                        extracted = await _extract_incremental_agenda(session2.live_transcript or "", state)
+
+                        # Build filtered transcript from chunks labeled IMPORTANT/SECONDARY (skip IRRELEVANT)
+                        rows = await db2.execute(
+                            select(AgendaChunk)
+                            .where(
+                                and_(
+                                    AgendaChunk.session_id == session_id,
+                                    AgendaChunk.user_id == user_id,
+                                    AgendaChunk.relevance_label.in_(["IMPORTANTE", "SECUNDARIO"]),
+                                )
+                            )
+                            .order_by(AgendaChunk.created_at.asc())
+                        )
+                        chunks = rows.scalars().all()
+                        filtered_transcript = "\n".join([c.text for c in chunks if (c.text or "").strip()]).strip()
+
+                        important_signals: List[str] = []
+                        for c in chunks:
+                            if (c.relevance_label or "").upper() != "IMPORTANTE":
+                                continue
+                            if isinstance(getattr(c, "relevance_signals", None), list):
+                                important_signals.extend([str(s).strip() for s in (c.relevance_signals or []) if str(s).strip()])
+                        # de-dupe
+                        seen = set()
+                        important_signals = [s for s in important_signals if not (s.lower() in seen or seen.add(s.lower()))]
+
+                        extracted = await _extract_incremental_agenda(filtered_transcript, state)
 
                         if extracted:
+                            extracted_meta = dict(extracted)
+                            extracted_meta["relevance"] = {
+                                "important_signals": important_signals[:50],
+                            }
                             await db2.execute(
                                 update(AgendaSession)
                                 .where(and_(AgendaSession.id == session_id, AgendaSession.user_id == user_id))
-                                .values(extracted_state=extracted)
+                                .values(extracted_state=extracted_meta)
                             )
 
                             # Replace AI-generated items (preserve user items)
@@ -515,6 +623,18 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                                 if isinstance(t, dict):
                                     meta = {k: v for k, v in t.items() if k not in {"text"}}
                                     priority = t.get("priority")
+
+                                # Mark tasks as important if any recent chunk signals indicate deadlines/exams/tasks
+                                important = False
+                                important_reason = None
+                                signals_joined = " ".join([str(s).lower() for s in (important_signals or [])])
+                                if any(k in signals_joined for k in ["examen", "quiz", "parcial", "fecha", "entrega", "tarea", "deadline"]):
+                                    important = True
+                                    important_reason = "signals"
+                                if important_reason:
+                                    meta = dict(meta)
+                                    meta["important_reason"] = important_reason
+
                                 db2.add(
                                     AgendaItem(
                                         session_id=session_id,
@@ -526,7 +646,7 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                                         due_date=due_date,
                                         priority=priority,
                                         order_index=order,
-                                        important=False,
+                                        important=important,
                                         source="ai",
                                         confidence=None,
                                         item_metadata=meta,
