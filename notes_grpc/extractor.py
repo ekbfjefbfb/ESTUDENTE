@@ -55,9 +55,12 @@ async def extract_note_from_text(*, client: SiliconFlowClient, transcript: str, 
         "Generate: "
         "(1) title (short), "
         "(2) summary (very short), "
-        "(3) lecture_notes: detailed redacted class notes (as if written in a notebook), organized by topics and in the teacher's flow, "
+        "(3) lecture_notes: high-value student notes in MARKDOWN. Make it useful and actionable. "
+        "Use headings and short sections. Include (when present in the transcript): definitions, step-by-step procedures, "
+        "examples, formulas, and common mistakes. End with a short 'Para estudiar' section (3-7 bullets). "
+        "Organize in the teacher's flow and by topics, not as a generic summary. "
         "(4) key_points (bullets), "
-        "(5) tasks/assignments (include deliverables like 'draw a flowchart' if mentioned) with due dates if present."
+        "(5) tasks/assignments: write explicit deliverables (e.g., 'hacer un diagrama de flujo de X') and include due dates if present."
     )
 
     data = await client.chat_json(system=SYSTEM_PROMPT, user=user_prompt)
