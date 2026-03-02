@@ -9,6 +9,7 @@ from sqlalchemy.sql import func
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import enum
+import uuid
 
 Base = declarative_base()
 
@@ -1118,6 +1119,101 @@ class DeviceToken(Base):
 
 
 # =============================================
+# AGENDA IA EN TIEMPO REAL (CLASES)
+# =============================================
+
+
+class AgendaItemType(str, enum.Enum):
+    TASK = "task"
+    EVENT = "event"
+    KEY_POINT = "key_point"
+    SUMMARY = "summary"
+    REMINDER = "reminder"
+
+
+class AgendaItemStatus(str, enum.Enum):
+    SUGGESTED = "suggested"
+    CONFIRMED = "confirmed"
+    DONE = "done"
+    CANCELED = "canceled"
+
+
+class AgendaSession(Base):
+    __tablename__ = "agenda_sessions"
+
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    class_name = Column(String(200), nullable=False)
+    teacher_name = Column(String(200), nullable=True)
+    teacher_email = Column(String(200), nullable=True)
+    topic_hint = Column(String(300), nullable=True)
+
+    session_datetime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    timezone = Column(String(64), nullable=True)
+
+    status = Column(String(32), default="recording", nullable=False)
+
+    live_transcript = Column(Text, default="", nullable=False)
+    extracted_state = Column(JSON, default=dict)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User")
+    chunks = relationship("AgendaChunk", back_populates="session", cascade="all, delete-orphan")
+    items = relationship("AgendaItem", back_populates="session", cascade="all, delete-orphan")
+
+
+class AgendaChunk(Base):
+    __tablename__ = "agenda_chunks"
+
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String(36), ForeignKey("agenda_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    text = Column(Text, nullable=False)
+    t_start_ms = Column(Integer, nullable=True)
+    t_end_ms = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    session = relationship("AgendaSession", back_populates="chunks")
+
+
+class AgendaItem(Base):
+    __tablename__ = "agenda_items"
+
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String(36), ForeignKey("agenda_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    item_type = Column(Enum(AgendaItemType), nullable=False, index=True)
+    status = Column(Enum(AgendaItemStatus), default=AgendaItemStatus.SUGGESTED, nullable=False)
+
+    title = Column(String(400), nullable=True)
+    content = Column(Text, nullable=False)
+
+    datetime_start = Column(DateTime(timezone=True), nullable=True)
+    datetime_end = Column(DateTime(timezone=True), nullable=True)
+    due_date = Column(DateTime(timezone=True), nullable=True)
+
+    priority = Column(Integer, nullable=True)
+    order_index = Column(Integer, default=0, nullable=False)
+    important = Column(Boolean, default=False)
+
+    source = Column(String(16), default="ai", nullable=False)
+    confidence = Column(Float, nullable=True)
+
+    item_metadata = Column(JSON, default=dict)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    session = relationship("AgendaSession", back_populates="items")
+
+
+# =============================================
 # ACTUALIZAR MODELO USER PARA NUEVAS RELACIONES
 # =============================================
 
@@ -1162,6 +1258,12 @@ __all__ = [
     "Referral",
     # 🔔 Push Notifications
     "DeviceToken",
+    # Agenda IA en tiempo real
+    "AgendaSession",
+    "AgendaChunk",
+    "AgendaItem",
+    "AgendaItemType",
+    "AgendaItemStatus",
     # Enums
     "PlanType",
     "SubscriptionStatus", 

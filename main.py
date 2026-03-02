@@ -47,6 +47,7 @@ from routers import (
     apa7_pdf_router,
     class_notes_router,
     profile_router,
+    agenda_router,
 )
 
 # Middlewares
@@ -382,6 +383,9 @@ app.include_router(class_notes_router.router, tags=["Class Notes"])
 
 # Profile
 app.include_router(profile_router.router, tags=["Profile"])
+
+# Agenda IA
+app.include_router(agenda_router.router, tags=["Agenda"])
 
 # =============================================
 # STARTUP MESSAGE

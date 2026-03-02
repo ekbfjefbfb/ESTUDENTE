@@ -23,6 +23,9 @@ from . import (
 
     # Profile
     profile_router,
+
+    # Agenda
+    agenda_router,
     
     # Voice
     
@@ -47,6 +50,9 @@ __all__ = [
 
     # Profile
     "profile_router",
+
+    # Agenda
+    "agenda_router",
 ]
 
 __version__ = "1.0.1"
