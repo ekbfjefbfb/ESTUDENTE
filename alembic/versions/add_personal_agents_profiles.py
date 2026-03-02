@@ -18,16 +18,16 @@ depends_on = None
 
 def upgrade():
     # Create new enum types
-    agent_type_enum = postgresql.ENUM('tutor', 'mentor', 'assistant', 'coach', 'researcher', 'creative', name='agenttype')
+    agent_type_enum = postgresql.ENUM('tutor', 'mentor', 'assistant', 'coach', 'researcher', 'creative', name='agenttype', create_type=False)
     agent_type_enum.create(op.get_bind(), checkfirst=True)
     
-    specialization_enum = postgresql.ENUM('technology', 'business', 'academic', 'creative', 'personal_development', 'language', 'science', name='specialization')
+    specialization_enum = postgresql.ENUM('technology', 'business', 'academic', 'creative', 'personal_development', 'language', 'science', name='specialization', create_type=False)
     specialization_enum.create(op.get_bind(), checkfirst=True)
     
-    integration_status_enum = postgresql.ENUM('disconnected', 'connecting', 'connected', 'error', 'expired', name='integrationstatus')
+    integration_status_enum = postgresql.ENUM('disconnected', 'connecting', 'connected', 'error', 'expired', name='integrationstatus', create_type=False)
     integration_status_enum.create(op.get_bind(), checkfirst=True)
     
-    service_type_enum = postgresql.ENUM('google_calendar', 'google_gmail', 'google_drive', 'microsoft_outlook', 'microsoft_onedrive', 'linkedin', name='servicetype')
+    service_type_enum = postgresql.ENUM('google_calendar', 'google_gmail', 'google_drive', 'microsoft_outlook', 'microsoft_onedrive', 'linkedin', name='servicetype', create_type=False)
     service_type_enum.create(op.get_bind(), checkfirst=True)
 
     # Create user_profiles table
