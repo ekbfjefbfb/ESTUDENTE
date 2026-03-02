@@ -17,9 +17,15 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 db_url = (os.getenv("DATABASE_URL") or os.getenv("SQLALCHEMY_DATABASE_URL") or "").strip()
-if db_url:
-    db_url = db_url.replace("%", "%%")
-    config.set_main_option("sqlalchemy.url", db_url)
+if not db_url:
+    raise ValueError("DATABASE_URL or SQLALCHEMY_DATABASE_URL environment variable is not set")
+
+# Asegurar que el host sea resoluble y el esquema sea correcto para Alembic (psycopg2)
+if db_url.startswith("postgresql+asyncpg://"):
+    db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+
+db_url = db_url.replace("%", "%%")
+config.set_main_option("sqlalchemy.url", db_url)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
