@@ -26,6 +26,9 @@ from . import (
 
     # Agenda
     agenda_router,
+
+    # STT
+    stt_router,
     
     # Voice
     
@@ -53,6 +56,9 @@ __all__ = [
 
     # Agenda
     "agenda_router",
+
+    # STT
+    "stt_router",
 ]
 
 __version__ = "1.0.1"

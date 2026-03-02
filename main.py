@@ -48,6 +48,7 @@ from routers import (
     class_notes_router,
     profile_router,
     agenda_router,
+    stt_router,
 )
 
 # Middlewares
@@ -386,6 +387,9 @@ app.include_router(profile_router.router, tags=["Profile"])
 
 # Agenda IA
 app.include_router(agenda_router.router, tags=["Agenda"])
+
+# STT
+app.include_router(stt_router.router, tags=["STT"])
 
 # =============================================
 # STARTUP MESSAGE
