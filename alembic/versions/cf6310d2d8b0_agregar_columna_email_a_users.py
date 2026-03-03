@@ -39,11 +39,9 @@ def upgrade() -> None:
     op.create_foreign_key(None, 'media', 'users', ['user_id'], ['id'])
 
     # Agregar columna email de forma segura
-    op.add_column('users', sa.Column('email', sa.String(), nullable=True))
-    # Llenar los valores existentes con un valor temporal
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR")
     op.execute("UPDATE users SET email = username || '@example.com' WHERE email IS NULL")
-    # Poner la columna como NOT NULL
-    op.alter_column('users', 'email', nullable=False)
+    op.execute("ALTER TABLE users ALTER COLUMN email SET NOT NULL")
 
     op.add_column('users', sa.Column('plan_id', sa.Integer(), nullable=True))
     op.add_column('users', sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True))
@@ -52,10 +50,10 @@ def upgrade() -> None:
                existing_type=postgresql.TIMESTAMP(),
                type_=sa.DateTime(timezone=True),
                existing_nullable=True)
-    op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
+    op.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)")
     op.create_foreign_key(None, 'users', 'plans', ['plan_id'], ['id'])
-    op.drop_column('users', 'is_subscribed')
-    op.drop_column('users', 'subscription_plan')
+    op.execute("ALTER TABLE users DROP COLUMN IF EXISTS is_subscribed")
+    op.execute("ALTER TABLE users DROP COLUMN IF EXISTS subscription_plan")
     # ### end Alembic commands ###
 
 
