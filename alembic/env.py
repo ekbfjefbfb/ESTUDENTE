@@ -4,6 +4,7 @@ import os
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+from sqlalchemy import text
 
 from alembic import context
 
@@ -83,6 +84,38 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        # Ensure alembic_version.version_num can store long revision ids.
+        # Default Alembic uses VARCHAR(32); our revision ids are longer.
+        try:
+            connection.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                      IF to_regclass('public.alembic_version') IS NOT NULL THEN
+                        IF EXISTS (
+                          SELECT 1
+                          FROM information_schema.columns
+                          WHERE table_schema = 'public'
+                            AND table_name = 'alembic_version'
+                            AND column_name = 'version_num'
+                            AND character_maximum_length IS NOT NULL
+                            AND character_maximum_length < 255
+                        ) THEN
+                          ALTER TABLE public.alembic_version
+                            ALTER COLUMN version_num TYPE VARCHAR(255);
+                        END IF;
+                      END IF;
+                    END $$;
+                    """
+                )
+            )
+            connection.commit()
+        except Exception:
+            # If the DB/user doesn't allow DO blocks or table doesn't exist yet,
+            # migrations will proceed and create the table normally.
+            pass
+
         context.configure(
             connection=connection, target_metadata=target_metadata
         )
