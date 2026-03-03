@@ -46,10 +46,22 @@ def upgrade() -> None:
     op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_id INTEGER")
     op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now()")
     op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN")
-    op.alter_column('users', 'demo_started_at',
-               existing_type=postgresql.TIMESTAMP(),
-               type_=sa.DateTime(timezone=True),
-               existing_nullable=True)
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'users'
+                  AND column_name = 'demo_started_at'
+            ) THEN
+                ALTER TABLE users
+                ALTER COLUMN demo_started_at TYPE TIMESTAMPTZ;
+            END IF;
+        END $$;
+        """
+    )
     op.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)")
     op.execute(
         """
