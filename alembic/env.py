@@ -92,17 +92,20 @@ def run_migrations_online() -> None:
                     """
                     DO $$
                     BEGIN
-                      IF to_regclass('public.alembic_version') IS NOT NULL THEN
+                      IF EXISTS (
+                        SELECT 1 
+                        FROM information_schema.tables 
+                        WHERE table_name = 'alembic_version'
+                      ) THEN
                         IF EXISTS (
                           SELECT 1
                           FROM information_schema.columns
-                          WHERE table_schema = 'public'
-                            AND table_name = 'alembic_version'
+                          WHERE table_name = 'alembic_version'
                             AND column_name = 'version_num'
                             AND character_maximum_length IS NOT NULL
                             AND character_maximum_length < 255
                         ) THEN
-                          ALTER TABLE public.alembic_version
+                          ALTER TABLE alembic_version
                             ALTER COLUMN version_num TYPE VARCHAR(255);
                         END IF;
                       END IF;
@@ -112,8 +115,6 @@ def run_migrations_online() -> None:
             )
             connection.commit()
         except Exception:
-            # If the DB/user doesn't allow DO blocks or table doesn't exist yet,
-            # migrations will proceed and create the table normally.
             pass
 
         context.configure(
