@@ -87,9 +87,19 @@ def run_migrations_online() -> None:
     # Usamos una conexión independiente para asegurar que el COMMIT sea inmediato
     with connectable.connect() as connection:
         try:
-            connection.execute(text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"))
+            # Forzar el ensanchamiento si la tabla existe
+            connection.execute(text("""
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'alembic_version') THEN
+                        ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255);
+                    END IF;
+                END $$;
+            """))
             connection.commit()
-        except Exception:
+            logger.info("✅ alembic_version.version_num widened to 255")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not widen alembic_version: {e}")
             pass
 
     # 2. Proceder con las migraciones normales
