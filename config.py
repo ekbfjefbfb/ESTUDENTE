@@ -97,19 +97,22 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 USE_REMOTE_AI = os.getenv("USE_REMOTE_AI", "false").lower() in ("true", "1", "t")
 
-# URL del servidor de IA (Ollama + modelos)
+# URL del servidor de IA (SiliconFlow, Ollama o modelos propios)
+SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY")
+SILICONFLOW_URL = "https://api.siliconflow.cn/v1"
+
 if USE_REMOTE_AI:
-    # Producción: Servidor GPU remoto (RunPod/Vast.ai/Colab)
-    AI_SERVER_URL = os.getenv("AI_SERVER_URL")  # REQUERIDO en producción
+    # Producción: Priorizar SiliconFlow si hay API Key, si no usar AI_SERVER_URL genérico
+    AI_SERVER_URL = os.getenv("AI_SERVER_URL", SILICONFLOW_URL if SILICONFLOW_API_KEY else None)
     if not AI_SERVER_URL and ENVIRONMENT == "production":
-        raise ValueError("AI_SERVER_URL es requerido cuando USE_REMOTE_AI=true")
+        raise ValueError("AI_SERVER_URL o SILICONFLOW_API_KEY es requerido cuando USE_REMOTE_AI=true")
 else:
     # Desarrollo: Ollama local para testing
     AI_SERVER_URL = os.getenv("AI_SERVER_URL", "http://localhost:11434")
 
-AI_MODEL = os.getenv("AI_MODEL", "qwen2.5-omni:57b")  # Modelo principal
-VISION_MODEL = os.getenv("VISION_MODEL", "qwen2.5-omni:57b")  # Mismo modelo (multimodal)
-TEXT_MODEL = os.getenv("TEXT_MODEL", "qwen2.5-omni:57b")  # Mismo modelo
+AI_MODEL = os.getenv("AI_MODEL", "deepseek-ai/DeepSeek-V3")  # SiliconFlow default preferido
+VISION_MODEL = os.getenv("VISION_MODEL", "deepseek-ai/DeepSeek-VL2")
+TEXT_MODEL = os.getenv("TEXT_MODEL", "deepseek-ai/DeepSeek-V3")
 
 SEARXNG_URL = os.getenv("SEARXNG_URL", "")  # URL de SearXNG para LiveSearch (opcional)
 LIVESEARCH_ENABLED = os.getenv("LIVESEARCH_ENABLED", "true").lower() in ("true", "1", "t")
