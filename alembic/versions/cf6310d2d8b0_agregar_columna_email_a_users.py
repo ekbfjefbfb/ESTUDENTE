@@ -43,15 +43,30 @@ def upgrade() -> None:
     op.execute("UPDATE users SET email = username || '@example.com' WHERE email IS NULL")
     op.execute("ALTER TABLE users ALTER COLUMN email SET NOT NULL")
 
-    op.add_column('users', sa.Column('plan_id', sa.Integer(), nullable=True))
-    op.add_column('users', sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True))
-    op.add_column('users', sa.Column('is_active', sa.Boolean(), nullable=True))
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_id INTEGER")
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now()")
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN")
     op.alter_column('users', 'demo_started_at',
                existing_type=postgresql.TIMESTAMP(),
                type_=sa.DateTime(timezone=True),
                existing_nullable=True)
     op.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)")
-    op.create_foreign_key(None, 'users', 'plans', ['plan_id'], ['id'])
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'fk_users_plan_id_plans'
+            ) THEN
+                ALTER TABLE users
+                ADD CONSTRAINT fk_users_plan_id_plans
+                FOREIGN KEY (plan_id) REFERENCES plans(id);
+            END IF;
+        END $$;
+        """
+    )
     op.execute("ALTER TABLE users DROP COLUMN IF EXISTS is_subscribed")
     op.execute("ALTER TABLE users DROP COLUMN IF EXISTS subscription_plan")
     # ### end Alembic commands ###
