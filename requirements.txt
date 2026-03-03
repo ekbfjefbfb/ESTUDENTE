@@ -23,6 +23,9 @@ alembic==1.13.1
 # HTTP client
 httpx==0.27.2
 
+# Fast JSON serialization
+orjson==3.10.7
+
 # STT provider (Groq)
 groq==0.9.0
 

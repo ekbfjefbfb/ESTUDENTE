@@ -10,7 +10,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import FastAPI, Request, status, HTTPException, Depends
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -192,6 +192,7 @@ app = FastAPI(
     version="4.0",  # ✅ v4.0 - Ultra optimizado
     description=f"{APP_DESCRIPTION} - 17 Capacidades IA + Performance Optimizado",
     lifespan=lifespan,
+    default_response_class=ORJSONResponse,
     docs_url="/docs" if DEBUG else None,
     redoc_url="/redoc" if DEBUG else None,
     openapi_url="/openapi.json" if DEBUG else None,
