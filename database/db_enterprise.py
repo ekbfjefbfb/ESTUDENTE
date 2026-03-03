@@ -453,7 +453,6 @@ async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
     async with get_primary_session() as session:
         yield session
 
-@asynccontextmanager
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """Context manager de compatibilidad"""
     async with get_primary_session() as session:
