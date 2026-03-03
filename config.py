@@ -110,9 +110,9 @@ else:
     # Desarrollo: Ollama local para testing
     AI_SERVER_URL = os.getenv("AI_SERVER_URL", "http://localhost:11434")
 
-AI_MODEL = os.getenv("AI_MODEL", "deepseek-ai/DeepSeek-V3")  # SiliconFlow default preferido
-VISION_MODEL = os.getenv("VISION_MODEL", "deepseek-ai/DeepSeek-VL2")
-TEXT_MODEL = os.getenv("TEXT_MODEL", "deepseek-ai/DeepSeek-V3")
+AI_MODEL = os.getenv("AI_MODEL", "Qwen/Qwen3-VL-32B-Instruct")  # ✅ Un solo modelo: multimodal, rápido, económico
+VISION_MODEL = os.getenv("VISION_MODEL", "Qwen/Qwen3-VL-32B-Instruct")  # Mismo modelo para visión
+TEXT_MODEL = os.getenv("TEXT_MODEL", "Qwen/Qwen3-VL-32B-Instruct")  # Mismo modelo para texto
 
 SEARXNG_URL = os.getenv("SEARXNG_URL", "")  # URL de SearXNG para LiveSearch (opcional)
 LIVESEARCH_ENABLED = os.getenv("LIVESEARCH_ENABLED", "true").lower() in ("true", "1", "t")
