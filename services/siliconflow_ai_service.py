@@ -3,13 +3,36 @@ from __future__ import annotations
 import json
 import os
 from typing import Any, Dict, List, Optional
+from datetime import datetime
 
 import httpx
 
 
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "").strip()
 SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1").strip().rstrip("/")
-SILICONFLOW_LLM_MODEL = os.getenv("SILICONFLOW_LLM_MODEL", "deepseek-ai/DeepSeek-V3.2-Exp").strip()
+SILICONFLOW_LLM_MODEL = os.getenv("SILICONFLOW_LLM_MODEL", "Qwen/Qwen3-VL-32B-Instruct").strip()
+
+CONTEXT_THRESHOLD = 0.85
+MAX_CONTEXT_TOKENS = 32000
+
+user_contexts: Dict[str, Dict] = {}
+
+def calculate_context_usage(messages: List[Dict[str, Any]]) -> float:
+    total_chars = sum(len(m.get("content", "")) for m in messages)
+    estimated_tokens = total_chars / 4
+    return min(estimated_tokens / MAX_CONTEXT_TOKENS, 1.0)
+
+def should_refresh_context(user_id: str, messages: List[Dict[str, Any]]) -> bool:
+    usage = calculate_context_usage(messages)
+    user_contexts[user_id] = {
+        "usage": usage,
+        "last_check": datetime.utcnow(),
+        "messages_count": len(messages)
+    }
+    return usage >= CONTEXT_THRESHOLD
+
+def get_context_info(user_id: str) -> Dict[str, Any]:
+    return user_contexts.get(user_id, {"usage": 0.0, "messages_count": 0})
 
 
 async def chat_with_ai(
@@ -55,3 +78,58 @@ async def chat_with_ai(
         raise RuntimeError("SiliconFlow returned non-text content")
 
     return content.strip()
+
+async def transcribe_audio(audio_bytes: bytes) -> str:
+    """Transcribe audio usando Whisper de SiliconFlow"""
+    if not SILICONFLOW_API_KEY:
+        raise RuntimeError("SILICONFLOW_API_KEY is not set")
+    
+    import base64
+    
+    url = f"{SILICONFLOW_BASE_URL}/audio/transcriptions"
+    
+    audio_b64 = base64.b64encode(audio_bytes).decode()
+    
+    body = {
+        "model": "openai/whisper-1",
+        "file": audio_b64,
+        "response_format": "json"
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {SILICONFLOW_API_KEY}",
+    }
+    
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, headers=headers, json=body)
+        resp.raise_for_status()
+        result = resp.json()
+    
+    return result.get("text", "")
+
+async def text_to_speech(text: str) -> str:
+    """Convierte texto a voz usando API de SiliconFlow (retorna URL o base64)"""
+    if not SILICONFLOW_API_KEY:
+        raise RuntimeError("SILICONFLOW_API_KEY is not set")
+    
+    url = f"{SILICONFLOW_BASE_URL}/audio/speech"
+    
+    body = {
+        "model": "sixteenlabs/valle-medium",
+        "input": text,
+        "voice": "male_1",
+        "response_format": "mp3"
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {SILICONFLOW_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, headers=headers, json=body)
+        resp.raise_for_status()
+    
+    import base64
+    audio_b64 = base64.b64encode(resp.content).decode()
+    return f"data:audio/mp3;base64,{audio_b64}"
