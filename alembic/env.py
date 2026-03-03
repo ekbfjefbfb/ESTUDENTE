@@ -84,37 +84,12 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        # Ensure alembic_version.version_num can store long revision ids.
-        # Default Alembic uses VARCHAR(32); our revision ids are longer.
+        # Ensanchar la columna de versión de Alembic si existe
         try:
-            connection.execute(
-                text(
-                    """
-                    DO $$
-                    BEGIN
-                      IF EXISTS (
-                        SELECT 1 
-                        FROM information_schema.tables 
-                        WHERE table_name = 'alembic_version'
-                      ) THEN
-                        IF EXISTS (
-                          SELECT 1
-                          FROM information_schema.columns
-                          WHERE table_name = 'alembic_version'
-                            AND column_name = 'version_num'
-                            AND character_maximum_length IS NOT NULL
-                            AND character_maximum_length < 255
-                        ) THEN
-                          ALTER TABLE alembic_version
-                            ALTER COLUMN version_num TYPE VARCHAR(255);
-                        END IF;
-                      END IF;
-                    END $$;
-                    """
-                )
-            )
+            connection.execute(text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"))
             connection.commit()
         except Exception:
+            # Si falla (ej. la tabla aún no existe), Alembic la creará después
             pass
 
         context.configure(
