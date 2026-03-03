@@ -83,15 +83,17 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
+    # 1. Ensanchar la columna de versión ANTES de iniciar Alembic
+    # Usamos una conexión independiente para asegurar que el COMMIT sea inmediato
     with connectable.connect() as connection:
-        # Ensanchar la columna de versión de Alembic si existe
         try:
             connection.execute(text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"))
             connection.commit()
         except Exception:
-            # Si falla (ej. la tabla aún no existe), Alembic la creará después
             pass
 
+    # 2. Proceder con las migraciones normales
+    with connectable.connect() as connection:
         context.configure(
             connection=connection, target_metadata=target_metadata
         )
