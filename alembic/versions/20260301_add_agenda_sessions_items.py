@@ -8,6 +8,7 @@ Create Date: 2026-03-01
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -55,24 +56,26 @@ def upgrade():
     op.create_index("idx_agenda_chunks_session_id", "agenda_chunks", ["session_id"], unique=False)
     op.create_index("idx_agenda_chunks_user_id", "agenda_chunks", ["user_id"], unique=False)
 
-    agenda_item_type = sa.Enum(
+    agenda_item_type = postgresql.ENUM(
         "task",
         "event",
         "key_point",
         "summary",
         "reminder",
         name="agendaitemtype",
+        create_type=False
     )
-    agenda_item_status = sa.Enum(
+    agenda_item_status = postgresql.ENUM(
         "suggested",
         "confirmed",
         "done",
         "canceled",
         name="agendaitemstatus",
+        create_type=False
     )
 
-    agenda_item_type.create(op.get_bind(), checkfirst=True)
-    agenda_item_status.create(op.get_bind(), checkfirst=True)
+    op.execute("DO $$ BEGIN CREATE TYPE agendaitemtype AS ENUM ('task', 'event', 'key_point', 'summary', 'reminder'); EXCEPTION WHEN duplicate_object THEN null; END $$;")
+    op.execute("DO $$ BEGIN CREATE TYPE agendaitemstatus AS ENUM ('suggested', 'confirmed', 'done', 'canceled'); EXCEPTION WHEN duplicate_object THEN null; END $$;")
 
     op.create_table(
         "agenda_items",

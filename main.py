@@ -42,13 +42,11 @@ from database.db_enterprise import get_async_db
 # Routers
 from routers import (
     auth_routes,
-    unified_chat_router,  # ✅ ACTIVADO v4.0 - Chat unificado con 17 capacidades
-    smart_search_router,
+    unified_chat_router,
     apa7_pdf_router,
     class_notes_router,
     profile_router,
     agenda_router,
-    stt_router,
 )
 
 # Middlewares
@@ -123,43 +121,18 @@ async def lifespan(app: FastAPI):
             logger.warning(f" Database initialization warning: {e}")
     startup_tasks.append(init_database())
     
-    # Task 3: Precargar modelos AI en paralelo
+    # Task 3: Precargar modelo IA (Qwen via SiliconFlow)
     async def preload_ai_models():
-        logger.info(" Preloading AI models...")
-        model_tasks = []
-        
-        # Coqui TTS
-        async def load_coqui():
-            try:
-                from services.coqui_tts_service import coqui_tts_service
-                await asyncio.to_thread(coqui_tts_service._load_model)
-                logger.info("✅ Coqui TTS preloaded")
-            except Exception as e:
-                logger.warning(f"⚠️ Coqui TTS preload warning: {e}")
-        
-        # Whisper STT
-        async def load_whisper():
-            try:
-                from services.voice_service import voice_engine
-                await asyncio.to_thread(voice_engine.initialize_whisper)
-                logger.info("✅ Whisper model preloaded")
-            except Exception as e:
-                logger.warning(f"⚠️ Whisper preload warning: {e}")
-        
-        # Qwen 2.5 Omni
-        async def load_qwen():
-            try:
-                from services.qwen_client import initialize_qwen_client
-                ai_available = await initialize_qwen_client()
-                if ai_available:
-                    logger.info("✅ Qwen 2.5 Omni connected")
-                else:
-                    logger.warning("⚠️ Qwen no disponible (normal si servidor remoto)")
-            except Exception as e:
-                logger.warning(f"⚠️ Qwen init warning: {e}")
-        
-        model_tasks.extend([load_coqui(), load_whisper(), load_qwen()])
-        await asyncio.gather(*model_tasks, return_exceptions=True)
+        logger.info("🤖 Initializing AI client...")
+        try:
+            from services.qwen_client import initialize_qwen_client
+            ai_available = await initialize_qwen_client()
+            if ai_available:
+                logger.info("✅ Qwen3-VL connected via SiliconFlow")
+            else:
+                logger.warning("⚠️ Qwen no disponible (normal si servidor remoto)")
+        except Exception as e:
+            logger.warning(f"⚠️ Qwen init warning: {e}")
     
     startup_tasks.append(preload_ai_models())
     
@@ -189,8 +162,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=APP_NAME,
-    version="4.0",  # ✅ v4.0 - Ultra optimizado
-    description=f"{APP_DESCRIPTION} - 17 Capacidades IA + Performance Optimizado",
+    version="5.0",
+    description=f"{APP_DESCRIPTION} - Qwen3-VL-32B via SiliconFlow",
     lifespan=lifespan,
     default_response_class=ORJSONResponse,
     docs_url="/docs" if DEBUG else None,
@@ -371,11 +344,7 @@ async def metrics():
 app.include_router(auth_routes.router, prefix="/api/auth", tags=["Authentication"])
 
 # Chat e IA
-app.include_router(unified_chat_router.router, prefix="/api", tags=["💬 Chat IA Unificado"])  # ✅ ACTIVADO v4.0 - 17 capacidades
-# personal_agent_router eliminado - funcionalidad en unified_chat
-
-# Búsqueda
-app.include_router(smart_search_router.router, tags=["Smart Search"])
+app.include_router(unified_chat_router.router, prefix="/api", tags=["💬 Chat IA"])
 
 # Documents
 app.include_router(apa7_pdf_router.router, tags=["Documents"])
@@ -388,9 +357,6 @@ app.include_router(profile_router.router, tags=["Profile"])
 
 # Agenda IA
 app.include_router(agenda_router.router, tags=["Agenda"])
-
-# STT
-app.include_router(stt_router.router, tags=["STT"])
 
 # =============================================
 # STARTUP MESSAGE

@@ -257,11 +257,11 @@ FEATURE_FLAGS = {
 }
 
 # =========================
-# Información de la Aplicación v5.0 🔥
+# Información de la Aplicación v5.0
 # =========================
-APP_NAME = "Backend Súper IA v5.0 - 8x RTX A6000 Edition"
+APP_NAME = "Backend Súper IA v5.0"
 APP_VERSION = "5.0.0"
-APP_DESCRIPTION = "Backend Enterprise - Qwen 2.5 Omni (multimodal), HunyuanVideo, Whisper Large-v3, Coqui XTTS-v2 - Arquitectura Distribuida"
+APP_DESCRIPTION = "Backend Enterprise - Qwen3-VL-32B via SiliconFlow"
 
 # =========================
 # Timeouts y Workers v4.0 - Optimizados

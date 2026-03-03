@@ -8,12 +8,8 @@ from . import (
     # Autenticación
     auth_routes,
     
-    
     # Chat e IA
-    unified_chat_router,  # ✅ ACTIVADO v4.0 - 17 capacidades integradas
-    
-    # Búsqueda
-    smart_search_router,
+    unified_chat_router,
 
     # Documents
     apa7_pdf_router,
@@ -26,11 +22,6 @@ from . import (
 
     # Agenda
     agenda_router,
-
-    # STT
-    stt_router,
-    
-    # Voice
     
 )
 
@@ -41,9 +32,6 @@ __all__ = [
     
     # Chat e IA
     "unified_chat_router",
-    
-    # Búsqueda
-    "smart_search_router",
 
     # Documents
     "apa7_pdf_router",
@@ -56,9 +44,6 @@ __all__ = [
 
     # Agenda
     "agenda_router",
-
-    # STT
-    "stt_router",
 ]
 
 __version__ = "1.0.1"

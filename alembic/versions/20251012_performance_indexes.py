@@ -20,65 +20,74 @@ def upgrade():
     🚀 Mejora: 10-50x más rápido en queries de búsqueda
     """
     
-    # Índice para búsqueda de usuarios por email (login, validación)
-    # Antes: Table scan completo, Después: Index lookup O(log n)
-    op.create_index(
-        'idx_users_email',
-        'users',
-        ['email'],
-        unique=False
-    )
-    print("✅ Índice idx_users_email creado")
+    # Usar bloques condicionales para crear índices solo si las tablas existen y los índices no
+    # Evita UndefinedTable y DuplicateIndex en NHost/Render
+
+    # 1. idx_users_email
+    op.execute("""
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users') THEN
+                IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'idx_users_email') THEN
+                    CREATE INDEX idx_users_email ON users (email);
+                END IF;
+            END IF;
+        END $$;
+    """)
     
-    # Índice compuesto para mensajes de chat por usuario y timestamp
-    # Query común: SELECT * FROM chat_messages WHERE user_id = X ORDER BY timestamp DESC
-    op.create_index(
-        'idx_chat_messages_user_timestamp',
-        'chat_messages',
-        ['user_id', 'timestamp'],
-        unique=False
-    )
-    print("✅ Índice idx_chat_messages_user_timestamp creado")
+    # 2. idx_chat_messages_user_timestamp
+    op.execute("""
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'chat_messages') THEN
+                IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'idx_chat_messages_user_timestamp') THEN
+                    CREATE INDEX idx_chat_messages_user_timestamp ON chat_messages (user_id, timestamp);
+                END IF;
+            END IF;
+        END $$;
+    """)
     
-    # Índice compuesto para documentos por usuario y tipo
-    # Query común: SELECT * FROM documents WHERE user_id = X AND document_type = 'pdf'
-    op.create_index(
-        'idx_documents_user_type',
-        'documents',
-        ['user_id', 'document_type'],
-        unique=False
-    )
-    print("✅ Índice idx_documents_user_type creado")
+    # 3. idx_documents_user_type
+    op.execute("""
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'documents') THEN
+                IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'idx_documents_user_type') THEN
+                    CREATE INDEX idx_documents_user_type ON documents (user_id, document_type);
+                END IF;
+            END IF;
+        END $$;
+    """)
     
-    # Índice para búsqueda de sesiones activas
-    # Query común: SELECT * FROM sessions WHERE is_active = true
-    op.create_index(
-        'idx_sessions_active',
-        'sessions',
-        ['is_active'],
-        unique=False
-    )
-    print("✅ Índice idx_sessions_active creado")
+    # 4. idx_sessions_active
+    op.execute("""
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'sessions' AND column_name = 'is_active') THEN
+                IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'idx_sessions_active') THEN
+                    CREATE INDEX idx_sessions_active ON sessions (is_active);
+                END IF;
+            END IF;
+        END $$;
+    """)
     
-    # Índice para búsqueda de invitaciones por código
-    # Query común: SELECT * FROM invitations WHERE invitation_code = 'XXXXX'
-    op.create_index(
-        'idx_invitations_code',
-        'invitations',
-        ['invitation_code'],
-        unique=False
-    )
-    print("✅ Índice idx_invitations_code creado")
+    # 5. idx_invitations_code
+    op.execute("""
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'invitations' AND column_name = 'invitation_code') THEN
+                IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'idx_invitations_code') THEN
+                    CREATE INDEX idx_invitations_code ON invitations (invitation_code);
+                END IF;
+            END IF;
+        END $$;
+    """)
     
-    # Índice para búsqueda de suscripciones por usuario
-    # Query común: SELECT * FROM subscriptions WHERE user_id = X AND is_active = true
-    op.create_index(
-        'idx_subscriptions_user_active',
-        'subscriptions',
-        ['user_id', 'is_active'],
-        unique=False
-    )
-    print("✅ Índice idx_subscriptions_user_active creado")
+    # 6. idx_subscriptions_user_active
+    op.execute("""
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'subscriptions' AND column_name = 'is_active') THEN
+                IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'idx_subscriptions_user_active') THEN
+                    CREATE INDEX idx_subscriptions_user_active ON subscriptions (user_id, is_active);
+                END IF;
+            END IF;
+        END $$;
+    """)
     
     print("\n🔥 MIGRACIÓN COMPLETADA: Todos los índices creados exitosamente")
     print("📊 Mejora esperada: 10-50x más rápido en queries de búsqueda")
