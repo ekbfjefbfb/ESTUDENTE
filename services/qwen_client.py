@@ -1,5 +1,5 @@
 """
-Cliente HTTP unificado para Qwen 2.5 Omni (Ollama)
+Cliente HTTP unificado para Qwen via SiliconFlow
 Reemplaza: deepseek_client.py, deepseek_vl_client.py
 Modelo multimodal: Chat + Visión + Audio
 """
@@ -8,6 +8,7 @@ import httpx
 import logging
 import asyncio
 import base64
+import os
 from typing import Optional, Dict, Any, List, AsyncGenerator
 from pathlib import Path
 
@@ -16,52 +17,53 @@ logger = logging.getLogger(__name__)
 
 class QwenClient:
     """
-    Cliente HTTP para Ollama con Qwen 2.5 Omni 57B
+    Cliente HTTP para Qwen via SiliconFlow
     
     Características:
     - Chat texto
     - Análisis de imágenes (visión)
-    - Transcripción de audio (STT)
-    - Multimodal (texto + imagen + audio combinados)
+    - Multimodal (texto + imagen)
     - Streaming de respuestas
     """
     
     def __init__(
         self,
-        base_url: str = "http://localhost:11434",
-        model: str = "qwen2.5-omni:57b",
+        base_url: str = None,
+        model: str = "Qwen/Qwen3-VL-32B-Instruct",
         timeout: float = 300.0
     ):
-        """
-        Inicializa el cliente de Qwen.
-        
-        Args:
-            base_url: URL del servidor Ollama
-            model: Nombre del modelo (qwen2.5-omni:57b)
-            timeout: Timeout en segundos
-        """
-        self.base_url = base_url.rstrip("/")
+        self.base_url = (base_url or os.getenv("SILICONFLOW_URL", "https://api.siliconflow.cn/v1")).rstrip("/")
         self.model = model
+        self.api_key = os.getenv("SILICONFLOW_API_KEY", "")
         self.client = httpx.AsyncClient(timeout=timeout)
-        logger.info(f"QwenClient inicializado: {base_url} modelo={model}")
+        logger.info(f"QwenClient inicializado: {self.base_url} modelo={self.model}")
     
     async def health_check(self) -> bool:
-        """Verifica que Ollama esté corriendo y Qwen disponible."""
+        """Verifica que SiliconFlow esté disponible."""
         try:
-            # Check 1: Ollama está corriendo
-            response = await self.client.get(f"{self.base_url}/api/tags")
-            response.raise_for_status()
-            
-            # Check 2: Qwen está instalado
-            models = response.json().get("models", [])
-            model_names = [m["name"] for m in models]
-            
-            if not any("qwen" in name.lower() for name in model_names):
-                logger.warning(f"Qwen no encontrado. Modelos: {model_names}")
-                logger.info("Descarga el modelo con: ollama pull qwen2.5-omni:57b")
+            if not self.api_key:
+                logger.warning("SiliconFlow API key no configurada")
                 return False
             
-            logger.info(f"✅ Qwen disponible: {self.model}")
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            response = await self.client.get(
+                f"{self.base_url}/models",
+                headers=headers
+            )
+            response.raise_for_status()
+            
+            models = response.json().get("data", [])
+            model_names = [m.get("id", "") for m in models]
+            
+            if not any("qwen" in name.lower() for name in model_names):
+                logger.warning(f"Qwen no encontrado en SiliconFlow. Modelos disponibles: {model_names[:5]}")
+                return False
+            
+            logger.info("✅ SiliconFlow con Qwen disponible")
             return True
             
         except Exception as e:

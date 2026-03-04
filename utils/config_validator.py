@@ -15,22 +15,20 @@ REQUIRED_PRODUCTION_VARS = {
     # Core
     "SECRET_KEY": "Clave secreta para JWT y encriptación",
     "DATABASE_URL": "URL de la base de datos PostgreSQL",
-    "REDIS_URL": "URL del servidor Redis",
     
-    # AI Server
-    "AI_SERVER_URL": "URL del servidor de IA con modelos",
-    "USE_REMOTE_AI": "Flag para usar servidor IA remoto",
+    # AI Server - ahora opcional (SiliconFlow usa SILICONFLOW_API_KEY)
+    # "AI_SERVER_URL": "URL del servidor de IA con modelos",
     
-    # Pagos (al menos uno)
-    "payment_gateway": [
-        ("STRIPE_SECRET_KEY", "Stripe payment gateway"),
-        ("PAYPAL_CLIENT_ID", "PayPal payment gateway"),
-        ("MERCADOPAGO_ACCESS_TOKEN", "MercadoPago payment gateway"),
-    ],
+    # Pagos (al menos uno) - ahora opcional
+    # "payment_gateway": [
+    #     ("STRIPE_SECRET_KEY", "Stripe payment gateway"),
+    #     ("PAYPAL_CLIENT_ID", "PayPal payment gateway"),
+    #     ("MERCADOPAGO_ACCESS_TOKEN", "MercadoPago payment gateway"),
+    # ],
     
-    # SMS/WhatsApp
-    "TWILIO_ACCOUNT_SID": "Twilio para SMS y WhatsApp",
-    "TWILIO_AUTH_TOKEN": "Twilio authentication",
+    # SMS/WhatsApp - ahora opcional
+    # "TWILIO_ACCOUNT_SID": "Twilio para SMS y WhatsApp",
+    # "TWILIO_AUTH_TOKEN": "Twilio authentication",
 }
 
 # Variables recomendadas (warnings si faltan)
