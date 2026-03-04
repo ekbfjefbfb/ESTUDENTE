@@ -311,16 +311,22 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         health_status["components"]["cache"] = f"unhealthy: {str(e)}"
         health_status["status"] = "degraded"
     
-    # Check AI
+    # Check AI (SiliconFlow)
     try:
-        from config import AI_SERVER_URL
+        from config import SILICONFLOW_API_KEY, SILICONFLOW_URL
         import httpx
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{AI_SERVER_URL}/api/tags")
-            if response.status_code == 200:
-                health_status["components"]["ai_models"] = "healthy"
-            else:
-                health_status["components"]["ai_models"] = "degraded"
+        if SILICONFLOW_API_KEY:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    f"{SILICONFLOW_URL}/models",
+                    headers={"Authorization": f"Bearer {SILICONFLOW_API_KEY}"}
+                )
+                if response.status_code == 200:
+                    health_status["components"]["ai_models"] = "healthy"
+                else:
+                    health_status["components"]["ai_models"] = "degraded"
+        else:
+            health_status["components"]["ai_models"] = "unconfigured"
     except Exception:
         health_status["components"]["ai_models"] = "unavailable"
     

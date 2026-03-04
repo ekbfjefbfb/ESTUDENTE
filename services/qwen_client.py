@@ -302,11 +302,12 @@ class QwenClient:
             raise
     
     async def list_models(self) -> List[Dict[str, Any]]:
-        """Lista todos los modelos disponibles en Ollama."""
+        """Lista todos los modelos disponibles en SiliconFlow."""
         try:
-            response = await self.client.get(f"{self.base_url}/api/tags")
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            response = await self.client.get(f"{self.base_url}/models", headers=headers)
             response.raise_for_status()
-            return response.json().get("models", [])
+            return response.json().get("data", [])
         except Exception as e:
             logger.error(f"Error listando modelos: {e}")
             return []
