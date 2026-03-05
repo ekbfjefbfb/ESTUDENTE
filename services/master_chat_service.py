@@ -50,12 +50,7 @@ except ImportError:
     IntegrationsService = None
     INTEGRATIONS_AVAILABLE = False
 
-try:
-    from services.deepseek_livesearch_service import DeepSeekLiveSearchService
-    DEEPSEEK_SEARCH_AVAILABLE = True
-except ImportError:
-    DeepSeekLiveSearchService = None
-    DEEPSEEK_SEARCH_AVAILABLE = False
+DEEPSEEK_SEARCH_AVAILABLE = False
 
 # =============================================
 # CONFIGURACIÓN DE LOGGING EMPRESARIAL
