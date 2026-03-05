@@ -1,6 +1,6 @@
 """
 Unified Chat Router Enterprise v5.0
-Chat con IA + Voz + Monitoreo de Contexto Automático
+Chat con IA + Voz + Monitoreo de Contexto Automático + Contexto de Tareas y Grabaciones
 Diseñado para integración óptima con frontend
 """
 
@@ -8,7 +8,7 @@ from fastapi import APIRouter, WebSocket, UploadFile, File, Depends, HTTPExcepti
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 import json
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 from services.siliconflow_ai_service import chat_with_ai, should_refresh_context, get_context_info
 from utils.auth import get_current_user
@@ -31,6 +31,7 @@ class ChatResponse(BaseModel):
     timestamp: str
     context: Dict[str, Any]
     message_id: Optional[str] = None
+    actions: Optional[List[Dict[str, Any]]] = None
 
 class VoiceChatResponse(BaseModel):
     success: bool
@@ -54,6 +55,132 @@ class ErrorResponse(BaseModel):
     timestamp: str
 
 # =========================
+# FUNCIONES DE CONTEXTO
+# =========================
+
+async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
+    """Obtiene contexto completo del usuario: tareas + sesiones recientes"""
+    from sqlalchemy import and_, select
+    from models.models import AgendaItem, AgendaItemType, AgendaItemStatus, AgendaSession
+    
+    context = {
+        "tasks_today": [],
+        "tasks_upcoming": [],
+        "recent_sessions": [],
+        "key_points": []
+    }
+    
+    try:
+        from database.db_enterprise import get_primary_session
+        async with get_primary_session() as db:
+            today = date.today()
+            end_week = today + timedelta(days=7)
+            
+            # Tareas de hoy
+            stmt_tasks_today = select(AgendaItem).where(
+                and_(
+                    AgendaItem.user_id == user_id,
+                    AgendaItem.item_type == AgendaItemType.TASK,
+                    AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
+                    AgendaItem.status != AgendaItemStatus.DONE
+                )
+            ).limit(10)
+            result = await db.execute(stmt_tasks_today)
+            tasks_today = result.scalars().all()
+            context["tasks_today"] = [
+                {"id": t.id, "title": t.title, "due_date": t.due_date.isoformat() if t.due_date else None}
+                for t in tasks_today
+            ]
+            
+            # Tareas próximas (próxima semana)
+            stmt_tasks_upcoming = select(AgendaItem).where(
+                and_(
+                    AgendaItem.user_id == user_id,
+                    AgendaItem.item_type == AgendaItemType.TASK,
+                    AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
+                    AgendaItem.due_date < datetime.combine(end_week, datetime.max.time()),
+                    AgendaItem.status != AgendaItemStatus.DONE
+                )
+            ).order_by(AgendaItem.due_date).limit(10)
+            result = await db.execute(stmt_tasks_upcoming)
+            tasks_upcoming = result.scalars().all()
+            context["tasks_upcoming"] = [
+                {"id": t.id, "title": t.title, "due_date": t.due_date.isoformat() if t.due_date else None}
+                for t in tasks_upcoming
+            ]
+            
+            # Puntos clave recientes
+            stmt_points = select(AgendaItem).where(
+                and_(
+                    AgendaItem.user_id == user_id,
+                    AgendaItem.item_type == AgendaItemType.KEY_POINT,
+                    AgendaItem.created_at >= datetime.combine(today - timedelta(days=7), datetime.min.time())
+                )
+            ).limit(5)
+            result = await db.execute(stmt_points)
+            key_points = result.scalars().all()
+            context["key_points"] = [
+                {"id": p.id, "title": p.title, "content": p.content[:200] if p.content else ""}
+                for p in key_points
+            ]
+            
+            # Sesiones recientes con transcripción
+            stmt_sessions = select(AgendaSession).where(
+                and_(
+                    AgendaSession.user_id == user_id,
+                    AgendaSession.live_transcript.isnot(None),
+                    AgendaSession.live_transcript != ""
+                )
+            ).order_by(AgendaSession.created_at.desc()).limit(3)
+            result = await db.execute(stmt_sessions)
+            sessions = result.scalars().all()
+            context["recent_sessions"] = [
+                {
+                    "id": s.id,
+                    "class_name": s.class_name,
+                    "topic": s.topic,
+                    "transcript_preview": (s.live_transcript or "")[:500]
+                }
+                for s in sessions
+            ]
+    except Exception as e:
+        pass  # Si falla, retornamos contexto vacío
+    
+    return context
+
+
+def build_context_prompt(user_context: Dict[str, Any]) -> str:
+    """Construye el prompt de contexto para la IA"""
+    prompt_parts = []
+    
+    if user_context.get("tasks_today"):
+        prompt_parts.append("📋 TAREAS DE HOY:")
+        for t in user_context["tasks_today"]:
+            due = f" (fecha: {t['due_date']})" if t.get("due_date") else ""
+            prompt_parts.append(f"  - {t['title']}{due}")
+    
+    if user_context.get("tasks_upcoming"):
+        prompt_parts.append("\n📅 TAREAS PRÓXIMAS:")
+        for t in user_context["tasks_upcoming"][:5]:
+            due = f" (fecha: {t['due_date']})" if t.get("due_date") else ""
+            prompt_parts.append(f"  - {t['title']}{due}")
+    
+    if user_context.get("key_points"):
+        prompt_parts.append("\n🔑 PUNTOS CLAVE DE CLASES RECIENTES:")
+        for p in user_context["key_points"]:
+            prompt_parts.append(f"  - {p['title']}: {p['content'][:100]}...")
+    
+    if user_context.get("recent_sessions"):
+        prompt_parts.append("\n🎓 SESIONES RECIENTES:")
+        for s in user_context["recent_sessions"]:
+            prompt_parts.append(f"  - {s['class_name']}: {s['topic'] or 'Sin tema'}")
+    
+    if prompt_parts:
+        return "INFORMACIÓN DEL USUARIO:\n" + "\n".join(prompt_parts) + "\n\n"
+    return ""
+
+
+# =========================
 # ENDPOINTS
 # =========================
 
@@ -63,29 +190,45 @@ async def unified_chat_message(
     files: Optional[List[UploadFile]] = File(None),
     user: dict = Depends(get_current_user),
 ):
-    """Chat con IA - auto-monitorea contexto y refresca si es necesario"""
+    """Chat con IA - incluye contexto de tareas y grabaciones"""
     
     try:
-        messages = [{"role": "user", "content": message}]
+        user_id = user["user_id"]
         
-        context_info = get_context_info(user["user_id"])
-        needs_refresh = should_refresh_context(user["user_id"], messages)
+        # Obtener contexto del usuario
+        user_context = await get_user_context_for_chat(user_id)
+        context_prompt = build_context_prompt(user_context)
+        
+        # Construir mensajes con contexto
+        system_content = "Eres un asistente académico útil. Cuando el usuario pregunte sobre tareas, fechas límite, o temas de clases, usa la información de contexto proporcionada. Si detectas que el usuario necesita crear una tarea, sugiere crearla."
+        if context_prompt:
+            system_content += "\n\n" + context_prompt
+        
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": message}
+        ]
+        
+        context_info = get_context_info(user_id)
+        needs_refresh = should_refresh_context(user_id, messages)
         
         response = await chat_with_ai(
             messages=messages,
-            user=user["user_id"],
+            user=user_id,
             fast_reasoning=True
         )
         
         return ChatResponse(
             success=True,
             response=response,
-            user_id=user["user_id"],
+            user_id=user_id,
             timestamp=datetime.utcnow().isoformat(),
             context={
                 "usage_percent": round(context_info.get("usage", 0) * 100, 1),
                 "needs_refresh": needs_refresh,
-                "auto_refreshed": needs_refresh
+                "auto_refreshed": needs_refresh,
+                "tasks_count": len(user_context.get("tasks_today", [])),
+                "upcoming_tasks_count": len(user_context.get("tasks_upcoming", []))
             },
             message_id=f"msg_{datetime.utcnow().timestamp()}"
         )
@@ -106,30 +249,44 @@ async def unified_chat_message_json(
     request: ChatMessageRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Chat con IA - versión JSON body"""
+    """Chat con IA - versión JSON body con contexto"""
     
     try:
-        messages = [{"role": "user", "content": request.message}]
+        user_id = user["user_id"]
         
-        context_info = get_context_info(user["user_id"])
-        needs_refresh = should_refresh_context(user["user_id"], messages)
+        # Obtener contexto del usuario
+        user_context = await get_user_context_for_chat(user_id)
+        context_prompt = build_context_prompt(user_context)
+        
+        system_content = "Eres un asistente académico útil. Cuando el usuario pregunte sobre tareas, fechas límite, o temas de clases, usa la información de contexto proporcionada."
+        if context_prompt:
+            system_content += "\n\n" + context_prompt
+        
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": request.message}
+        ]
+        
+        context_info = get_context_info(user_id)
+        needs_refresh = should_refresh_context(user_id, messages)
         
         response = await chat_with_ai(
             messages=messages,
-            user=user["user_id"],
+            user=user_id,
             fast_reasoning=True
         )
         
         return ChatResponse(
             success=True,
             response=response,
-            user_id=user["user_id"],
+            user_id=user_id,
             timestamp=datetime.utcnow().isoformat(),
             context={
                 "usage_percent": round(context_info.get("usage", 0) * 100, 1),
                 "needs_refresh": needs_refresh,
                 "auto_refreshed": needs_refresh,
-                "session_id": request.session_id
+                "session_id": request.session_id,
+                "tasks_count": len(user_context.get("tasks_today", []))
             },
             message_id=f"msg_{datetime.utcnow().timestamp()}"
         )
