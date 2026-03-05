@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, Response, ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.proxy_fix import ProxyFix
 from prometheus_client import generate_latest
 import json_log_formatter
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -180,6 +181,9 @@ app = FastAPI(
 # =============================================
 # MIDDLEWARES v4.0 - Optimizados + Seguridad
 # =============================================
+
+# ProxyFix para Render.com y otros proxies
+app.add_middleware(ProxyFix, x_host=1, x_port=1, x_for=1, x_proto=1, x_prefix=1)
 
 # Trusted Host (Security)
 if ENVIRONMENT == "production":
