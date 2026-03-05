@@ -242,33 +242,16 @@ async def append_audio(
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_primary_session),
 ):
-    api_key = (os.getenv("GROQ_API_KEY") or "").strip()
-    if not api_key:
-        raise HTTPException(status_code=500, detail="missing_groq_api_key")
-
+    from services.siliconflow_ai_service import transcribe_audio, chat_with_ai
+    
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="empty_audio_file")
 
-    filename = file.filename or "audio"
-
-    def _do_transcribe():
-        from groq import Groq
-
-        client = Groq(api_key=api_key)
-        transcription = client.audio.transcriptions.create(
-            file=(filename, raw),
-            model="whisper-large-v3-turbo",
-            temperature=0,
-            response_format="verbose_json",
-        )
-        text = getattr(transcription, "text", None) or ""
-        return str(text)
-
     try:
-        text = await anyio.to_thread.run_sync(_do_transcribe)
-    except Exception:
-        raise HTTPException(status_code=502, detail="groq_transcription_failed")
+        text = await transcribe_audio(raw)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"transcription_failed: {str(e)}")
 
     text = (text or "").strip()
     if not text:

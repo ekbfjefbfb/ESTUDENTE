@@ -99,7 +99,7 @@ USE_REMOTE_AI = os.getenv("USE_REMOTE_AI", "false").lower() in ("true", "1", "t"
 
 # URL del servidor de IA (SiliconFlow, Ollama o modelos propios)
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY")
-SILICONFLOW_URL = "https://api.siliconflow.cn/v1"
+SILICONFLOW_URL = os.getenv("SILICONFLOW_URL", "https://api.siliconflow.cn/v1")
 
 if USE_REMOTE_AI:
     # Producción: Priorizar SiliconFlow si hay API Key, si no usar AI_SERVER_URL genérico

@@ -312,21 +312,6 @@ class QwenClient:
             logger.error(f"Error listando modelos: {e}")
             return []
     
-    async def pull_model(self, model_name: str) -> bool:
-        """Descarga un modelo de Ollama."""
-        try:
-            logger.info(f"📥 Descargando modelo: {model_name}")
-            response = await self.client.post(
-                f"{self.base_url}/api/pull",
-                json={"name": model_name}
-            )
-            response.raise_for_status()
-            logger.info(f"✅ Modelo descargado: {model_name}")
-            return True
-        except Exception as e:
-            logger.error(f"Error descargando modelo: {e}")
-            return False
-    
     async def close(self):
         """Cierra el cliente HTTP."""
         await self.client.aclose()
@@ -339,20 +324,16 @@ _qwen_client: Optional[QwenClient] = None
 
 async def get_qwen_client() -> QwenClient:
     """
-    Obtiene o crea la instancia global de QwenClient.
-    
-    Returns:
-        QwenClient instance
+    Obtiene o crea la instancia global de QwenClient via SiliconFlow.
     """
     global _qwen_client
     
     if _qwen_client is None:
-        from config import AI_SERVER_URL, AI_MODEL
-        _qwen_client = QwenClient(base_url=AI_SERVER_URL, model=AI_MODEL)
+        from config import SILICONFLOW_URL, AI_MODEL
+        _qwen_client = QwenClient(base_url=SILICONFLOW_URL, model=AI_MODEL)
         
-        # Verificar que funciona
         if not await _qwen_client.health_check():
-            logger.warning("⚠️ Qwen no disponible en el servidor")
+            logger.warning("⚠️ Qwen no disponible en SiliconFlow")
     
     return _qwen_client
 
