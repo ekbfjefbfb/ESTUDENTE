@@ -3,10 +3,10 @@ import os
 
 class Settings:
     SILICONFLOW_API_KEY: str = os.getenv("SILICONFLOW_API_KEY", "").strip()
-    SILICONFLOW_BASE_URL: str = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1").strip()
+    SILICONFLOW_BASE_URL: str = os.getenv("SILICONFLOW_URL", "https://api.siliconflow.cn/v1").strip()
 
-    # Models
-    LLM_MODEL: str = os.getenv("SILICONFLOW_LLM_MODEL", "deepseek-ai/DeepSeek-V3.2-Exp").strip()
+    # Models - Ahora solo Qwen3-VL-32B
+    LLM_MODEL: str = os.getenv("SILICONFLOW_LLM_MODEL", "Qwen/Qwen3-VL-32B-Instruct").strip()
     STT_MODEL: str = os.getenv("SILICONFLOW_STT_MODEL", "FunAudioLLM/SenseVoiceSmall").strip()
 
     # Storage
