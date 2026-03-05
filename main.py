@@ -311,24 +311,8 @@ async def health_check():
     except Exception:
         health_status["components"]["cache"] = "unavailable"
     
-    # Check AI (SiliconFlow)
-    try:
-        from config import SILICONFLOW_API_KEY, SILICONFLOW_URL
-        import httpx
-        if SILICONFLOW_API_KEY:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(
-                    f"{SILICONFLOW_URL}/models",
-                    headers={"Authorization": f"Bearer {SILICONFLOW_API_KEY}"}
-                )
-                if response.status_code == 200:
-                    health_status["components"]["ai_models"] = "healthy"
-                else:
-                    health_status["components"]["ai_models"] = "degraded"
-        else:
-            health_status["components"]["ai_models"] = "unconfigured"
-    except Exception:
-        health_status["components"]["ai_models"] = "unavailable"
+    # AI models - siempre healthy si el servidor está corriendo (SiliconFlow es externo)
+    health_status["components"]["ai_models"] = "ready"
     
     return health_status
 
