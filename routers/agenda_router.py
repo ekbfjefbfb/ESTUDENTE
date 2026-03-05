@@ -877,7 +877,7 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
 
                 # MVP: answer using unified chat model with transcript context
                 try:
-                    from services.gpt_service import chat_with_ai
+                    from services.siliconflow_ai_service import chat_with_ai
 
                     async with get_primary_session() as db:
                         session = await _get_session_or_404(db, user_id, session_id)
@@ -906,3 +906,235 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
 
     except WebSocketDisconnect:
         return
+
+
+# =========================
+# ENDPOINTS DE RESÚMENES Y TAREAS
+# =========================
+
+@router.get("/today/tasks")
+async def get_today_tasks(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_primary_session),
+):
+    """Obtener todas las tareas importantes del día actual"""
+    from datetime import date
+    
+    user_id = str(user.id) if hasattr(user, "id") else str(user.get("user_id"))
+    today = date.today()
+    
+    stmt = select(AgendaItem).where(
+        and_(
+            AgendaItem.user_id == user_id,
+            AgendaItem.item_type == AgendaItemType.TASK,
+            AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
+            AgendaItem.due_date < datetime.combine(today, datetime.max.time()),
+            AgendaItem.status != AgendaItemStatus.DONE
+        )
+    )
+    result = await db.execute(stmt)
+    items = result.scalars().all()
+    
+    return {
+        "success": True,
+        "date": today.isoformat(),
+        "tasks": [
+            {
+                "id": item.id,
+                "title": item.title,
+                "content": item.content,
+                "due_date": item.due_date.isoformat() if item.due_date else None,
+                "status": item.status.value,
+                "session_id": item.session_id
+            }
+            for item in items
+        ],
+        "count": len(items)
+    }
+
+
+@router.get("/upcoming/tasks")
+async def get_upcoming_tasks(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_primary_session),
+    days: int = 7,
+    limit: int = 20,
+):
+    """Obtener tareas importantes upcoming (próximos N días)"""
+    from datetime import date, timedelta
+    
+    user_id = str(user.id) if hasattr(user, "id") else str(user.get("user_id"))
+    today = date.today()
+    end_date = today + timedelta(days=days)
+    
+    stmt = select(AgendaItem).where(
+        and_(
+            AgendaItem.user_id == user_id,
+            AgendaItem.item_type == AgendaItemType.TASK,
+            AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
+            AgendaItem.due_date < datetime.combine(end_date, datetime.max.time()),
+            AgendaItem.status != AgendaItemStatus.DONE
+        )
+    ).order_by(AgendaItem.due_date).limit(limit)
+    
+    result = await db.execute(stmt)
+    items = result.scalars().all()
+    
+    return {
+        "success": True,
+        "from_date": today.isoformat(),
+        "to_date": end_date.isoformat(),
+        "tasks": [
+            {
+                "id": item.id,
+                "title": item.title,
+                "content": item.content,
+                "due_date": item.due_date.isoformat() if item.due_date else None,
+                "status": item.status.value,
+                "session_id": item.session_id,
+                "days_until_due": (item.due_date.date() - today).days if item.due_date else None
+            }
+            for item in items
+        ],
+        "count": len(items)
+    }
+
+
+@router.get("/sessions/{session_id}/summary")
+async def get_session_summary(
+    session_id: str,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_primary_session),
+):
+    """Generar resumen de una sesión de clase"""
+    user_id = str(user.id) if hasattr(user, "id") else str(user.get("user_id"))
+    
+    session = await _get_session_or_404(db, user_id, session_id)
+    
+    if not session.live_transcript:
+        return {
+            "success": False,
+            "error": "No hay transcripción disponible",
+            "error_code": "NO_TRANSCRIPT"
+        }
+    
+    try:
+        from services.siliconflow_ai_service import chat_with_ai
+        
+        summary = await chat_with_ai(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Eres un asistente académico que crea resúmenes de clases. "
+                               "Crea un resumen estructurado con: "
+                               "1. Temas principales "
+                               "2. Puntos clave "
+                               "3. Tareas asignadas "
+                               "4. Fechas importantes "
+                               "Sé conciso pero completo."
+                },
+                {"role": "user", "content": f"Transcripción de la clase:\n{session.live_transcript}"}
+            ],
+            user=user_id,
+            fast_reasoning=False,
+            max_tokens=2000
+        )
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "summary": summary,
+            "class_name": session.class_name,
+            "created_at": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/my/day-summary")
+async def get_day_summary(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_primary_session),
+):
+    """Resumen completo del día: sesiones, tareas, puntos clave"""
+    from datetime import date
+    
+    user_id = str(user.id) if hasattr(user, "id") else str(user.get("user_id"))
+    today = date.today()
+    
+    # Obtener sesiones de hoy
+    stmt_sessions = select(AgendaSession).where(
+        and_(
+            AgendaSession.user_id == user_id,
+            AgendaSession.created_at >= datetime.combine(today, datetime.min.time()),
+            AgendaSession.created_at < datetime.combine(today, datetime.max.time())
+        )
+    )
+    result_sessions = await db.execute(stmt_sessions)
+    sessions = result_sessions.scalars().all()
+    
+    # Obtener tareas de hoy
+    stmt_tasks = select(AgendaItem).where(
+        and_(
+            AgendaItem.user_id == user_id,
+            AgendaItem.item_type == AgendaItemType.TASK,
+            AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
+            AgendaItem.due_date < datetime.combine(today, datetime.max.time())
+        )
+    )
+    result_tasks = await db.execute(stmt_tasks)
+    tasks = result_tasks.scalars().all()
+    
+    # Obtener puntos clave de hoy
+    stmt_points = select(AgendaItem).where(
+        and_(
+            AgendaItem.user_id == user_id,
+            AgendaItem.item_type == AgendaItemType.KEY_POINT,
+            AgendaItem.created_at >= datetime.combine(today, datetime.min.time()),
+            AgendaItem.created_at < datetime.combine(today, datetime.max.time())
+        )
+    )
+    result_points = await db.execute(stmt_points)
+    key_points = result_points.scalars().all()
+    
+    return {
+        "success": True,
+        "date": today.isoformat(),
+        "sessions": [
+            {
+                "id": s.id,
+                "class_name": s.class_name,
+                "topic": s.topic,
+                "status": s.status.value,
+                "has_transcript": bool(s.live_transcript)
+            }
+            for s in sessions
+        ],
+        "tasks_today": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "content": t.content,
+                "due_date": t.due_date.isoformat() if t.due_date else None,
+                "status": t.status.value
+            }
+            for t in tasks
+        ],
+        "key_points": [
+            {
+                "id": p.id,
+                "title": p.title,
+                "content": p.content
+            }
+            for p in key_points
+        ],
+        "stats": {
+            "sessions_count": len(sessions),
+            "tasks_count": len(tasks),
+            "tasks_done": sum(1 for t in tasks if t.status == AgendaItemStatus.DONE),
+            "key_points_count": len(key_points)
+        }
+    }
+
+
+__all__ = ["router"]
