@@ -55,6 +55,139 @@ class ErrorResponse(BaseModel):
     timestamp: str
 
 # =========================
+# PERSISTENCIA DE PROGRESO
+# =========================
+
+_user_progress: Dict[str, Dict[str, Any]] = {}
+
+async def save_user_progress(user_id: str, message: str, structured_data: Dict[str, Any]):
+    """Guarda el progreso del usuario en memoria (en producción usar Redis/DB)"""
+    if user_id not in _user_progress:
+        _user_progress[user_id] = {
+            "today_tasks": [],
+            "week_tasks": [],
+            "completed_tasks": [],
+            "last_plan": [],
+            "last_interaction": None
+        }
+    
+    progress = _user_progress[user_id]
+    progress["last_interaction"] = datetime.utcnow().isoformat()
+    
+    # Agregar nuevas tareas
+    for task in structured_data.get("tasks", []):
+        if task.get("due_date"):
+            # Determinar si es para hoy o esta semana
+            try:
+                from datetime import date
+                task_date = date.fromisoformat(task["due_date"])
+                today = date.today()
+                if task_date == today:
+                    if not any(t.get("title") == task.get("title") for t in progress["today_tasks"]):
+                        progress["today_tasks"].append(task)
+                elif task_date > today:
+                    if not any(t.get("title") == task.get("title") for t in progress["week_tasks"]):
+                        progress["week_tasks"].append(task)
+            except:
+                pass
+    
+    # Guardar plan
+    if structured_data.get("plan"):
+        progress["last_plan"] = structured_data["plan"]
+
+
+@router.get("/progress")
+async def get_user_progress(user=Depends(get_current_user)):
+    """Obtener progreso del usuario (hoy, semana, completado, último plan)"""
+    user_id = user["user_id"]
+    
+    if user_id not in _user_progress:
+        # Cargar desde DB si está disponible
+        user_context = await get_user_context_for_chat(user_id)
+        return {
+            "success": True,
+            "today_tasks": user_context.get("tasks_today", []),
+            "week_tasks": user_context.get("tasks_upcoming", []),
+            "completed_tasks": [],
+            "last_plan": [],
+            "last_interaction": None
+        }
+    
+    progress = _user_progress[user_id]
+    return {
+        "success": True,
+        "today_tasks": progress.get("today_tasks", []),
+        "week_tasks": progress.get("week_tasks", []),
+        "completed_tasks": progress.get("completed_tasks", []),
+        "last_plan": progress.get("last_plan", []),
+        "last_interaction": progress.get("last_interaction")
+    }
+
+
+@router.post("/progress/complete/{task_id}")
+async def complete_task(task_id: str, user=Depends(get_current_user)):
+    """Marcar tarea como completada"""
+    user_id = user["user_id"]
+    
+    if user_id in _user_progress:
+        progress = _user_progress[user_id]
+        
+        # Buscar y mover a completadas
+        for task_list in ["today_tasks", "week_tasks"]:
+            for i, task in enumerate(progress.get(task_list, [])):
+                if task.get("id") == task_id or task.get("title"):
+                    progress["completed_tasks"].append({
+                        **task,
+                        "completed_at": datetime.utcnow().isoformat()
+                    })
+                    progress[task_list].pop(i)
+                    break
+    
+    return {"success": True, "message": "Tarea completada"}
+
+
+@router.post("/progress/plan")
+async def save_plan(plan: List[Dict[str, Any]], user=Depends(get_current_user)):
+    """Guardar plan de estudio"""
+    user_id = user["user_id"]
+    
+    if user_id not in _user_progress:
+        _user_progress[user_id] = {
+            "today_tasks": [],
+            "week_tasks": [],
+            "completed_tasks": [],
+            "last_plan": [],
+            "last_interaction": None
+        }
+    
+    _user_progress[user_id]["last_plan"] = plan
+    _user_progress[user_id]["last_interaction"] = datetime.utcnow().isoformat()
+    
+    return {"success": True, "message": "Plan guardado"}
+
+
+@router.get("/progress/stats")
+async def get_progress_stats(user=Depends(get_current_user)):
+    """Obtener estadísticas de progreso del usuario"""
+    user_id = user["user_id"]
+    
+    # Obtener datos de la DB
+    user_context = await get_user_context_for_chat(user_id)
+    
+    completed_today = 0
+    total_today = len(user_context.get("tasks_today", []))
+    
+    return {
+        "success": True,
+        "stats": {
+            "tasks_today": total_today,
+            "tasks_completed_today": completed_today,
+            "tasks_upcoming": len(user_context.get("tasks_upcoming", [])),
+            "completion_rate": round(completed_today / max(total_today, 1) * 100, 1)
+        }
+    }
+
+# =========================
 # FUNCIONES DE CONTEXTO
 # =========================
 
@@ -184,6 +317,72 @@ def build_context_prompt(user_context: Dict[str, Any]) -> str:
 # ENDPOINTS
 # =========================
 
+async def get_ai_response_with_structured_data(
+    user_id: str,
+    message: str,
+    user_context: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Obtiene respuesta de IA con datos estructurados (tasks, plan)"""
+    from services.siliconflow_ai_service import chat_with_ai
+    
+    context_prompt = build_context_prompt(user_context)
+    
+    # Prompt mejorado para respuestas estructuradas
+    system_content = """Eres un asistente académico organizado. Cuando respondas, SIEMPRE incluye:
+
+1. **tasks**: Lista de tareas mencionadas o creadas (cada tarea con: title, due_date si se menciona, priority)
+2. **plan**: Plan de estudio o acción para el usuario (array de pasos concretos)
+3. **response**: Tu respuesta en texto para el usuario
+
+Formato JSON obligatorio:
+{
+  "tasks": [{"title": "...", "due_date": "YYYY-MM-DD o null", "priority": "high/medium/low"}],
+  "plan": [{"step": "...", "duration": "minutos o null"}],
+  "response": "Tu respuesta en texto"
+}
+
+Si no hay tareas, usa array vacío: "tasks": []
+Si no hay plan, usa array vacío: "plan": []"""
+
+    if context_prompt:
+        system_content += "\n\n" + context_prompt
+    
+    messages = [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": message}
+    ]
+    
+    # Obtener respuesta de IA
+    ai_response = await chat_with_ai(
+        messages=messages,
+        user=user_id,
+        fast_reasoning=True
+    )
+    
+    # Intentar parsear como JSON estructurado
+    structured_data = {
+        "tasks": [],
+        "plan": [],
+        "response": ai_response
+    }
+    
+    # Buscar JSON en la respuesta
+    import re
+    json_match = re.search(r'\{[\s\S]*\}', ai_response)
+    if json_match:
+        try:
+            import json
+            parsed = json.loads(json_match.group())
+            if isinstance(parsed, dict):
+                structured_data["tasks"] = parsed.get("tasks", [])
+                structured_data["plan"] = parsed.get("plan", [])
+                structured_data["response"] = parsed.get("response", ai_response)
+        except:
+            pass  # Si falla el parseo, usar respuesta original
+    
+    return structured_data
+
+
 @router.post("/message", response_model=ChatResponse)
 async def unified_chat_message(
     message: str,
@@ -197,40 +396,32 @@ async def unified_chat_message(
         
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
-        context_prompt = build_context_prompt(user_context)
         
-        # Construir mensajes con contexto
-        system_content = "Eres un asistente académico útil. Cuando el usuario pregunte sobre tareas, fechas límite, o temas de clases, usa la información de contexto proporcionada. Si detectas que el usuario necesita crear una tarea, sugiere crearla."
-        if context_prompt:
-            system_content += "\n\n" + context_prompt
+        # Obtener respuesta estructurada
+        structured = await get_ai_response_with_structured_data(user_id, message, user_context)
         
-        messages = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": message}
-        ]
+        # Guardar progreso del usuario
+        await save_user_progress(user_id, message, structured)
         
         context_info = get_context_info(user_id)
-        needs_refresh = should_refresh_context(user_id, messages)
-        
-        response = await chat_with_ai(
-            messages=messages,
-            user=user_id,
-            fast_reasoning=True
-        )
         
         return ChatResponse(
             success=True,
-            response=response,
+            response=structured["response"],
             user_id=user_id,
             timestamp=datetime.utcnow().isoformat(),
             context={
                 "usage_percent": round(context_info.get("usage", 0) * 100, 1),
-                "needs_refresh": needs_refresh,
-                "auto_refreshed": needs_refresh,
+                "needs_refresh": False,
+                "auto_refreshed": False,
                 "tasks_count": len(user_context.get("tasks_today", [])),
                 "upcoming_tasks_count": len(user_context.get("tasks_upcoming", []))
             },
-            message_id=f"msg_{datetime.utcnow().timestamp()}"
+            message_id=f"msg_{datetime.utcnow().timestamp()}",
+            actions=[
+                {"type": "tasks", "data": structured["tasks"]},
+                {"type": "plan", "data": structured["plan"]}
+            ]
         )
         
     except Exception as e:
@@ -249,46 +440,39 @@ async def unified_chat_message_json(
     request: ChatMessageRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Chat con IA - versión JSON body con contexto"""
+    """Chat con IA - versión JSON body con contexto estructurado"""
     
     try:
         user_id = user["user_id"]
         
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
-        context_prompt = build_context_prompt(user_context)
         
-        system_content = "Eres un asistente académico útil. Cuando el usuario pregunte sobre tareas, fechas límite, o temas de clases, usa la información de contexto proporcionada."
-        if context_prompt:
-            system_content += "\n\n" + context_prompt
+        # Obtener respuesta estructurada
+        structured = await get_ai_response_with_structured_data(user_id, request.message, user_context)
         
-        messages = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": request.message}
-        ]
+        # Guardar progreso
+        await save_user_progress(user_id, request.message, structured)
         
         context_info = get_context_info(user_id)
-        needs_refresh = should_refresh_context(user_id, messages)
-        
-        response = await chat_with_ai(
-            messages=messages,
-            user=user_id,
-            fast_reasoning=True
-        )
         
         return ChatResponse(
             success=True,
-            response=response,
+            response=structured["response"],
             user_id=user_id,
             timestamp=datetime.utcnow().isoformat(),
             context={
                 "usage_percent": round(context_info.get("usage", 0) * 100, 1),
-                "needs_refresh": needs_refresh,
-                "auto_refreshed": needs_refresh,
+                "needs_refresh": False,
+                "auto_refreshed": False,
                 "session_id": request.session_id,
                 "tasks_count": len(user_context.get("tasks_today", []))
             },
-            message_id=f"msg_{datetime.utcnow().timestamp()}"
+            message_id=f"msg_{datetime.utcnow().timestamp()}",
+            actions=[
+                {"type": "tasks", "data": structured["tasks"]},
+                {"type": "plan", "data": structured["plan"]}
+            ]
         )
         
     except Exception as e:
