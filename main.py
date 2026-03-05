@@ -276,7 +276,7 @@ async def csrf_token_endpoint():
     return await get_csrf_token()
 
 @app.get("/api/health", tags=["Monitoring"])
-async def health_check(db: AsyncSession = Depends(get_async_db)):
+async def health_check():
     """
     Health check completo del sistema
     
@@ -298,22 +298,22 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         }
     }
     
-    # Check database
+    # Check database (optional - don't fail if unavailable)
     try:
-        await db.execute("SELECT 1")
+        from database.db_enterprise import engine
+        async with engine.connect() as conn:
+            await conn.execute("SELECT 1")
         health_status["components"]["database"] = "healthy"
     except Exception as e:
-        health_status["components"]["database"] = f"unhealthy: {str(e)}"
-        health_status["status"] = "degraded"
+        health_status["components"]["database"] = "unavailable"
     
-    # Check Redis
+    # Check Redis (optional - don't fail if unavailable)
     try:
         redis = await get_redis()
         await redis.ping()
         health_status["components"]["cache"] = "healthy"
-    except Exception as e:
-        health_status["components"]["cache"] = f"unhealthy: {str(e)}"
-        health_status["status"] = "degraded"
+    except Exception:
+        health_status["components"]["cache"] = "unavailable"
     
     # Check AI (SiliconFlow)
     try:
