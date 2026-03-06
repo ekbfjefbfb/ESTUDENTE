@@ -43,13 +43,13 @@ class DatabaseConfig:
     primary_url: str
     readonly_url: Optional[str] = None
     analytics_url: Optional[str] = None
-    primary_pool_size: int = 40  # � v4.0: 20 → 40 (mejor concurrencia)
-    primary_max_overflow: int = 80  # � v4.0: 40 → 80 (picos de carga)
-    readonly_pool_size: int = 30  # 🚀 v4.0: 15 → 30
-    readonly_max_overflow: int = 50  # 🚀 v4.0: 25 → 50
-    pool_timeout: int = 3  # � v4.0: 5 → 3 (fail-fast agresivo)
-    pool_recycle: int = 1800  # 🚀 v4.0: 3600 → 1800 (reciclar más frecuente)
-    query_timeout: int = 15  # 🚀 v4.0: 30 → 15 (queries más rápidas)
+    primary_pool_size: int = 20  # NHost preferido: evitar "too many connections"
+    primary_max_overflow: int = 10  # NHost preferido
+    readonly_pool_size: int = 10
+    readonly_max_overflow: int = 5
+    pool_timeout: int = 30  # Dar más tiempo para obtener conexión
+    pool_recycle: int = 1800
+    query_timeout: int = 30  # Queries más largas permitidas en NHost
     enable_query_cache: bool = True
     enable_metrics: bool = True
     enable_circuit_breaker: bool = True
@@ -401,11 +401,11 @@ def create_database_config() -> DatabaseConfig:
         readonly_url=readonly_url,
         analytics_url=analytics_url,
         primary_pool_size=int(os.getenv("DB_PRIMARY_POOL_SIZE", "20")),
-        primary_max_overflow=int(os.getenv("DB_PRIMARY_MAX_OVERFLOW", "30")),
-        readonly_pool_size=int(os.getenv("DB_READONLY_POOL_SIZE", "15")),
-        readonly_max_overflow=int(os.getenv("DB_READONLY_MAX_OVERFLOW", "25")),
+        primary_max_overflow=int(os.getenv("DB_PRIMARY_MAX_OVERFLOW", "10")),
+        readonly_pool_size=int(os.getenv("DB_READONLY_POOL_SIZE", "10")),
+        readonly_max_overflow=int(os.getenv("DB_READONLY_MAX_OVERFLOW", "5")),
         pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "30")),
-        pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "3600")),
+        pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "1800")),
         query_timeout=int(os.getenv("DB_QUERY_TIMEOUT", "30")),
         enable_query_cache=os.getenv("DB_ENABLE_QUERY_CACHE", "true").lower() == "true",
         enable_metrics=os.getenv("DB_ENABLE_METRICS", "true").lower() == "true",

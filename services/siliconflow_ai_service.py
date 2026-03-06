@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import os
 from typing import Any, Dict, List, Optional
@@ -64,10 +66,31 @@ async def chat_with_ai(
         "Content-Type": "application/json",
     }
 
+    # Implementación de reintentos con backoff exponencial para SiliconFlow
+    max_retries = 3
+    retry_delay = 1.0
+    
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, headers=headers, json=body)
-        resp.raise_for_status()
-        payload = resp.json()
+        for attempt in range(max_retries):
+            try:
+                resp = await client.post(url, headers=headers, json=body)
+                
+                if resp.status_code == 429:  # Rate Limit
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                
+                resp.raise_for_status()
+                payload = resp.json()
+                break
+            except (httpx.HTTPStatusError, httpx.RequestError) as e:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                raise RuntimeError(f"SiliconFlow API error after {max_retries} attempts: {str(e)}") from e
+
 
     try:
         content = payload["choices"][0]["message"]["content"]
@@ -88,6 +111,10 @@ async def transcribe_audio(audio_bytes: bytes) -> str:
     
     url = f"{SILICONFLOW_BASE_URL}/audio/transcriptions"
     
+    # Implementación de reintentos con backoff exponencial para Transcripción
+    max_retries = 3
+    retry_delay = 1.0
+    
     audio_b64 = base64.b64encode(audio_bytes).decode()
     
     body = {
@@ -101,9 +128,25 @@ async def transcribe_audio(audio_bytes: bytes) -> str:
     }
     
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, headers=headers, json=body)
-        resp.raise_for_status()
-        result = resp.json()
+        for attempt in range(max_retries):
+            try:
+                resp = await client.post(url, headers=headers, json=body)
+                
+                if resp.status_code == 429:
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                
+                resp.raise_for_status()
+                result = resp.json()
+                break
+            except (httpx.HTTPStatusError, httpx.RequestError) as e:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                raise RuntimeError(f"SiliconFlow Transcription error after {max_retries} attempts: {str(e)}") from e
     
     return result.get("text", "")
 
