@@ -297,10 +297,14 @@ async def health_check():
     
     # Check database (optional - don't fail if unavailable)
     try:
-        from database.db_enterprise import engine
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        health_status["components"]["database"] = "healthy"
+        from database.db_enterprise import db_manager, ConnectionType
+        primary_engine = db_manager.engines.get(ConnectionType.PRIMARY)
+        if primary_engine:
+            async with primary_engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            health_status["components"]["database"] = "healthy"
+        else:
+            health_status["components"]["database"] = "not_initialized"
     except Exception as e:
         health_status["components"]["database"] = f"unavailable: {str(e)[:100]}"
     
