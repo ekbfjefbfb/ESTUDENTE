@@ -245,43 +245,44 @@ class AuthService:
     async def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
         """Renueva el access token usando el refresh token"""
         try:
-            # Decodificar refresh token
-            payload = decode_refresh_token(refresh_token)
-            user_id = payload.get("user_id")
-            
+            # Decodificar refresh token (async)
+            payload = await decode_refresh_token(refresh_token)
+            user_id = payload.get("sub")
+
             if not user_id:
                 raise Exception("Token de refresh inválido")
-            
+
             # Verificar que el usuario existe
             async with get_db_session() as session:
                 stmt = select(User).where(User.id == user_id)
                 result = await session.execute(stmt)
                 user = result.scalar_one_or_none()
-                
+
                 if not user or not user.is_active:
                     raise Exception("Usuario no encontrado o inactivo")
-            
-            # Crear nuevo access token
-            new_access_token = create_access_token({"user_id": user_id})
-            
+
+            # Crear nuevo access token (async) - consistente con utils/auth
+            new_access_token = await create_access_token({"sub": str(user_id)})
+
             logger.info({
                 "event": "token_refreshed",
                 "user_id": user_id
             })
-            
+
             return {
                 "access_token": new_access_token,
-                "token_type": "bearer"
+                "token_type": "bearer",
+                "expires_in": 3600
             }
-            
+
         except Exception as e:
             logger.error({
-                "event": "token_refresh_failed",
+                "event": "refresh_token_failed",
                 "error": str(e)
             })
             raise Exception(f"Error renovando token: {str(e)}")
 
-    async def logout_user(self, user_id: int) -> bool:
+    async def logout_user(self, user_id: str) -> bool:
         """Cierra sesión del usuario"""
         try:
             # Invalidar sesiones en Redis si está disponible
@@ -303,7 +304,7 @@ class AuthService:
             })
             return False
 
-    async def get_user_profile(self, user_id: int) -> Optional[Dict[str, Any]]:
+    async def get_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Obtiene el perfil del usuario"""
         try:
             async with get_db_session() as session:
