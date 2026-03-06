@@ -58,47 +58,45 @@ class AntiAbuseService:
         return f"user_plan:{user_id}"
     
     async def get_user_plan(self, user_id: str) -> str:
-        """Obtiene el plan del usuario con caché inteligente."""
+        """Obtiene el plan del usuario con caché inteligente. Fail-safe."""
         try:
+            redis_client = await self.get_redis()
+            if not redis_client:
+                return "demo"
+
             # Intentar obtener del caché primero
             async def fetch_plan():
-                redis_client = await self.get_redis()
                 key = self._get_plan_key(user_id)
-                
                 plan = await redis_client.get(key)
                 user_plan = plan.decode('utf-8') if plan else "demo"
-                
                 if user_plan not in PLAN_CONFIGS:
                     user_plan = "demo"
-                
                 return user_plan
             
-            # Usar caché inteligente
             user_plan = await smart_cache.get_or_set(
                 "user_plan", 
                 user_id, 
                 fetch_plan,
-                ttl=600  # 10 minutos
+                ttl=600
             )
-            
             return user_plan
-            
         except Exception as e:
-            logger.error({
-                "event": "get_user_plan_error",
-                "user_id": user_id,
-                "error": str(e)
-            })
+            logger.error(f"Error fetching user plan: {e}")
             return "demo"
     
     async def check_rate_limit(self, user_id: str) -> Tuple[bool, Dict[str, Any]]:
         """
-        Verifica límite de requests por minuto con caché optimizado
+        Verifica límite de requests por minuto con caché optimizado y fail-safe
         
         Returns:
             Tuple[bool, dict]: (can_proceed, info)
         """
         try:
+            # Fail-safe: Verificar Redis primero
+            redis_client = await self.get_redis()
+            if not redis_client:
+                return True, {"blocked": False, "reason": "redis_unavailable", "fail_safe": True}
+
             # Obtener plan del usuario (ya optimizado con caché)
             user_plan = await self.get_user_plan(user_id)
             
