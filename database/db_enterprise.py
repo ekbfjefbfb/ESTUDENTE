@@ -417,57 +417,60 @@ db_config = create_database_config()
 db_manager = DatabaseEnterpriseManager(db_config)
 
 # ===============================================
-# 🔧 FUNCIONES DE UTILIDAD
+# 🔧 FUNCIONES DE UTILIDAD - CLASES CONTEXT MANAGER
 # ===============================================
 
-@asynccontextmanager
-async def get_primary_session() -> AsyncGenerator[AsyncSession, None]:
-    """Obtiene sesión de escritura principal - versión simplificada"""
-    if not db_manager.initialized:
-        await db_manager.initialize()
+class DatabaseSessionContext:
+    """Context manager explícito para sesiones de base de datos"""
     
-    connection_type = ConnectionType.PRIMARY
-    session_maker = db_manager.session_makers[connection_type]
-    session = session_maker()
+    def __init__(self, connection_type: ConnectionType = ConnectionType.PRIMARY):
+        self.connection_type = connection_type
+        self.session = None
     
-    try:
-        yield session
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
-    finally:
-        await session.close()
+    async def __aenter__(self) -> AsyncSession:
+        if not db_manager.initialized:
+            await db_manager.initialize()
+        
+        session_maker = db_manager.session_makers.get(self.connection_type)
+        if not session_maker:
+            self.connection_type = ConnectionType.PRIMARY
+            session_maker = db_manager.session_makers[self.connection_type]
+        
+        self.session = session_maker()
+        return self.session
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.session:
+            try:
+                if exc_type:
+                    await self.session.rollback()
+                else:
+                    await self.session.commit()
+            finally:
+                await self.session.close()
+        return False
 
 
-@asynccontextmanager
-async def get_readonly_session() -> AsyncGenerator[AsyncSession, None]:
-    """Obtiene sesión de solo lectura - versión simplificada"""
-    if not db_manager.initialized:
-        await db_manager.initialize()
-    
+# Instancias globales para reuso
+_primary_session_ctx = DatabaseSessionContext(ConnectionType.PRIMARY)
+
+async def get_primary_session() -> DatabaseSessionContext:
+    """Obtiene sesión de escritura principal"""
+    return DatabaseSessionContext(ConnectionType.PRIMARY)
+
+
+async def get_readonly_session() -> DatabaseSessionContext:
+    """Obtiene sesión de solo lectura"""
     connection_type = (
         ConnectionType.READONLY 
         if ConnectionType.READONLY in db_manager.engines 
         else ConnectionType.PRIMARY
     )
-    session_maker = db_manager.session_makers[connection_type]
-    session = session_maker()
-    
-    try:
-        yield session
-    except Exception:
-        raise
-    finally:
-        await session.close()
+    return DatabaseSessionContext(connection_type)
 
 
-@asynccontextmanager
-async def get_analytics_session() -> AsyncGenerator[AsyncSession, None]:
-    """Obtiene sesión para analytics - versión simplificada"""
-    if not db_manager.initialized:
-        await db_manager.initialize()
-    
+async def get_analytics_session() -> DatabaseSessionContext:
+    """Obtiene sesión para analytics"""
     connection_type = (
         ConnectionType.ANALYTICS 
         if ConnectionType.ANALYTICS in db_manager.engines 
@@ -475,30 +478,18 @@ async def get_analytics_session() -> AsyncGenerator[AsyncSession, None]:
         if ConnectionType.READONLY in db_manager.engines
         else ConnectionType.PRIMARY
     )
-    session_maker = db_manager.session_makers[connection_type]
-    session = session_maker()
-    
-    try:
-        yield session
-    except Exception:
-        raise
-    finally:
-        await session.close()
+    return DatabaseSessionContext(connection_type)
 
 
 # Compatibilidad con API anterior
-@asynccontextmanager
-async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_async_db() -> DatabaseSessionContext:
     """Función de compatibilidad"""
-    async with get_primary_session() as session:
-        yield session
+    return DatabaseSessionContext(ConnectionType.PRIMARY)
 
 
-@asynccontextmanager
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_db_session() -> DatabaseSessionContext:
     """Context manager de compatibilidad"""
-    async with get_primary_session() as session:
-        yield session
+    return DatabaseSessionContext(ConnectionType.PRIMARY)
 
 # ===============================================
 # 🏗️ FUNCIONES DE INICIALIZACIÓN
