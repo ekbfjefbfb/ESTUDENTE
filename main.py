@@ -115,8 +115,8 @@ async def lifespan(app: FastAPI):
     # Task 1: Database
     async def init_database():
         try:
-            from database.db_enterprise import init_db
-            await init_db()
+            from database.db_enterprise import init_database_enterprise
+            await init_database_enterprise()
             logger.info(" Database initialized")
         except Exception as e:
             logger.warning(f" Database initialization warning: {e}")
