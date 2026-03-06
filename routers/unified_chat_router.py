@@ -4,8 +4,8 @@ Chat con IA + Voz + Monitoreo de Contexto Automático + Contexto de Tareas y Gra
 Diseñado para integración óptima con frontend
 """
 
-from fastapi import APIRouter, WebSocket, UploadFile, File, Depends, HTTPException, Request
-from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, WebSocket, UploadFile, File, Depends, HTTPException, Request, StreamingResponse
+from typing import List, Optional, Dict, Any, AsyncGenerator
 from pydantic import BaseModel
 import json
 import logging
@@ -416,6 +416,7 @@ async def unified_chat_message(
     message: str,
     files: Optional[List[UploadFile]] = File(None),
     user: dict = Depends(get_current_user),
+    stream: bool = False,
 ):
     """Chat con IA - incluye contexto de tareas y grabaciones"""
     
@@ -425,7 +426,7 @@ async def unified_chat_message(
         # Pareto 80/20: Intentar obtener respuesta del cache semántico
         from services.embeddings_service import embeddings_service
         cached_response = await embeddings_service.get_cached_response(message)
-        if cached_response:
+        if cached_response and not stream:
             # Si hay cache hit, retornamos inmediatamente (latencia < 50ms)
             context_info = get_context_info(user_id)
             return ChatResponse(
@@ -443,7 +444,24 @@ async def unified_chat_message(
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
         
-        # Obtener respuesta estructurada
+        if stream:
+            # Endpoint optimizado para streaming real
+            async def response_generator():
+                full_response = []
+                async for chunk in await chat_with_ai(
+                    messages=[{"role": "user", "content": message}], # Simplificado para stream
+                    user=user_id,
+                    stream=True
+                ):
+                    full_response.append(chunk)
+                    yield f"data: {json.dumps({'content': chunk})}\n\n"
+                
+                # Al final, persistir si es posible (en background)
+                asyncio.create_task(embeddings_service.add_to_semantic_cache(message, "".join(full_response)))
+            
+            return StreamingResponse(response_generator(), media_type="text/event-stream")
+
+        # Obtener respuesta estructurada (no stream)
         structured = await get_ai_response_with_structured_data(user_id, message, user_context)
         
         # Guardar progreso del usuario
