@@ -12,6 +12,7 @@ from typing import Optional
 from fastapi import Request, HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+from fastapi.responses import JSONResponse
 import logging
 
 logger = logging.getLogger("csrf_middleware")
@@ -20,7 +21,6 @@ logger = logging.getLogger("csrf_middleware")
 CSRF_PROTECTED_PATHS = [
     "/api/payments/",
     "/api/subscriptions/subscribe",
-    "/api/auth/",
     "/api/permissions/grant",
     "/api/permissions/revoke",
     "/api/invitations/",
@@ -70,17 +70,25 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         
         if not csrf_token:
             logger.warning(f"CSRF token missing for {path}")
-            raise HTTPException(
+            return JSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="CSRF token missing. Include X-CSRF-Token header."
+                content={
+                    "success": False,
+                    "error": "csrf_token_missing",
+                    "message": "CSRF token missing. Include X-CSRF-Token header."
+                }
             )
         
         # Validar token CSRF
         if not self._validate_csrf_token(csrf_token):
             logger.warning(f"Invalid CSRF token for {path}")
-            raise HTTPException(
+            return JSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Invalid CSRF token"
+                content={
+                    "success": False,
+                    "error": "csrf_token_invalid",
+                    "message": "Invalid CSRF token"
+                }
             )
         
         # Token válido, continuar
