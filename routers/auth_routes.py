@@ -134,7 +134,6 @@ async def refresh_token_route(
 async def register_route(
     data: RegisterSchema,
     request: Request,
-    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     logger.info(f'{{"event": "register_attempt", "ip": "{request.client.host}"}}')
     try:
@@ -154,7 +153,6 @@ async def register_route(
 async def login_route(
     data: LoginSchema,
     request: Request,
-    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     logger.info(f'{{"event": "login_attempt", "ip": "{request.client.host}"}}')
     try:
