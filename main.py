@@ -239,12 +239,16 @@ app.add_middleware(PreValidationMiddleware)
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     # Handler global para excepciones no capturadas
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    logger.error(f"Unhandled exception on {request.url.path}: {exc}", exc_info=True)
+    import traceback
+    stack_trace = traceback.format_exc() if DEBUG else None
+    
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "error": "Internal server error",
-            "message": str(exc) if DEBUG else "An unexpected error occurred",
+            "message": str(exc),
+            "traceback": stack_trace,
             "request_id": request.headers.get("X-Request-ID", "unknown")
         }
     )
