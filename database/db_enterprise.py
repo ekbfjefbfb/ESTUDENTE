@@ -417,60 +417,39 @@ db_config = create_database_config()
 db_manager = DatabaseEnterpriseManager(db_config)
 
 # ===============================================
-# 🔧 FUNCIONES DE UTILIDAD - CLASES CONTEXT MANAGER
+# 🔧 FUNCIONES DE UTILIDAD - SIMPLE Y DIRECTO
 # ===============================================
 
-class DatabaseSessionContext:
-    """Context manager explícito para sesiones de base de datos"""
+async def get_primary_session():
+    """Obtiene sesión de escritura principal - simple y directo"""
+    if not db_manager.initialized:
+        await db_manager.initialize()
     
-    def __init__(self, connection_type: ConnectionType = ConnectionType.PRIMARY):
-        self.connection_type = connection_type
-        self.session = None
-    
-    async def __aenter__(self) -> AsyncSession:
-        if not db_manager.initialized:
-            await db_manager.initialize()
-        
-        session_maker = db_manager.session_makers.get(self.connection_type)
-        if not session_maker:
-            self.connection_type = ConnectionType.PRIMARY
-            session_maker = db_manager.session_makers[self.connection_type]
-        
-        self.session = session_maker()
-        return self.session
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self.session:
-            try:
-                if exc_type:
-                    await self.session.rollback()
-                else:
-                    await self.session.commit()
-            finally:
-                await self.session.close()
-        return False
+    session_maker = db_manager.session_makers.get(ConnectionType.PRIMARY)
+    session = session_maker()
+    return session
 
 
-# Instancias globales para reuso
-_primary_session_ctx = DatabaseSessionContext(ConnectionType.PRIMARY)
-
-async def get_primary_session() -> DatabaseSessionContext:
-    """Obtiene sesión de escritura principal"""
-    return DatabaseSessionContext(ConnectionType.PRIMARY)
-
-
-async def get_readonly_session() -> DatabaseSessionContext:
+async def get_readonly_session():
     """Obtiene sesión de solo lectura"""
+    if not db_manager.initialized:
+        await db_manager.initialize()
+    
     connection_type = (
         ConnectionType.READONLY 
         if ConnectionType.READONLY in db_manager.engines 
         else ConnectionType.PRIMARY
     )
-    return DatabaseSessionContext(connection_type)
+    session_maker = db_manager.session_makers.get(connection_type)
+    session = session_maker()
+    return session
 
 
-async def get_analytics_session() -> DatabaseSessionContext:
+async def get_analytics_session():
     """Obtiene sesión para analytics"""
+    if not db_manager.initialized:
+        await db_manager.initialize()
+    
     connection_type = (
         ConnectionType.ANALYTICS 
         if ConnectionType.ANALYTICS in db_manager.engines 
@@ -478,18 +457,20 @@ async def get_analytics_session() -> DatabaseSessionContext:
         if ConnectionType.READONLY in db_manager.engines
         else ConnectionType.PRIMARY
     )
-    return DatabaseSessionContext(connection_type)
+    session_maker = db_manager.session_makers.get(connection_type)
+    session = session_maker()
+    return session
 
 
-# Compatibilidad con API anterior
-async def get_async_db() -> DatabaseSessionContext:
+# Compatibilidad con API anterior - mantener nombres originales
+async def get_async_db():
     """Función de compatibilidad"""
-    return DatabaseSessionContext(ConnectionType.PRIMARY)
+    return await get_primary_session()
 
 
-async def get_db_session() -> DatabaseSessionContext:
+async def get_db_session():
     """Context manager de compatibilidad"""
-    return DatabaseSessionContext(ConnectionType.PRIMARY)
+    return await get_primary_session()
 
 # ===============================================
 # 🏗️ FUNCIONES DE INICIALIZACIÓN
