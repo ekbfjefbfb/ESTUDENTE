@@ -39,12 +39,13 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
             return None
         token = auth_header.split(" ")[1]
         try:
+            # Sintonizado con sub (string) para evitar errores de conversión a int
             payload = jwt.decode(
                 token,
                 os.getenv("JWT_SECRET_KEY", os.getenv("JWT_SECRET")),
                 algorithms=["HS256"],
             )
-            return int(payload.get("user_id"))
+            return payload.get("sub")
         except Exception:
             return None
 
@@ -52,12 +53,14 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         if not user_id:
             return PLAN_TIMEOUT_MULTIPLIER["demo"]
         try:
+            from sqlalchemy import select
             async with get_async_db() as db:
                 result = await db.execute(select(User).where(User.id == user_id))
                 user: User = result.scalar_one_or_none()
                 if user and user.plan:
                     return PLAN_TIMEOUT_MULTIPLIER.get(user.plan.name.lower(), 1.0)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error fetching plan multiplier: {e}")
             return PLAN_TIMEOUT_MULTIPLIER["demo"]
         return PLAN_TIMEOUT_MULTIPLIER["demo"]
 
