@@ -1,70 +1,49 @@
 """
-Database Simple para sistema de Clientes Multi-Sector
-Versión simplificada de db_enterprise.py para compatibilidad
+Database Unified - Pareto Optimized v6.0
+Consolidación de acceso a datos para máxima performance y mantenibilidad.
 """
 
 from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
-from config import DATABASE_URL, DATABASE_URL_SYNC
 
-# Base para modelos SQLAlchemy
+# Re-exportar desde el sistema enterprise optimizado
+from database.db_enterprise import (
+    db_manager, 
+    get_async_db as get_async_db_enterprise,
+    get_primary_session,
+    init_database_enterprise,
+    close_database_enterprise,
+    ConnectionType
+)
+from config import DATABASE_URL_SYNC
+
+# Base para modelos SQLAlchemy (Compartida)
+from sqlalchemy.ext.declarative import declarative_base
 Base = declarative_base()
 
 # ===============================================
-# ASYNC DATABASE (FastAPI endpoints)
+# ASYNC DATABASE (Compatibilidad)
 # ===============================================
-
-# Convertir sqlite:/// a sqlite+aiosqlite:/// para async
-ASYNC_DATABASE_URL = DATABASE_URL or "sqlite:///./backend_super.db"
-if ASYNC_DATABASE_URL.startswith("sqlite:///"):
-    ASYNC_DATABASE_URL = ASYNC_DATABASE_URL.replace("sqlite:///", "sqlite+aiosqlite:///")
-
-# Engine async
-async_engine = create_async_engine(
-    ASYNC_DATABASE_URL,
-    echo=False,
-    pool_pre_ping=True,
-    connect_args={"check_same_thread": False} if "sqlite" in ASYNC_DATABASE_URL else {}
-)
-
-# Session maker async
-AsyncSessionLocal = async_sessionmaker(
-    async_engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
 
 async def get_async_db():
-    """
-    Dependency para FastAPI endpoints
-    Usage:
-        @app.get("/clients")
-        async def get_clients(db: AsyncSession = Depends(get_async_db)):
-            ...
-    """
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
-
+    """Proxy para el sistema enterprise asíncrono"""
+    async for session in get_async_db_enterprise():
+        yield session
 
 # ===============================================
-# SYNC DATABASE (Celery tasks, scripts)
+# SYNC DATABASE (Scripts y Tareas)
 # ===============================================
 
-# Engine sync
-SYNC_DATABASE_URL = DATABASE_URL_SYNC or "sqlite:///./backend_super.db"
+# Engine sync optimizado
 sync_engine = create_engine(
-    SYNC_DATABASE_URL,
+    DATABASE_URL_SYNC,
     echo=False,
     pool_pre_ping=True,
-    connect_args={"check_same_thread": False} if "sqlite" in SYNC_DATABASE_URL else {}
+    pool_size=10,
+    max_overflow=5
 )
 
-# Session maker sync
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
@@ -72,37 +51,32 @@ SessionLocal = sessionmaker(
 )
 
 def get_db_sync():
-    """
-    Para tareas Celery y scripts síncronos
-    Usage:
-        with get_db_sync() as db:
-            clients = db.query(Client).all()
-    """
+    """Provee sesión síncrona con manejo automático"""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
-
 # ===============================================
-# INIT DB
+# CICLO DE VIDA (Unified)
 # ===============================================
 
 async def init_db():
-    """Inicializar tablas en la base de datos"""
-    async with async_engine.begin() as conn:
-        # Importar todos los modelos aquí para que se registren
-        from models.client import Client, ReportLog, Task, Asset
-        
-        # Crear todas las tablas
-        await conn.run_sync(Base.metadata.create_all)
-
-
-# ===============================================
-# CLOSE DB
-# ===============================================
+    """Inicializa el sistema enterprise y crea tablas si es necesario"""
+    await init_database_enterprise()
+    
+    # Solo crear tablas automáticamente en entornos no-prod o si se requiere
+    from os import getenv
+    if getenv("ENVIRONMENT") != "production":
+        primary_engine = db_manager.engines.get(ConnectionType.PRIMARY)
+        if primary_engine:
+            async with primary_engine.begin() as conn:
+                from models.models import Base as ModelsBase
+                await conn.run_sync(ModelsBase.metadata.create_all)
 
 async def close_db():
-    """Cerrar conexiones de base de datos"""
-    await async_engine.dispose()
+    """Cierre centralizado"""
+    await close_database_enterprise()
+    if sync_engine:
+        sync_engine.dispose()
