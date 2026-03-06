@@ -93,17 +93,28 @@ class AuthService:
 
             session = await get_db_session()
             async with session:
-                result = await session.execute(select(User).where(User.email == email))
-                existing = result.scalar_one_or_none()
-                if existing is not None:
+                # Query básico solo con campos esenciales
+                result = await session.execute(
+                    select(User.id, User.email, User.username, User.hashed_password, User.is_active)
+                    .where(User.email == email)
+                )
+                row = result.first()
+                if row is not None:
                     raise Exception("El email ya está registrado")
 
-                username = await self._generate_unique_username(session, email)
+                username = email.split("@")[0][:30] if email and "@" in email else f"user_{uuid.uuid4().hex[:8]}"
+                
+                # Verificar si username existe
+                result2 = await session.execute(
+                    select(User.id).where(User.username == username)
+                )
+                if result2.first():
+                    username = f"{username}_{uuid.uuid4().hex[:6]}"
+                
                 user = User(
                     id=str(uuid.uuid4()),
                     username=username,
                     email=email,
-                    full_name=full_name or "",
                     hashed_password=self._hash_password(password),
                     is_active=True,
                     is_verified=False,
@@ -126,7 +137,7 @@ class AuthService:
                 "user": {
                     "id": user.id,
                     "email": user.email,
-                    "name": user.full_name,
+                    "name": full_name or username,
                 },
             }
         except Exception as e:
@@ -142,17 +153,27 @@ class AuthService:
 
             session = await get_db_session()
             async with session:
-                result = await session.execute(select(User).where(User.email == email))
-                user = result.scalar_one_or_none()
-                if user is None or not user.is_active:
+                # Query solo campos esenciales para evitar columnas faltantes
+                result = await session.execute(
+                    select(User.id, User.email, User.username, User.hashed_password, User.is_active)
+                    .where(User.email == email)
+                )
+                row = result.first()
+                
+                if row is None:
                     raise Exception("Credenciales inválidas")
-                if not user.hashed_password:
+                
+                user_id, user_email, username, hashed_pw, is_active = row
+                
+                if not is_active:
+                    raise Exception("Credenciales inválidas")
+                if not hashed_pw:
                     raise Exception("Cuenta sin contraseña. Usa el método de login correspondiente")
-                if not self._verify_password(password, user.hashed_password):
+                if not self._verify_password(password, hashed_pw):
                     raise Exception("Credenciales inválidas")
 
-            access_token = await create_access_token({"sub": str(user.id)})
-            refresh_token = await create_refresh_token({"sub": str(user.id)})
+            access_token = await create_access_token({"sub": str(user_id)})
+            refresh_token = await create_refresh_token({"sub": str(user_id)})
 
             processing_time = time.time() - start_time
             AUTH_PROCESSING_TIME.observe(processing_time)
@@ -163,9 +184,9 @@ class AuthService:
                 "refresh_token": refresh_token,
                 "token_type": "bearer",
                 "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "name": user.full_name,
+                    "id": user_id,
+                    "email": user_email,
+                    "name": username,
                 },
             }
         except Exception as e:
