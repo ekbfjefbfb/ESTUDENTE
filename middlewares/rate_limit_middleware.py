@@ -89,7 +89,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return DEFAULT_PLAN_LIMITS["demo"]
 
     async def dispatch(self, request: Request, call_next):
-        redis = await self._get_redis()
+        redis_client = await self._get_redis()
 
         ip = request.client.host if request.client else "unknown"
         user_id = self._get_user_id_from_jwt(request)
@@ -101,15 +101,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             limits = await self._get_plan_limits(user_id)
             plan_name = limits.get("name", "demo")
 
+        if not redis_client:
+            # Fail-open if Redis is not available
+            return await call_next(request)
+
         endpoint = request.url.path
         key = f"rate:{user_id}:{endpoint}"
         max_requests = limits.get("max_requests", 5)
         window_seconds = limits.get("window_seconds", 60)
 
         try:
-            current = await redis.eval(LUA_RATE_LIMIT, 1, key, window_seconds)
+            current = await redis_client.eval(LUA_RATE_LIMIT, 1, key, window_seconds)
             if current > max_requests:
-                ttl = await redis.ttl(key)
+                ttl = await redis_client.ttl(key)
                 ttl = max(ttl or 0, 0)
                 try:
                     RATE_LIMIT_HITS.labels(endpoint=endpoint, user_type=str(plan_name)).inc()
