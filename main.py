@@ -17,6 +17,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from prometheus_client import generate_latest
 import json_log_formatter
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
 # Configuración
 from config import (
@@ -298,10 +299,10 @@ async def health_check():
     try:
         from database.db_enterprise import engine
         async with engine.connect() as conn:
-            await conn.execute("SELECT 1")
+            await conn.execute(text("SELECT 1"))
         health_status["components"]["database"] = "healthy"
     except Exception as e:
-        health_status["components"]["database"] = "unavailable"
+        health_status["components"]["database"] = f"unavailable: {str(e)[:100]}"
     
     # Check Redis (optional - don't fail if unavailable)
     try:
