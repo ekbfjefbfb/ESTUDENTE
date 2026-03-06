@@ -83,12 +83,14 @@ class AuthService:
             }
             
             # Crear o actualizar usuario
-            async with get_db_session() as session:
+            from database.db_enterprise import get_primary_session
+            async with get_primary_session() as session:
                 user = await self._get_or_create_user(session, user_data)
                 
                 # Crear tokens
-                access_token = create_access_token({"user_id": user.id})
-                refresh_token = create_refresh_token({"user_id": user.id})
+                from utils.auth import create_access_token, create_refresh_token
+                access_token = await create_access_token({"sub": str(user.id)})
+                refresh_token = await create_refresh_token({"sub": str(user.id)})
                 
                 result = {
                     "access_token": access_token,
@@ -146,11 +148,13 @@ class AuthService:
                 "apple_id": "mock_apple_id"
             }
             
-            async with get_db_session() as session:
+            from database.db_enterprise import get_primary_session
+            async with get_primary_session() as session:
                 user = await self._get_or_create_user(session, user_data)
                 
-                access_token = create_access_token({"user_id": user.id})
-                refresh_token = create_refresh_token({"user_id": user.id})
+                from utils.auth import create_access_token, create_refresh_token
+                access_token = await create_access_token({"sub": str(user.id)})
+                refresh_token = await create_refresh_token({"sub": str(user.id)})
                 
                 result = {
                     "access_token": access_token,
