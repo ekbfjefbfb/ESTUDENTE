@@ -420,6 +420,7 @@ db_manager = DatabaseEnterpriseManager(db_config)
 # 🔧 FUNCIONES DE UTILIDAD
 # ===============================================
 
+@asynccontextmanager
 async def get_primary_session() -> AsyncGenerator[AsyncSession, None]:
     """Obtiene sesión de escritura principal - versión simplificada"""
     if not db_manager.initialized:
@@ -439,6 +440,7 @@ async def get_primary_session() -> AsyncGenerator[AsyncSession, None]:
         await session.close()
 
 
+@asynccontextmanager
 async def get_readonly_session() -> AsyncGenerator[AsyncSession, None]:
     """Obtiene sesión de solo lectura - versión simplificada"""
     if not db_manager.initialized:
@@ -460,6 +462,7 @@ async def get_readonly_session() -> AsyncGenerator[AsyncSession, None]:
         await session.close()
 
 
+@asynccontextmanager
 async def get_analytics_session() -> AsyncGenerator[AsyncSession, None]:
     """Obtiene sesión para analytics - versión simplificada"""
     if not db_manager.initialized:
@@ -484,15 +487,17 @@ async def get_analytics_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 # Compatibilidad con API anterior
+@asynccontextmanager
 async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
     """Función de compatibilidad"""
-    async for session in get_primary_session():
+    async with get_primary_session() as session:
         yield session
 
 
+@asynccontextmanager
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """Context manager de compatibilidad"""
-    async for session in get_primary_session():
+    async with get_primary_session() as session:
         yield session
 
 # ===============================================
