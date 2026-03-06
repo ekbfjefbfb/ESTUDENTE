@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete, text
 from jose import JWTError, jwt
 import redis.asyncio as redis
 
@@ -175,31 +175,42 @@ async def get_current_user(
                 detail="Token inválido - usuario no especificado"
             )
         
-        # Buscar usuario en DB
+        # Buscar usuario en DB con SQL directo
         result = await db.execute(
-            select(User).where(User.id == user_id)
+            text("SELECT id, email, username, is_active, is_admin FROM users WHERE id = :user_id"),
+            {"user_id": user_id}
         )
-        user = result.scalar_one_or_none()
+        row = result.first()
         
-        if user is None:
+        if row is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Usuario no encontrado"
             )
         
+        user_id, email, username, is_active, is_admin = row
+        
         # Verificar que el usuario esté activo
-        if not user.is_active:
+        if not is_active:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Usuario desactivado"
             )
         
-        # Actualizar última actividad
+        # Crear objeto User simplificado
+        user = type('User', (), {
+            'id': user_id,
+            'email': email,
+            'username': username,
+            'is_active': is_active,
+            'is_admin': is_admin
+        })()
+        
+        # Actualizar última actividad (opcional)
         try:
             await db.execute(
-                update(User)
-                .where(User.id == user_id)
-                .values(last_activity=datetime.utcnow())
+                text("UPDATE users SET last_activity = NOW() WHERE id = :user_id"),
+                {"user_id": user_id}
             )
             await db.commit()
         except Exception as e:
@@ -251,9 +262,23 @@ async def get_current_user_optional(
 
         try:
             result = await session.execute(
-                select(User).where(User.id == str(user_id))
+                text("SELECT id, email, username, is_active, is_admin FROM users WHERE id = :user_id"),
+                {"user_id": str(user_id)}
             )
-            user = result.scalar_one_or_none()
+            row = result.first()
+            if row is None:
+                return None
+            
+            user_id_val, email, username, is_active, is_admin = row
+            
+            # Crear objeto User simplificado
+            user = type('User', (), {
+                'id': user_id_val,
+                'email': email,
+                'username': username,
+                'is_active': is_active,
+                'is_admin': is_admin
+            })()
             return user
         finally:
             await session.close()
@@ -327,13 +352,22 @@ async def refresh_access_token(refresh_token: str, db: AsyncSession) -> Dict[str
                 detail="Token de refresh inválido"
             )
         
-        # Verificar que el usuario existe y está activo
+        # Verificar que el usuario existe y está activo con SQL directo
         result = await db.execute(
-            select(User).where(User.id == user_id)
+            text("SELECT id, email, username, is_active, is_admin FROM users WHERE id = :user_id"),
+            {"user_id": user_id}
         )
-        user = result.scalar_one_or_none()
+        row = result.first()
         
-        if not user or not user.is_active:
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Usuario no válido"
+            )
+        
+        user_id_val, email, username, is_active, is_admin = row
+        
+        if not is_active:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Usuario no válido"
