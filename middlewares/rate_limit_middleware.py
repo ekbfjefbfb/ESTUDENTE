@@ -59,9 +59,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.redis = None
 
     async def _get_redis(self):
-        if not self.redis:
-            self.redis = await aioredis.from_url(self.redis_url, decode_responses=True)
-        return self.redis
+        try:
+            if not self.redis:
+                self.redis = await aioredis.from_url(self.redis_url, decode_responses=True)
+            try:
+                await self.redis.ping()
+            except Exception:
+                self.redis = None
+            return self.redis
+        except Exception as e:
+            logger.error({"event": "redis_connect_error", "error": str(e)})
+            self.redis = None
+            return None
 
     def _get_user_id_from_jwt(self, request: Request):
         auth_header = request.headers.get("Authorization")
@@ -162,4 +171,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     async def __del__(self):
         if self.redis:
-            await self.redis.close()
+            try:
+                self.redis.close()
+            except Exception:
+                pass
