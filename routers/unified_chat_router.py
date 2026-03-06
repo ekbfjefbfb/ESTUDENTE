@@ -98,16 +98,25 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
     if structured_data.get("plan"):
         progress["last_plan"] = structured_data["plan"]
         
-    # Persistir en DB (NHost)
     try:
         from database.db_enterprise import get_primary_session
-        from models.models import UserProfile # Asumiendo que existe un modelo para esto o crearemos uno
+        from models.models import AgendaItem
         async with get_primary_session() as db:
-            # Aquí iría la lógica para guardar el progreso en una tabla de la DB
-            # Por ahora lo mantenemos en memoria pero con logs de lo que se guardaría
-            logger.info(f"Persisting progress for user {user_id}")
+            # Aquí persistimos las tareas detectadas directamente en la DB de NHost
+            for task_data in structured_data.get("tasks", []):
+                new_task = AgendaItem(
+                    user_id=user_id,
+                    title=task_data.get("title"),
+                    item_type="task",
+                    status="pending",
+                    priority=task_data.get("priority", "medium"),
+                    due_date=datetime.fromisoformat(task_data["due_date"]) if task_data.get("due_date") else None
+                )
+                db.add(new_task)
+            await db.commit()
+            logger.info(f"✅ Progress and tasks persisted for user {user_id}")
     except Exception as e:
-        logger.error(f"Error persisting user progress to DB: {e}")
+        logger.error(f"❌ Error persisting user progress to DB: {e}")
 
 
 @router.get("/progress")
