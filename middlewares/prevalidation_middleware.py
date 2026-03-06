@@ -81,24 +81,28 @@ class PreValidationMiddleware(BaseHTTPMiddleware):
             
             # Pre-validación rápida para rutas protegidas
             if self._requires_validation(request.url.path):
-                validation_result = await self._fast_prevalidation(request)
-                
-                if not validation_result["valid"]:
-                    # Retornar error inmediatamente sin procesar el request
-                    self._log_request(request, None, time.time() - start_time, "blocked", validation_result["reason"])
-                    return JSONResponse(
-                        status_code=validation_result["status_code"],
-                        content={
-                            "error": validation_result["reason"],
-                            "details": validation_result.get("details", {}),
-                            "timestamp": time.time()
-                        }
-                    )
-                
-                # Agregar datos de validación al request para uso posterior
-                request.state.validation_data = validation_result["data"]
-                request.state.user_id = validation_result["user_id"]
-                request.state.user_plan = validation_result["user_plan"]
+                try:
+                    validation_result = await self._fast_prevalidation(request)
+                    
+                    if not validation_result["valid"]:
+                        # Retornar error inmediatamente sin procesar el request
+                        self._log_request(request, None, time.time() - start_time, "blocked", validation_result["reason"])
+                        return JSONResponse(
+                            status_code=validation_result["status_code"],
+                            content={
+                                "error": validation_result["reason"],
+                                "details": validation_result.get("details", {}),
+                                "timestamp": time.time()
+                            }
+                        )
+                    
+                    # Agregar datos de validación al request para uso posterior
+                    request.state.validation_data = validation_result["data"]
+                    request.state.user_id = validation_result["user_id"]
+                    request.state.user_plan = validation_result["user_plan"]
+                except Exception as val_exc:
+                    logger.warning(f"Pre-validation failed, falling back to normal flow: {val_exc}")
+                    # En caso de error en pre-validación, dejamos que el flujo normal (auth guards) maneje el request
             
             # Procesar request normalmente
             response = await call_next(request)
