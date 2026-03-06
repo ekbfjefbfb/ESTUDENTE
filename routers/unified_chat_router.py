@@ -386,11 +386,11 @@ Si no hay plan, usa array vacío: "plan": []"""
     structured_data = {
         "tasks": [],
         "plan": [],
-        "response": ai_response
+        "response": ai_response,
+        "is_stream": False
     }
     
-    # Si ai_response es un generador (streaming), no podemos parsear JSON fácilmente aquí
-    # El frontend debería manejar el stream o usamos una ruta no-streaming para datos estructurados
+    # Si ai_response es un generador (streaming), retornamos un objeto especial
     if hasattr(ai_response, "__aiter__"):
         return {"response": ai_response, "is_stream": True}
     
