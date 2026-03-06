@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, Response, ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from utils.msgpack_utils import MessagePackResponse
 from prometheus_client import generate_latest
 import json_log_formatter
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -207,6 +208,24 @@ if ENVIRONMENT == "production":
     from config import SECRET_KEY
     app.add_middleware(CSRFMiddleware, secret_key=SECRET_KEY)
     logger.info("✅ CSRF Protection enabled")
+
+# MessagePack Support
+@app.middleware("http")
+async def msgpack_middleware(request: Request, call_next):
+    accept = request.headers.get("Accept", "")
+    response = await call_next(request)
+    
+    if "application/x-msgpack" in accept and isinstance(response, (JSONResponse, ORJSONResponse)):
+        import json
+        try:
+            # Re-render as MessagePack if requested
+            body = [chunk async for chunk in response.body_iterator][0]
+            data = json.loads(body)
+            return MessagePackResponse(content=data)
+        except Exception as e:
+            logger.warning(f"Failed to convert response to MessagePack: {e}")
+            return response
+    return response
 
 # Custom Middlewares (orden importa: de afuera hacia adentro)
 app.add_middleware(TimeoutMiddleware)
