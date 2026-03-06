@@ -43,17 +43,17 @@ class DatabaseConfig:
     primary_url: str
     readonly_url: Optional[str] = None
     analytics_url: Optional[str] = None
-    primary_pool_size: int = 5  # Reducir pool size para NHost (evitar desconexiones por exceso de hilos)
-    primary_max_overflow: int = 2  # Reducir overflow
-    readonly_pool_size: int = 2
-    readonly_max_overflow: int = 1
-    pool_timeout: int = 60  # Dar mucho más tiempo para obtener conexión
-    pool_recycle: int = 300  # Reciclar conexiones cada 5 min para evitar 'ConnectionDoesNotExistError'
-    query_timeout: int = 60  # Aumentar timeout de query para NHost
+    primary_pool_size: int = 2  # Reducción extrema para NHost free tier/shared
+    primary_max_overflow: int = 0  # Sin overflow para evitar sobrepasar límites de conexiones
+    readonly_pool_size: int = 1
+    readonly_max_overflow: int = 0
+    pool_timeout: int = 30
+    pool_recycle: int = 120  # Reciclar cada 2 min para limpiar conexiones muertas
+    query_timeout: int = 30
     enable_query_cache: bool = True
     enable_metrics: bool = True
     enable_circuit_breaker: bool = True
-    pool_pre_ping: bool = True  # CRÍTICO: Verificar conexión antes de cada uso
+    pool_pre_ping: bool = True  # CRÍTICO: SQLAlchemy verifica la salud antes de entregar del pool
 
 # ===============================================
 # 📈 MÉTRICAS ENTERPRISE
@@ -400,13 +400,13 @@ def create_database_config() -> DatabaseConfig:
         primary_url=primary_url,
         readonly_url=readonly_url,
         analytics_url=analytics_url,
-        primary_pool_size=int(os.getenv("DB_PRIMARY_POOL_SIZE", "5")),
-        primary_max_overflow=int(os.getenv("DB_PRIMARY_MAX_OVERFLOW", "2")),
-        readonly_pool_size=int(os.getenv("DB_READONLY_POOL_SIZE", "2")),
-        readonly_max_overflow=int(os.getenv("DB_READONLY_MAX_OVERFLOW", "1")),
-        pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "60")),
-        pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "300")),
-        query_timeout=int(os.getenv("DB_QUERY_TIMEOUT", "60")),
+        primary_pool_size=int(os.getenv("DB_PRIMARY_POOL_SIZE", "2")),
+        primary_max_overflow=int(os.getenv("DB_PRIMARY_MAX_OVERFLOW", "0")),
+        readonly_pool_size=int(os.getenv("DB_READONLY_POOL_SIZE", "1")),
+        readonly_max_overflow=int(os.getenv("DB_READONLY_MAX_OVERFLOW", "0")),
+        pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "30")),
+        pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "120")),
+        query_timeout=int(os.getenv("DB_QUERY_TIMEOUT", "30")),
         enable_query_cache=os.getenv("DB_ENABLE_QUERY_CACHE", "true").lower() == "true",
         enable_metrics=os.getenv("DB_ENABLE_METRICS", "true").lower() == "true",
         enable_circuit_breaker=os.getenv("DB_ENABLE_CIRCUIT_BREAKER", "true").lower() == "true"
