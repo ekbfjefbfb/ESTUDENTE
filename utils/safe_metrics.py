@@ -24,6 +24,20 @@ class SafeMetric:
         """Crea gauge mock"""
         return MockMetric(name)
 
+    # Compatibilidad: algunos módulos esperan que el objeto retornado por Counter/Histogram/Gauge
+    # tenga métodos tipo prometheus (inc/observe/set/labels). Delegamos a un MockMetric.
+    def inc(self, *args, **kwargs):
+        return self
+
+    def observe(self, *args, **kwargs):
+        return self
+
+    def set(self, *args, **kwargs):
+        return self
+
+    def labels(self, *args, **kwargs):
+        return self
+
 class MockMetric:
     """Métrica mock"""
     
@@ -52,12 +66,12 @@ class MockMetric:
 
 def Counter(name, description, labels=None, **kwargs):
     """Mock Counter"""
-    return SafeMetric(name)
+    return MockMetric(name)
 
 def Histogram(name, description, labels=None, **kwargs):
     """Mock Histogram"""
-    return SafeMetric(name)
+    return MockMetric(name)
 
 def Gauge(name, description, labels=None, **kwargs):
     """Mock Gauge"""
-    return SafeMetric(name)
+    return MockMetric(name)
