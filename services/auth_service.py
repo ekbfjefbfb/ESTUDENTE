@@ -18,7 +18,7 @@ from passlib.context import CryptContext
 
 from database.db_enterprise import get_primary_session as get_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, text
 from sqlalchemy.exc import IntegrityError
 
 from models.models import User
@@ -93,10 +93,10 @@ class AuthService:
 
             session = await get_db_session()
             async with session:
-                # Query básico solo con campos esenciales
+                # Usar SQL directo para evitar columnas faltantes
                 result = await session.execute(
-                    select(User.id, User.email, User.username, User.hashed_password, User.is_active)
-                    .where(User.email == email)
+                    text("SELECT id, email, username, hashed_password, is_active FROM users WHERE email = :email"),
+                    {"email": email}
                 )
                 row = result.first()
                 if row is not None:
@@ -106,25 +106,28 @@ class AuthService:
                 
                 # Verificar si username existe
                 result2 = await session.execute(
-                    select(User.id).where(User.username == username)
+                    text("SELECT id FROM users WHERE username = :username"),
+                    {"username": username}
                 )
                 if result2.first():
                     username = f"{username}_{uuid.uuid4().hex[:6]}"
                 
-                user = User(
-                    id=str(uuid.uuid4()),
-                    username=username,
-                    email=email,
-                    hashed_password=self._hash_password(password),
-                    is_active=True,
-                    is_verified=False,
+                # Insertar usuario con SQL directo
+                user_id = str(uuid.uuid4())
+                await session.execute(
+                    text("""INSERT INTO users (id, username, email, hashed_password, is_active, is_verified, created_at) 
+                           VALUES (:id, :username, :email, :hashed_password, true, false, NOW())"""),
+                    {
+                        "id": user_id,
+                        "username": username,
+                        "email": email,
+                        "hashed_password": self._hash_password(password)
+                    }
                 )
-                session.add(user)
                 await session.commit()
-                await session.refresh(user)
 
-            access_token = await create_access_token({"sub": str(user.id)})
-            refresh_token = await create_refresh_token({"sub": str(user.id)})
+            access_token = await create_access_token({"sub": user_id})
+            refresh_token = await create_refresh_token({"sub": user_id})
 
             processing_time = time.time() - start_time
             AUTH_PROCESSING_TIME.observe(processing_time)
@@ -135,8 +138,8 @@ class AuthService:
                 "refresh_token": refresh_token,
                 "token_type": "bearer",
                 "user": {
-                    "id": user.id,
-                    "email": user.email,
+                    "id": user_id,
+                    "email": email,
                     "name": full_name or username,
                 },
             }
@@ -153,10 +156,10 @@ class AuthService:
 
             session = await get_db_session()
             async with session:
-                # Query solo campos esenciales para evitar columnas faltantes
+                # Usar SQL directo para evitar columnas faltantes
                 result = await session.execute(
-                    select(User.id, User.email, User.username, User.hashed_password, User.is_active)
-                    .where(User.email == email)
+                    text("SELECT id, email, username, hashed_password, is_active FROM users WHERE email = :email"),
+                    {"email": email}
                 )
                 row = result.first()
                 
@@ -168,7 +171,7 @@ class AuthService:
                 if not is_active:
                     raise Exception("Credenciales inválidas")
                 if not hashed_pw:
-                    raise Exception("Cuenta sin contraseña. Usa el método de login correspondiente")
+                    raise Exception("Cuenta sin contraseña")
                 if not self._verify_password(password, hashed_pw):
                     raise Exception("Credenciales inválidas")
 
