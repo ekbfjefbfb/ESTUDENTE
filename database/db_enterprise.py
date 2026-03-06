@@ -421,22 +421,50 @@ db_manager = DatabaseEnterpriseManager(db_config)
 # ===============================================
 
 async def get_primary_session() -> AsyncGenerator[AsyncSession, None]:
-    """Obtiene sesión de escritura principal"""
-    async with db_manager.get_session(ConnectionType.PRIMARY) as session:
+    """Obtiene sesión de escritura principal - versión simplificada"""
+    if not db_manager.initialized:
+        await db_manager.initialize()
+    
+    connection_type = ConnectionType.PRIMARY
+    session_maker = db_manager.session_makers[connection_type]
+    session = session_maker()
+    
+    try:
         yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
 
 async def get_readonly_session() -> AsyncGenerator[AsyncSession, None]:
-    """Obtiene sesión de solo lectura"""
+    """Obtiene sesión de solo lectura - versión simplificada"""
+    if not db_manager.initialized:
+        await db_manager.initialize()
+    
     connection_type = (
         ConnectionType.READONLY 
         if ConnectionType.READONLY in db_manager.engines 
         else ConnectionType.PRIMARY
     )
-    async with db_manager.get_session(connection_type) as session:
+    session_maker = db_manager.session_makers[connection_type]
+    session = session_maker()
+    
+    try:
         yield session
+    except Exception:
+        raise
+    finally:
+        await session.close()
+
 
 async def get_analytics_session() -> AsyncGenerator[AsyncSession, None]:
-    """Obtiene sesión para analytics"""
+    """Obtiene sesión para analytics - versión simplificada"""
+    if not db_manager.initialized:
+        await db_manager.initialize()
+    
     connection_type = (
         ConnectionType.ANALYTICS 
         if ConnectionType.ANALYTICS in db_manager.engines 
@@ -444,18 +472,27 @@ async def get_analytics_session() -> AsyncGenerator[AsyncSession, None]:
         if ConnectionType.READONLY in db_manager.engines
         else ConnectionType.PRIMARY
     )
-    async with db_manager.get_session(connection_type) as session:
+    session_maker = db_manager.session_makers[connection_type]
+    session = session_maker()
+    
+    try:
         yield session
+    except Exception:
+        raise
+    finally:
+        await session.close()
+
 
 # Compatibilidad con API anterior
 async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
     """Función de compatibilidad"""
-    async with get_primary_session() as session:
+    async for session in get_primary_session():
         yield session
+
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """Context manager de compatibilidad"""
-    async with get_primary_session() as session:
+    async for session in get_primary_session():
         yield session
 
 # ===============================================
