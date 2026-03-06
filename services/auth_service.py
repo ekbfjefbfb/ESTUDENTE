@@ -193,49 +193,54 @@ class AuthService:
 
     async def _get_or_create_user(self, session: AsyncSession, user_data: Dict[str, Any]) -> User:
         """Obtiene o crea un usuario en la base de datos"""
-        
-        # Buscar usuario existente
-        stmt = select(User).where(User.email == user_data["email"])
-        result = await session.execute(stmt)
-        user = result.scalar_one_or_none()
-        
-        if not user:
-            # Crear nuevo usuario
-            user = User(
-                email=user_data["email"],
-                full_name=user_data.get("name", ""),
-                google_id=user_data.get("google_id"),
-                apple_id=user_data.get("apple_id"),
-                is_active=True,
-                email_verified=True,
-                created_at=datetime.utcnow()
-            )
-            session.add(user)
-            await session.commit()
-            await session.refresh(user)
-            
-            logger.info({
-                "event": "user_created",
-                "user_id": user.id,
-                "email": user.email
-            })
-        else:
-            # Actualizar usuario existente
-            user.last_login = datetime.utcnow()
-            if user_data.get("google_id"):
-                user.google_id = user_data["google_id"]
-            if user_data.get("apple_id"):
-                user.apple_id = user_data["apple_id"]
+        try:
+            email = user_data.get("email")
+            stmt = select(User).where(User.email == email)
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+
+            if not user:
+                # Crear nuevo usuario
+                user = User(
+                    id=str(uuid.uuid4()),
+                    email=email,
+                    full_name=user_data.get("name", ""),
+                    google_id=user_data.get("google_id"),
+                    apple_id=user_data.get("apple_id"),
+                    is_active=True,
+                    email_verified=True,
+                    created_at=datetime.utcnow()
+                )
+                session.add(user)
+                await session.commit()
+                await session.refresh(user)
                 
-            await session.commit()
+                logger.info({
+                    "event": "user_created",
+                    "user_id": user.id,
+                    "email": user.email
+                })
+            else:
+                # Actualizar usuario existente
+                user.last_login = datetime.utcnow()
+                if user_data.get("google_id"):
+                    user.google_id = user_data["google_id"]
+                if user_data.get("apple_id"):
+                    user.apple_id = user_data["apple_id"]
+                    
+                await session.commit()
+                
+                logger.info({
+                    "event": "user_updated",
+                    "user_id": user.id,
+                    "email": user.email
+                })
             
-            logger.info({
-                "event": "user_updated",
-                "user_id": user.id,
-                "email": user.email
-            })
-        
-        return user
+            return user
+        except Exception as e:
+            logger.error(f"❌ Error en _get_or_create_user: {e}")
+            await session.rollback()
+            raise
 
     async def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
         """Renueva el access token usando el refresh token"""
