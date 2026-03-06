@@ -5,6 +5,7 @@ Versión: Production v3.0 - Simplificada para resolución de problemas
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from datetime import datetime, timedelta
@@ -13,6 +14,7 @@ from contextlib import asynccontextmanager
 
 import json_log_formatter
 from utils.safe_metrics import Counter, Histogram  # Métricas seguras
+from passlib.context import CryptContext
 
 from database.db_enterprise import get_primary_session as get_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,12 +55,122 @@ AUTH_PROCESSING_TIME = Histogram(
     "Authentication processing time"
 )
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 class AuthService:
     """Servicio de autenticación empresarial con OAuth múltiple"""
 
     def __init__(self):
         self.redis = None
         self.session_timeout = 3600  # 1 hora
+
+    def _hash_password(self, password: str) -> str:
+        return pwd_context.hash(password)
+
+    def _verify_password(self, plain_password: str, hashed_password: str) -> bool:
+        try:
+            return pwd_context.verify(plain_password, hashed_password)
+        except Exception:
+            return False
+
+    async def _generate_unique_username(self, session: AsyncSession, email: str) -> str:
+        base = (email.split("@")[0] if email and "@" in email else "user").strip().lower()
+        base = re.sub(r"[^a-z0-9_\-]", "_", base)[:30] or "user"
+
+        candidate = base
+        for _ in range(8):
+            result = await session.execute(select(User).where(User.username == candidate))
+            if result.scalar_one_or_none() is None:
+                return candidate
+            candidate = f"{base}_{uuid.uuid4().hex[:6]}"[:50]
+
+        return f"user_{uuid.uuid4().hex[:12]}"[:50]
+
+    async def register_email_password(self, email: str, password: str, full_name: Optional[str] = None) -> Dict[str, Any]:
+        start_time = time.time()
+        try:
+            AUTH_REQUESTS.labels(method="email_register", status="started").inc()
+
+            async with get_db_session() as session:
+                result = await session.execute(select(User).where(User.email == email))
+                existing = result.scalar_one_or_none()
+                if existing is not None:
+                    raise Exception("El email ya está registrado")
+
+                username = await self._generate_unique_username(session, email)
+                user = User(
+                    id=str(uuid.uuid4()),
+                    username=username,
+                    email=email,
+                    full_name=full_name or "",
+                    hashed_password=self._hash_password(password),
+                    is_active=True,
+                    is_verified=False,
+                )
+                session.add(user)
+                await session.commit()
+                await session.refresh(user)
+
+            access_token = await create_access_token({"sub": str(user.id)})
+            refresh_token = await create_refresh_token({"sub": str(user.id)})
+
+            processing_time = time.time() - start_time
+            AUTH_PROCESSING_TIME.observe(processing_time)
+            AUTH_REQUESTS.labels(method="email_register", status="success").inc()
+
+            return {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_type": "bearer",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "name": user.full_name,
+                },
+            }
+        except Exception as e:
+            processing_time = time.time() - start_time
+            AUTH_REQUESTS.labels(method="email_register", status="failed").inc()
+            logger.error({"event": "email_register_failed", "error": str(e), "processing_time": processing_time})
+            raise
+
+    async def login_email_password(self, email: str, password: str) -> Dict[str, Any]:
+        start_time = time.time()
+        try:
+            AUTH_REQUESTS.labels(method="email_login", status="started").inc()
+
+            async with get_db_session() as session:
+                result = await session.execute(select(User).where(User.email == email))
+                user = result.scalar_one_or_none()
+                if user is None or not user.is_active:
+                    raise Exception("Credenciales inválidas")
+                if not user.hashed_password:
+                    raise Exception("Cuenta sin contraseña. Usa el método de login correspondiente")
+                if not self._verify_password(password, user.hashed_password):
+                    raise Exception("Credenciales inválidas")
+
+            access_token = await create_access_token({"sub": str(user.id)})
+            refresh_token = await create_refresh_token({"sub": str(user.id)})
+
+            processing_time = time.time() - start_time
+            AUTH_PROCESSING_TIME.observe(processing_time)
+            AUTH_REQUESTS.labels(method="email_login", status="success").inc()
+
+            return {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_type": "bearer",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "name": user.full_name,
+                },
+            }
+        except Exception as e:
+            processing_time = time.time() - start_time
+            AUTH_REQUESTS.labels(method="email_login", status="failed").inc()
+            logger.error({"event": "email_login_failed", "error": str(e), "processing_time": processing_time})
+            raise
 
     async def authenticate_google_user(self, google_token: str) -> Dict[str, Any]:
         """Autentica usuario con token de Google"""
@@ -360,6 +472,14 @@ async def oauth_login_or_register(db_session, provider: str, id_token: str, name
 async def refresh_access_token_service(refresh_token: str) -> Dict[str, Any]:
     """Función de compatibilidad para renovar token"""
     return await auth_service.refresh_access_token(refresh_token)
+
+async def register_email_password_service(email: str, password: str, full_name: Optional[str] = None) -> Dict[str, Any]:
+    """Función de compatibilidad para registrar usuario con email/password"""
+    return await auth_service.register_email_password(email=email, password=password, full_name=full_name)
+
+async def login_email_password_service(email: str, password: str) -> Dict[str, Any]:
+    """Función de compatibilidad para login con email/password"""
+    return await auth_service.login_email_password(email=email, password=password)
 
 # =============================================
 # FUNCIONES DE INICIALIZACIÓN

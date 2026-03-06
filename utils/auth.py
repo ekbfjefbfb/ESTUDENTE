@@ -246,18 +246,21 @@ async def get_current_user_optional(
             return None
         
         # Lazy load de la sesión DB
-        db = _get_db_dependency()
-        session = await anext(db)
-        
+        db_gen = _get_db_dependency()
+        session = await anext(db_gen)
+
         try:
-            from models.models import User
             result = await session.execute(
-                select(User).where(User.id == int(user_id))
+                select(User).where(User.id == str(user_id))
             )
             user = result.scalar_one_or_none()
             return user
         finally:
             await session.close()
+            try:
+                await db_gen.aclose()
+            except Exception:
+                pass
             
     except Exception as e:
         logger.debug(f"Token opcional inválido: {e}")

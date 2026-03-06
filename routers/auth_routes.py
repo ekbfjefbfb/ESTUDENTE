@@ -9,7 +9,12 @@ from typing import Optional
 from jose import jwt, JWTError
 
 from database.db_enterprise import get_primary_session as get_async_db
-from services.auth_service import oauth_login_or_register, refresh_access_token_service
+from services.auth_service import (
+    oauth_login_or_register,
+    refresh_access_token_service,
+    register_email_password_service,
+    login_email_password_service,
+)
 from utils.resilience import CircuitBreaker
 
 # ---------------- Logger Config ----------------
@@ -44,6 +49,31 @@ class OAuthSchema(BaseModel):
     def validate_id_token_format(cls, v: str) -> str:
         if len(v.split(".")) != 3:
             raise ValueError("Formato de ID token inválido")
+        return v
+
+
+class RegisterSchema(BaseModel):
+    email: str = Field(..., min_length=5, max_length=100)
+    password: str = Field(..., min_length=8, max_length=200)
+    full_name: Optional[str] = Field(None, min_length=1, max_length=120)
+
+    @field_validator("email")
+    def validate_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+            raise ValueError("Email inválido")
+        return v
+
+
+class LoginSchema(BaseModel):
+    email: str = Field(..., min_length=5, max_length=100)
+    password: str = Field(..., min_length=8, max_length=200)
+
+    @field_validator("email")
+    def validate_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+            raise ValueError("Email inválido")
         return v
 
 
@@ -98,3 +128,41 @@ async def refresh_token_route(
     except Exception as e:
         logger.error(f'{{"event": "refresh_token_error", "error": "{str(e)}"}}', exc_info=True)
         raise HTTPException(status_code=400, detail="Error al refrescar token")
+
+
+@router.post("/register")
+async def register_route(
+    data: RegisterSchema,
+    request: Request,
+    db: AsyncSession = Depends(get_async_db),
+) -> dict:
+    logger.info(f'{{"event": "register_attempt", "ip": "{request.client.host}"}}')
+    try:
+        email = sanitize_input(data.email)
+        password = data.password
+        full_name = sanitize_input(data.full_name) if data.full_name else None
+
+        result = await register_email_password_service(email=email, password=password, full_name=full_name)
+        logger.info(f'{{"event": "register_success", "ip": "{request.client.host}"}}')
+        return result
+    except Exception as e:
+        logger.error(f'{{"event": "register_error", "error": "{str(e)}"}}', exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e) or "Error al registrar")
+
+
+@router.post("/login")
+async def login_route(
+    data: LoginSchema,
+    request: Request,
+    db: AsyncSession = Depends(get_async_db),
+) -> dict:
+    logger.info(f'{{"event": "login_attempt", "ip": "{request.client.host}"}}')
+    try:
+        email = sanitize_input(data.email)
+        password = data.password
+        result = await login_email_password_service(email=email, password=password)
+        logger.info(f'{{"event": "login_success", "ip": "{request.client.host}"}}')
+        return result
+    except Exception as e:
+        logger.error(f'{{"event": "login_error", "error": "{str(e)}"}}', exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e) or "Error al iniciar sesión")
