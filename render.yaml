@@ -16,5 +16,7 @@ services:
           type: web
           name: mi-backend-super-api
           property: port
-      - key: DISABLE_PROXY_FIX
-        value: "false"
+      - key: DATABASE_URL
+        value: "postgresql+asyncpg://postgres:ejxzMxqz1JWk7XHn@vtixhvyyavxgshwsotwy.db.us-east-1.nhost.run:5432/vtixhvyyavxgshwsotwy"
+      - key: DATABASE_URL_SYNC
+        value: "postgresql://postgres:ejxzMxqz1JWk7XHn@vtixhvyyavxgshwsotwy.db.us-east-1.nhost.run:5432/vtixhvyyavxgshwsotwy"
