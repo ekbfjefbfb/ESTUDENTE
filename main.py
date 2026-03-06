@@ -200,7 +200,7 @@ app.add_middleware(
 )
 
 # Compression - 🚀 v4.0: Mejor threshold y compresión
-app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)
+app.add_middleware(GZipMiddleware, minimum_size=100, compresslevel=9)
 
 # Security Middleware - CSRF Protection (Production)
 if ENVIRONMENT == "production":

@@ -44,7 +44,8 @@ async def chat_with_ai(
     max_tokens: int = 1200,
     fast_reasoning: bool = True,
     friendly: bool = False,
-) -> str:
+    stream: bool = False,
+) -> Any:
     if not SILICONFLOW_API_KEY:
         raise RuntimeError("SILICONFLOW_API_KEY is not set")
 
@@ -55,6 +56,7 @@ async def chat_with_ai(
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
+        "stream": stream,
     }
 
     # Prefer non-thinking mode for speed where supported.
@@ -73,6 +75,10 @@ async def chat_with_ai(
     async with httpx.AsyncClient(timeout=60.0) as client:
         for attempt in range(max_retries):
             try:
+                if stream:
+                    # Retornar el generador para streaming
+                    return _stream_generator(url, headers, body)
+                
                 resp = await client.post(url, headers=headers, json=body)
                 
                 if resp.status_code == 429:  # Rate Limit
@@ -176,3 +182,22 @@ async def text_to_speech(text: str) -> str:
     import base64
     audio_b64 = base64.b64encode(resp.content).decode()
     return f"data:audio/mp3;base64,{audio_b64}"
+
+async def _stream_generator(url: str, headers: Dict[str, str], body: Dict[str, Any]):
+    """Generador para streaming de respuestas de IA"""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        async with client.stream("POST", url, headers=headers, json=body) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    line = line[6:]
+                    if line == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(line)
+                        if "choices" in chunk and len(chunk["choices"]) > 0:
+                            content = chunk["choices"][0].get("delta", {}).get("content", "")
+                            if content:
+                                yield content
+                    except json.JSONDecodeError:
+                        continue

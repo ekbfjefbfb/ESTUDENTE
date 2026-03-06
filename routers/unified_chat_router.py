@@ -380,6 +380,11 @@ Si no hay plan, usa array vacío: "plan": []"""
         "response": ai_response
     }
     
+    # Si ai_response es un generador (streaming), no podemos parsear JSON fácilmente aquí
+    # El frontend debería manejar el stream o usamos una ruta no-streaming para datos estructurados
+    if hasattr(ai_response, "__aiter__"):
+        return {"response": ai_response, "is_stream": True}
+    
     # Buscar JSON en la respuesta
     import re
     json_match = re.search(r'\{[\s\S]*\}', ai_response)
