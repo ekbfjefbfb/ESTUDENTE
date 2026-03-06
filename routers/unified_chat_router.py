@@ -422,6 +422,24 @@ async def unified_chat_message(
     try:
         user_id = user["user_id"]
         
+        # Pareto 80/20: Intentar obtener respuesta del cache semántico
+        from services.embeddings_service import embeddings_service
+        cached_response = await embeddings_service.get_cached_response(message)
+        if cached_response:
+            # Si hay cache hit, retornamos inmediatamente (latencia < 50ms)
+            context_info = get_context_info(user_id)
+            return ChatResponse(
+                success=True,
+                response=cached_response,
+                user_id=user_id,
+                timestamp=datetime.utcnow().isoformat(),
+                context={
+                    "usage_percent": round(context_info.get("usage", 0) * 100, 1),
+                    "cache_hit": True
+                },
+                message_id=f"msg_cached_{datetime.utcnow().timestamp()}"
+            )
+        
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
         
@@ -430,6 +448,10 @@ async def unified_chat_message(
         
         # Guardar progreso del usuario
         await save_user_progress(user_id, message, structured)
+        
+        # Guardar en cache semántico para futuras consultas similares
+        if not structured.get("is_stream"):
+            await embeddings_service.add_to_semantic_cache(message, structured["response"])
         
         context_info = get_context_info(user_id)
         

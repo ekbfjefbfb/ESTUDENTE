@@ -31,13 +31,7 @@ except ImportError:
 
 class EmbeddingsService:
     """
-    Servicio de embeddings para RAG (Retrieval-Augmented Generation)
-    
-    Features:
-    - Genera embeddings de documentos
-    - Búsqueda semántica por similaridad
-    - Cache de embeddings
-    - Soporta OpenAI y modelos locales
+    Servicio de embeddings para RAG (Retrieval-Augmented Generation) y Cache Semántico
     """
     
     def __init__(self, use_openai: bool = True, model: str = "text-embedding-3-small"):
@@ -47,6 +41,10 @@ class EmbeddingsService:
         # Cache en memoria para embeddings
         self.embeddings_cache: Dict[str, np.ndarray] = {}
         self.documents_cache: Dict[str, Dict[str, Any]] = {}
+        
+        # Pareto 80/20: Cache Semántico para respuestas de IA
+        self.semantic_response_cache: List[Dict[str, Any]] = []
+        self.max_semantic_cache_size = 100
         
         # Modelo local fallback
         self.local_model = None
@@ -306,6 +304,33 @@ class EmbeddingsService:
         similarities.sort(key=lambda x: x["similarity"], reverse=True)
         return similarities[:top_k]
     
+    async def get_cached_response(self, query: str, threshold: float = 0.92) -> Optional[str]:
+        """Busca una respuesta similar en el cache semántico (Pareto Optimization)"""
+        if not self.semantic_response_cache:
+            return None
+            
+        query_embedding = await self.generate_embedding(query)
+        
+        for item in self.semantic_response_cache:
+            similarity = self._cosine_similarity(query_embedding, item["embedding"])
+            if similarity >= threshold:
+                logger.info(f"🎯 Semantic Cache Hit (sim: {similarity:.4f})")
+                return item["response"]
+        return None
+
+    async def add_to_semantic_cache(self, query: str, response: str):
+        """Añade una interacción al cache semántico"""
+        embedding = await self.generate_embedding(query)
+        self.semantic_response_cache.insert(0, {
+            "query": query,
+            "response": response,
+            "embedding": embedding,
+            "timestamp": datetime.utcnow()
+        })
+        # Mantener tamaño máximo (LRU simple)
+        if len(self.semantic_response_cache) > self.max_semantic_cache_size:
+            self.semantic_response_cache.pop()
+
     async def get_relevant_context(
         self,
         query: str,
