@@ -69,22 +69,26 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return None
         token = auth_header.split(" ")[1]
         try:
+            # Sintonizado con sub (string/UUID) para consistencia con el resto del sistema
             payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-            return int(payload.get("user_id"))
-        except Exception:
+            return payload.get("sub")
+        except Exception as e:
+            logger.debug(f"JWT decode error in RateLimitMiddleware: {e}")
             return None
 
-    async def _get_plan_limits(self, user_id: int):
+    async def _get_plan_limits(self, user_id: str):
         if not user_id:
             return DEFAULT_PLAN_LIMITS["demo"]
         try:
+            from sqlalchemy import select
             async with get_async_db() as db:
                 result = await db.execute(select(User).where(User.id == user_id))
-                user: User = result.scalar_one_or_none()
+                user = result.scalar_one_or_none()
                 if user and user.plan:
                     plan_name = user.plan.name.lower().strip()
                     return getattr(user.plan, "limits", DEFAULT_PLAN_LIMITS.get(plan_name, DEFAULT_PLAN_LIMITS["demo"]))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error fetching plan limits: {e}")
             return DEFAULT_PLAN_LIMITS["demo"]
         return DEFAULT_PLAN_LIMITS["demo"]
 
