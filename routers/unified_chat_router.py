@@ -4,7 +4,8 @@ Chat con IA + Voz + Monitoreo de Contexto Automático + Contexto de Tareas y Gra
 Diseñado para integración óptima con frontend
 """
 
-from fastapi import APIRouter, WebSocket, UploadFile, File, Depends, HTTPException, Request, StreamingResponse
+from fastapi import APIRouter, WebSocket, UploadFile, File, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from typing import List, Optional, Dict, Any, AsyncGenerator
 from pydantic import BaseModel
 import json
