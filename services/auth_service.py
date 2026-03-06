@@ -91,7 +91,8 @@ class AuthService:
         try:
             AUTH_REQUESTS.labels(method="email_register", status="started").inc()
 
-            async with get_db_session() as session:
+            ctx = await get_db_session()
+            async with ctx as session:
                 result = await session.execute(select(User).where(User.email == email))
                 existing = result.scalar_one_or_none()
                 if existing is not None:
@@ -139,7 +140,8 @@ class AuthService:
         try:
             AUTH_REQUESTS.labels(method="email_login", status="started").inc()
 
-            async with get_db_session() as session:
+            ctx = await get_db_session()
+            async with ctx as session:
                 result = await session.execute(select(User).where(User.email == email))
                 user = result.scalar_one_or_none()
                 if user is None or not user.is_active:
@@ -196,7 +198,8 @@ class AuthService:
             
             # Crear o actualizar usuario
             from database.db_enterprise import get_primary_session
-            async with get_primary_session() as session:
+            ctx = await get_primary_session()
+            async with ctx as session:
                 user = await self._get_or_create_user(session, user_data)
                 
                 # Crear tokens
@@ -261,7 +264,8 @@ class AuthService:
             }
             
             from database.db_enterprise import get_primary_session
-            async with get_primary_session() as session:
+            ctx = await get_primary_session()
+            async with ctx as session:
                 user = await self._get_or_create_user(session, user_data)
                 
                 from utils.auth import create_access_token, create_refresh_token
@@ -365,7 +369,8 @@ class AuthService:
                 raise Exception("Token de refresh inválido")
 
             # Verificar que el usuario existe
-            async with get_db_session() as session:
+            ctx = await get_db_session()
+            async with ctx as session:
                 stmt = select(User).where(User.id == user_id)
                 result = await session.execute(stmt)
                 user = result.scalar_one_or_none()
@@ -419,7 +424,8 @@ class AuthService:
     async def get_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Obtiene el perfil del usuario"""
         try:
-            async with get_db_session() as session:
+            ctx = await get_db_session()
+            async with ctx as session:
                 stmt = select(User).where(User.id == user_id)
                 result = await session.execute(stmt)
                 user = result.scalar_one_or_none()
