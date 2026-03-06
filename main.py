@@ -241,7 +241,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     # Handler global para excepciones no capturadas
     logger.error(f"Unhandled exception on {request.url.path}: {exc}", exc_info=True)
     import traceback
-    stack_trace = traceback.format_exc() if DEBUG else None
+    stack_trace = traceback.format_exc()
     
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
