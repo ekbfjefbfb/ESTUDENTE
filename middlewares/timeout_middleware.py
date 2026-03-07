@@ -53,12 +53,16 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         if not user_id:
             return PLAN_TIMEOUT_MULTIPLIER["demo"]
         try:
-            from sqlalchemy import select
-            async with get_async_db() as db:
-                result = await db.execute(select(User).where(User.id == user_id))
-                user: User = result.scalar_one_or_none()
-                if user and user.plan:
-                    return PLAN_TIMEOUT_MULTIPLIER.get(user.plan.name.lower(), 1.0)
+            from sqlalchemy import text
+            session = await get_async_db()
+            async with session:
+                result = await session.execute(
+                    text("SELECT id FROM users WHERE id = :user_id"),
+                    {"user_id": user_id}
+                )
+                row = result.first()
+                if row:
+                    return PLAN_TIMEOUT_MULTIPLIER["demo"]
         except Exception as e:
             logger.warning(f"Error fetching plan multiplier: {e}")
             return PLAN_TIMEOUT_MULTIPLIER["demo"]

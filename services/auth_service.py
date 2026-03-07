@@ -79,7 +79,10 @@ class AuthService:
 
         candidate = base
         for _ in range(8):
-            result = await session.execute(select(User).where(User.username == candidate))
+            result = await session.execute(
+                text("SELECT id FROM users WHERE username = :username"),
+                {"username": candidate}
+            )
             if result.scalar_one_or_none() is None:
                 return candidate
             candidate = f"{base}_{uuid.uuid4().hex[:6]}"[:50]
@@ -335,9 +338,18 @@ class AuthService:
         """Obtiene o crea un usuario en la base de datos"""
         try:
             email = user_data.get("email")
-            stmt = select(User).where(User.email == email)
-            result = await session.execute(stmt)
-            user = result.scalar_one_or_none()
+            result = await session.execute(
+                text("SELECT id, email, username, is_active FROM users WHERE email = :email"),
+                {"email": email}
+            )
+            row = result.first()
+            if row:
+                user_id, email_val, username, is_active = row
+                user = type('User', (), {
+                    'id': user_id, 'email': email_val, 'username': username, 'is_active': is_active
+                })()
+            else:
+                user = None
 
             if not user:
                 # Crear nuevo usuario
@@ -395,9 +407,18 @@ class AuthService:
             # Verificar que el usuario existe
             session = await get_db_session()
             async with session:
-                stmt = select(User).where(User.id == user_id)
-                result = await session.execute(stmt)
-                user = result.scalar_one_or_none()
+                result = await session.execute(
+                    text("SELECT id, email, username, is_active FROM users WHERE id = :user_id"),
+                    {"user_id": user_id}
+                )
+                row = result.first()
+                if row:
+                    user_id_val, email, username, is_active = row
+                    user = type('User', (), {
+                        'id': user_id_val, 'email': email, 'username': username, 'is_active': is_active
+                    })()
+                else:
+                    user = None
 
                 if not user or not user.is_active:
                     raise Exception("Usuario no encontrado o inactivo")
@@ -450,9 +471,18 @@ class AuthService:
         try:
             session = await get_db_session()
             async with session:
-                stmt = select(User).where(User.id == user_id)
-                result = await session.execute(stmt)
-                user = result.scalar_one_or_none()
+                result = await session.execute(
+                    text("SELECT id, email, username, is_active FROM users WHERE id = :user_id"),
+                    {"user_id": user_id}
+                )
+                row = result.first()
+                if row:
+                    user_id_val, email, username, is_active = row
+                    user = type('User', (), {
+                        'id': user_id_val, 'email': email, 'username': username, 'is_active': is_active
+                    })()
+                else:
+                    user = None
                 
                 if not user:
                     return None

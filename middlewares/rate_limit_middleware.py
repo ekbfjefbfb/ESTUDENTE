@@ -89,13 +89,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not user_id:
             return DEFAULT_PLAN_LIMITS["demo"]
         try:
-            from sqlalchemy import select
-            async with get_async_db() as db:
-                result = await db.execute(select(User).where(User.id == user_id))
-                user = result.scalar_one_or_none()
-                if user and user.plan:
-                    plan_name = user.plan.name.lower().strip()
-                    return getattr(user.plan, "limits", DEFAULT_PLAN_LIMITS.get(plan_name, DEFAULT_PLAN_LIMITS["demo"]))
+            from sqlalchemy import text
+            session = await get_async_db()
+            async with session:
+                result = await session.execute(
+                    text("SELECT id, email, username, is_active FROM users WHERE id = :user_id"),
+                    {"user_id": user_id}
+                )
+                row = result.first()
+                if row:
+                    return DEFAULT_PLAN_LIMITS["demo"]
         except Exception as e:
             logger.warning(f"Error fetching plan limits: {e}")
             return DEFAULT_PLAN_LIMITS["demo"]
