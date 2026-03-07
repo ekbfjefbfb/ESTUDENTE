@@ -351,34 +351,44 @@ class AuthService:
                 user = None
 
             if not user:
-                # Crear nuevo usuario
-                user = User(
-                    id=str(uuid.uuid4()),
-                    email=email,
-                    full_name=user_data.get("name", ""),
-                    google_id=user_data.get("google_id"),
-                    apple_id=user_data.get("apple_id"),
-                    is_active=True,
-                    email_verified=True,
-                    created_at=datetime.utcnow()
+                # Crear nuevo usuario con SQL directo
+                user_id = str(uuid.uuid4())
+                username = email.split("@")[0][:30] if email and "@" in email else f"user_{uuid.uuid4().hex[:8]}"
+                
+                # Verificar si username existe
+                result2 = await session.execute(
+                    text("SELECT id FROM users WHERE username = :username"),
+                    {"username": username}
                 )
-                session.add(user)
+                if result2.first():
+                    username = f"{username}_{uuid.uuid4().hex[:6]}"
+                
+                await session.execute(
+                    text("""INSERT INTO users (id, username, email, is_active, created_at) 
+                           VALUES (:id, :username, :email, true, NOW())"""),
+                    {"id": user_id, "username": username, "email": email}
+                )
                 await session.commit()
-                await session.refresh(user)
+                
+                # Crear objeto User simplificado
+                user = type('User', (), {
+                    'id': user_id,
+                    'email': email,
+                    'username': username,
+                    'is_active': True
+                })()
                 
                 logger.info({
                     "event": "user_created",
-                    "user_id": user.id,
-                    "email": user.email
+                    "user_id": user_id,
+                    "email": email
                 })
             else:
-                # Actualizar usuario existente
-                user.last_login = datetime.utcnow()
-                if user_data.get("google_id"):
-                    user.google_id = user_data["google_id"]
-                if user_data.get("apple_id"):
-                    user.apple_id = user_data["apple_id"]
-                    
+                # Actualizar usuario existente - usar SQL directo
+                await session.execute(
+                    text("UPDATE users SET last_activity = NOW() WHERE id = :user_id"),
+                    {"user_id": user.id}
+                )
                 await session.commit()
                 
                 logger.info({
@@ -489,11 +499,8 @@ class AuthService:
                 return {
                     "id": user.id,
                     "email": user.email,
-                    "full_name": user.full_name,
-                    "is_active": user.is_active,
-                    "email_verified": user.email_verified,
-                    "created_at": user.created_at.isoformat() if user.created_at else None,
-                    "last_login": user.last_login.isoformat() if user.last_login else None
+                    "username": user.username,
+                    "is_active": user.is_active
                 }
                 
         except Exception as e:
