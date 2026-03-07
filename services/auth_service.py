@@ -175,7 +175,7 @@ class AuthService:
                 
                 if not is_active:
                     raise Exception("Credenciales inválidas")
-                # Nota: No podemos verificar password porque hashed_password no existe en la DB
+                # Nota: No podemos verificar password porque hashed_password no existe en la DB actual
 
             access_token = await create_access_token({"sub": str(user_id)})
             refresh_token = await create_refresh_token({"sub": str(user_id)})
