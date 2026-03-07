@@ -89,7 +89,7 @@ class AuthService:
 
         return f"user_{uuid.uuid4().hex[:12]}"[:50]
 
-    async def register_email_password(self, email: str, password: str, full_name: Optional[str] = None) -> Dict[str, Any]:
+    async def register_email_password_v2(self, email: str, password: str, full_name: Optional[str] = None) -> Dict[str, Any]:
         start_time = time.time()
         try:
             AUTH_REQUESTS.labels(method="email_register", status="started").inc()
@@ -534,7 +534,7 @@ async def refresh_access_token_service(refresh_token: str) -> Dict[str, Any]:
 
 async def register_email_password_service(email: str, password: str, full_name: Optional[str] = None) -> Dict[str, Any]:
     """Función de compatibilidad para registrar usuario con email/password"""
-    return await auth_service.register_email_password(email=email, password=password, full_name=full_name)
+    return await auth_service.register_email_password_v2(email=email, password=password, full_name=full_name)
 
 async def login_email_password_service(email: str, password: str) -> Dict[str, Any]:
     """Función de compatibilidad para login con email/password"""
