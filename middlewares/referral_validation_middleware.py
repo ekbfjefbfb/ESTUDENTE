@@ -75,25 +75,29 @@ class ReferralValidationMiddleware(BaseHTTPMiddleware):
         from sqlalchemy import select
         from models.models import Referral
         
-        # Verificar si tiene un referido pendiente
-        referral_query = await db.execute(
-            select(Referral).where(
-                Referral.referred_id == str(user.id),
-                Referral.status == "PENDING"
+        try:
+            # Verificar si tiene un referido pendiente
+            referral_query = await db.execute(
+                select(Referral).where(
+                    Referral.referred_id == str(user.id),
+                    Referral.status == "PENDING"
+                )
             )
-        )
-        referral = referral_query.scalar_one_or_none()
-        
-        if referral:
-            # Tiene un referido pendiente, validarlo
-            result = await InvitationService.validate_and_grant_referral_bonus(
-                db=db,
-                referred_user_id=str(user.id),
-                action="first_message"
-            )
+            referral = referral_query.scalar_one_or_none()
             
-            if result.get("bonus_granted"):
-                logger.info(f"✅ Referral bonus granted automatically for user {user.id}")
+            if referral:
+                # Tiene un referido pendiente, validarlo
+                result = await InvitationService.validate_and_grant_referral_bonus(
+                    db=db,
+                    referred_user_id=str(user.id),
+                    action="first_message"
+                )
+                
+                if result.get("bonus_granted"):
+                    logger.info(f"✅ Referral bonus granted automatically for user {user.id}")
+        except Exception as e:
+            logger.warning(f"Error validando referido (tabla puede no existir): {e}")
+            # No propagar error - funcionalidad no crítica
 
 
 # =============================================
