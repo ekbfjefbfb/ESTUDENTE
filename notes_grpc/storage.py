@@ -298,3 +298,82 @@ class Storage:
             done=bool(new_done),
             priority=new_priority,
         )
+
+    async def delete_note(self, *, note_id: str) -> bool:
+        """Elimina una nota y sus tareas asociadas (cascade)"""
+        async with aiosqlite.connect(self._path) as db:
+            # Verificar que existe
+            cur = await db.execute("SELECT id FROM notes WHERE id = ?", (note_id,))
+            row = await cur.fetchone()
+            if not row:
+                return False
+            
+            # Eliminar (las tareas se eliminan en cascade por FK)
+            await db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+            await db.commit()
+            return True
+
+    async def update_note(
+        self,
+        *,
+        note_id: str,
+        title: Optional[str] = None,
+        transcript: Optional[str] = None,
+        summary: Optional[str] = None,
+        key_points: Optional[List[str]] = None,
+    ) -> Optional[NoteRow]:
+        """Actualiza una nota existente. Campos None no se modifican."""
+        async with aiosqlite.connect(self._path) as db:
+            db.row_factory = aiosqlite.Row
+
+            # Verificar que existe
+            cur = await db.execute("SELECT * FROM notes WHERE id = ?", (note_id,))
+            row = await cur.fetchone()
+            if not row:
+                return None
+
+            # Construir update dinámico
+            updates: List[str] = []
+            args: List[Any] = []
+            
+            if title is not None:
+                updates.append("title = ?")
+                args.append(title)
+            if transcript is not None:
+                updates.append("transcript = ?")
+                args.append(transcript)
+            if summary is not None:
+                updates.append("summary = ?")
+                args.append(summary)
+            if key_points is not None:
+                updates.append("key_points_json = ?")
+                args.append(json.dumps(key_points, ensure_ascii=False))
+
+            if not updates:
+                # No hay nada que actualizar, devolver nota actual
+                return NoteRow(
+                    id=row["id"],
+                    title=row["title"],
+                    transcript=row["transcript"],
+                    summary=row["summary"],
+                    key_points=json.loads(row["key_points_json"]),
+                    created_at=datetime.fromisoformat(row["created_at"]),
+                )
+
+            args.append(note_id)
+            query = f"UPDATE notes SET {', '.join(updates)} WHERE id = ?"
+            await db.execute(query, tuple(args))
+            await db.commit()
+
+            # Leer nota actualizada
+            cur2 = await db.execute("SELECT * FROM notes WHERE id = ?", (note_id,))
+            updated = await cur2.fetchone()
+            
+            return NoteRow(
+                id=updated["id"],
+                title=updated["title"],
+                transcript=updated["transcript"],
+                summary=updated["summary"],
+                key_points=json.loads(updated["key_points_json"]),
+                created_at=datetime.fromisoformat(updated["created_at"]),
+            )

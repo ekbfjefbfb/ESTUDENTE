@@ -67,6 +67,13 @@ class ListTasksResponse(BaseModel):
     tasks: List[TaskOut]
 
 
+class UpdateNoteRequest(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=400)
+    transcript: Optional[str] = Field(None, min_length=1, max_length=400000)
+    summary: Optional[str] = Field(None, min_length=1, max_length=10000)
+    key_points: Optional[List[str]] = Field(None, max_length=100)
+
+
 async def _extract_topics(*, client: SiliconFlowClient, transcript: str) -> List[str]:
     system = "Return STRICT JSON only. Schema: {topics:[string]}"
     user = (
@@ -206,6 +213,57 @@ async def get_note(note_id: str, _user=Depends(get_current_user)):
     )
 
 
+@router.put("/{note_id}", response_model=NoteOut)
+async def update_note(
+    note_id: str,
+    payload: UpdateNoteRequest,
+    _user=Depends(get_current_user),
+):
+    """Actualiza una nota existente"""
+    storage = await _get_storage()
+    
+    # Verificar que existe
+    got = await storage.get_note(note_id=note_id)
+    if not got:
+        raise HTTPException(status_code=404, detail="note_not_found")
+    
+    # Actualizar
+    updated = await storage.update_note(
+        note_id=note_id,
+        title=payload.title,
+        transcript=payload.transcript,
+        summary=payload.summary,
+        key_points=payload.key_points,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="note_not_found")
+    
+    # Obtener tareas asociadas
+    _, task_rows = await storage.get_note(note_id=note_id)
+    tasks_out: List[TaskOut] = []
+    for tr in task_rows:
+        tasks_out.append(
+            TaskOut(
+                id=tr.id,
+                text=tr.text,
+                due_date=tr.due_date.isoformat() if tr.due_date else None,
+                done=tr.done,
+                priority=tr.priority,
+            )
+        )
+    
+    return NoteOut(
+        id=updated.id,
+        title=updated.title,
+        transcript=updated.transcript,
+        summary=updated.summary,
+        topics=[],
+        key_points=updated.key_points,
+        tasks=tasks_out,
+        created_at=updated.created_at.isoformat(),
+    )
+
+
 @router.get("", response_model=ListNotesResponse)
 async def list_notes(
     limit: int = 20,
@@ -229,6 +287,19 @@ async def list_notes(
             )
         )
     return ListNotesResponse(notes=out)
+
+
+@router.delete("/{note_id}")
+async def delete_note(
+    note_id: str,
+    _user=Depends(get_current_user),
+):
+    """Elimina una nota y sus tareas asociadas"""
+    storage = await _get_storage()
+    deleted = await storage.delete_note(note_id=note_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="note_not_found")
+    return {"success": True, "message": "Nota eliminada", "note_id": note_id}
 
 
 @router.get("/tasks", response_model=ListTasksResponse)

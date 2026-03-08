@@ -7,7 +7,7 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import update
+from sqlalchemy import update, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.db_enterprise import get_async_db
@@ -59,6 +59,68 @@ async def get_me(current_user: User = Depends(get_current_user)):
         full_name=current_user.full_name,
         phone_number=current_user.phone_number,
         profile_picture_url=current_user.profile_picture_url,
+    )
+
+
+class UpdateProfileRequest(BaseModel):
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    phone_number: Optional[str] = None
+
+
+class UpdateProfileResponse(BaseModel):
+    id: str
+    username: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    phone_number: Optional[str] = None
+    profile_picture_url: Optional[str] = None
+    updated_at: str
+
+
+@router.put("/me", response_model=UpdateProfileResponse)
+async def update_me(
+    payload: UpdateProfileRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Actualizar datos del perfil del usuario"""
+    user_id = str(current_user.id)
+    
+    # Validar username único si se está actualizando
+    if payload.username is not None:
+        from sqlalchemy import select as sa_select
+        existing = await db.execute(
+            sa_select(User).where(
+                and_(User.username == payload.username, User.id != user_id)
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="username_already_taken")
+    
+    # Construir valores a actualizar
+    values: Dict[str, Any] = {}
+    if payload.username is not None:
+        values["username"] = payload.username
+    if payload.full_name is not None:
+        values["full_name"] = payload.full_name
+    if payload.phone_number is not None:
+        values["phone_number"] = payload.phone_number
+    
+    if values:
+        values["updated_at"] = datetime.utcnow()
+        await db.execute(update(User).where(User.id == user_id).values(**values))
+        await db.commit()
+        await db.refresh(current_user)
+    
+    return UpdateProfileResponse(
+        id=user_id,
+        username=current_user.username,
+        email=current_user.email,
+        full_name=current_user.full_name,
+        phone_number=current_user.phone_number,
+        profile_picture_url=current_user.profile_picture_url,
+        updated_at=datetime.utcnow().isoformat(),
     )
 
 

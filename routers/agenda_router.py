@@ -187,6 +187,58 @@ async def create_agenda_session(
         raise HTTPException(status_code=503, detail="agenda_service_unavailable")
 
 
+@router.get("/sessions", response_model=List[AgendaSessionDto])
+async def list_agenda_sessions(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_primary_session),
+    limit: int = 50,
+    offset: int = 0,
+    status: Optional[str] = None,
+):
+    """Listar todas las sesiones de agenda del usuario"""
+    try:
+        user_id = str(user.id) if hasattr(user, "id") else str(user.get("user_id"))
+        
+        # Build query
+        query = select(AgendaSession).where(AgendaSession.user_id == user_id)
+        if status:
+            query = query.where(AgendaSession.status == status)
+        query = query.order_by(AgendaSession.created_at.desc()).offset(offset).limit(limit)
+        
+        result = await db.execute(query)
+        sessions = result.scalars().all()
+        
+        # Build DTOs with item counts
+        dtos: List[AgendaSessionDto] = []
+        for session in sessions:
+            items_res = await db.execute(
+                select(AgendaItem)
+                .where(and_(AgendaItem.session_id == session.id, AgendaItem.user_id == user_id))
+                .order_by(AgendaItem.order_index.asc(), AgendaItem.created_at.asc())
+            )
+            items = items_res.scalars().all()
+            
+            dtos.append(
+                AgendaSessionDto(
+                    id=session.id,
+                    status=session.status,
+                    class_name=session.class_name,
+                    teacher_name=session.teacher_name,
+                    teacher_email=session.teacher_email,
+                    topic_hint=session.topic_hint,
+                    session_datetime=session.session_datetime,
+                    timezone=session.timezone,
+                    live_transcript=session.live_transcript or "",
+                    items=[_item_to_dto(i) for i in items],
+                )
+            )
+        
+        return dtos
+    except Exception as e:
+        logger.warning(f"Error listando sesiones de agenda (tabla puede no existir): {e}")
+        raise HTTPException(status_code=503, detail="agenda_service_unavailable")
+
+
 @router.get("/sessions/{session_id}", response_model=AgendaSessionDto)
 async def get_agenda_session(
     session_id: str,
@@ -558,6 +610,43 @@ async def finalize_session(
     )
     await db.commit()
     return FinalizeResponse(status="done")
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_agenda_session(
+    session_id: str,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_primary_session),
+):
+    """Elimina una sesión de agenda completa con todos sus items y chunks"""
+    user_id = str(user.id) if hasattr(user, "id") else str(user.get("user_id"))
+    
+    # Verificar que existe y pertenece al usuario
+    session = await _get_session_or_404(db, user_id, session_id)
+    
+    # Eliminar items asociados
+    await db.execute(
+        delete(AgendaItem).where(
+            and_(AgendaItem.session_id == session_id, AgendaItem.user_id == user_id)
+        )
+    )
+    
+    # Eliminar chunks asociados
+    await db.execute(
+        delete(AgendaChunk).where(
+            and_(AgendaChunk.session_id == session_id, AgendaChunk.user_id == user_id)
+        )
+    )
+    
+    # Eliminar la sesión
+    await db.execute(
+        delete(AgendaSession).where(
+            and_(AgendaSession.id == session_id, AgendaSession.user_id == user_id)
+        )
+    )
+    
+    await db.commit()
+    return {"success": True, "message": "Sesión eliminada", "session_id": session_id}
 
 
 async def _extract_incremental_agenda(transcript: str, state: Dict[str, Any]) -> Dict[str, Any]:
