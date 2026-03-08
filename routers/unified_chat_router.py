@@ -445,6 +445,9 @@ async def unified_chat_message(
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
         
+        # DEBUG: Verificar que no usamos streaming
+        logger.info(f"Chat request: stream={stream}, user={user_id}")
+        
         if stream:
             # Streaming temporalmente deshabilitado - usar modo normal
             # TODO: Re-activar streaming cuando se corrija el manejo de async generators
