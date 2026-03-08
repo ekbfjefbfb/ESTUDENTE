@@ -446,24 +446,27 @@ async def unified_chat_message(
         user_context = await get_user_context_for_chat(user_id)
         
         if stream:
-            # Endpoint optimizado para streaming real
-            async def response_generator():
-                full_response = []
-                # Obtener el generador de streaming primero
-                stream_gen = await chat_with_ai(
-                    messages=[{"role": "user", "content": message}],
-                    user=user_id,
-                    stream=True
-                )
-                # Ahora iterar sobre el generador
-                async for chunk in stream_gen:
-                    full_response.append(chunk)
-                    yield f"data: {json.dumps({'content': chunk})}\n\n"
-                
-                # Al final, persistir si es posible (en background)
-                asyncio.create_task(embeddings_service.add_to_semantic_cache(message, "".join(full_response)))
-            
-            return StreamingResponse(response_generator(), media_type="text/event-stream")
+            # Streaming temporalmente deshabilitado - usar modo normal
+            # TODO: Re-activar streaming cuando se corrija el manejo de async generators
+            structured = await get_ai_response_with_structured_data(user_id, message, user_context)
+            return ChatResponse(
+                success=True,
+                response=structured["response"],
+                user_id=user_id,
+                timestamp=datetime.utcnow().isoformat(),
+                context={
+                    "usage_percent": 0,
+                    "needs_refresh": False,
+                    "auto_refreshed": False,
+                    "stream_mode": False,
+                    "note": "Streaming temporalmente deshabilitado"
+                },
+                message_id=f"msg_{datetime.utcnow().timestamp()}",
+                actions=[
+                    {"type": "tasks", "data": structured["tasks"]},
+                    {"type": "plan", "data": structured["plan"]}
+                ]
+            )
 
         # Obtener respuesta estructurada (no stream)
         structured = await get_ai_response_with_structured_data(user_id, message, user_context)
