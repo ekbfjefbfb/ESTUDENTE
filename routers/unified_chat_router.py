@@ -449,11 +449,14 @@ async def unified_chat_message(
             # Endpoint optimizado para streaming real
             async def response_generator():
                 full_response = []
-                async for chunk in await chat_with_ai(
-                    messages=[{"role": "user", "content": message}], # Simplificado para stream
+                # Obtener el generador de streaming primero
+                stream_gen = await chat_with_ai(
+                    messages=[{"role": "user", "content": message}],
                     user=user_id,
                     stream=True
-                ):
+                )
+                # Ahora iterar sobre el generador
+                async for chunk in stream_gen:
                     full_response.append(chunk)
                     yield f"data: {json.dumps({'content': chunk})}\n\n"
                 
