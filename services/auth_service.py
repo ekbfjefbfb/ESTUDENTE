@@ -79,14 +79,18 @@ class AuthService:
 
         candidate = base
         for _ in range(8):
-            result = await session.execute(
-                text("SELECT id FROM users WHERE username = :username"),
-                {"username": candidate}
-            )
-            if result.scalar_one_or_none() is None:
-                return candidate
-            candidate = f"{base}_{uuid.uuid4().hex[:6]}"[:50]
+            try:
+                result = await session.execute(
+                    text("SELECT id FROM users WHERE username = :username"),
+                    {"username": candidate}
+                )
+                if result.scalar_one_or_none() is None:
+                    return candidate
+            except Exception:
+                # Si la tabla no existe, generar username único
+                return f"{base}_{uuid.uuid4().hex[:6]}"[:50]
 
+        # Si no se pudo verificar, generar username con UUID único
         return f"user_{uuid.uuid4().hex[:12]}"[:50]
 
     async def register_email_password_v2(self, email: str, password: str, full_name: Optional[str] = None) -> Dict[str, Any]:
