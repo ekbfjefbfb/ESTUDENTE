@@ -68,6 +68,10 @@ async def chat_with_ai(
         "Content-Type": "application/json",
     }
 
+    # Si es streaming, retornar el generador directamente (sin retry loop)
+    if stream:
+        return _stream_generator(url, headers, body)
+
     # Implementación de reintentos con backoff exponencial para SiliconFlow
     max_retries = 3
     retry_delay = 1.0
@@ -75,10 +79,6 @@ async def chat_with_ai(
     async with httpx.AsyncClient(timeout=60.0) as client:
         for attempt in range(max_retries):
             try:
-                if stream:
-                    # Retornar el generador para streaming
-                    return _stream_generator(url, headers, body)
-                
                 resp = await client.post(url, headers=headers, json=body)
                 
                 if resp.status_code == 429:  # Rate Limit
