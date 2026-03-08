@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -9,7 +10,7 @@ from typing import Any, Dict, List, Optional
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, delete, select, update
+from sqlalchemy import and_, delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.db_enterprise import get_db_session, get_primary_session
@@ -21,6 +22,8 @@ from models.models import (
     AgendaSession,
 )
 from utils.auth import get_current_user, verify_token
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/agenda", tags=["Agenda"])
@@ -122,13 +125,19 @@ def _now_ts() -> float:
 
 
 async def _get_session_or_404(db: AsyncSession, user_id: str, session_id: str) -> AgendaSession:
-    res = await db.execute(
-        select(AgendaSession).where(and_(AgendaSession.id == session_id, AgendaSession.user_id == user_id))
-    )
-    session = res.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=404, detail="session_not_found")
-    return session
+    try:
+        res = await db.execute(
+            select(AgendaSession).where(and_(AgendaSession.id == session_id, AgendaSession.user_id == user_id))
+        )
+        session = res.scalar_one_or_none()
+        if session is None:
+            raise HTTPException(status_code=404, detail="session_not_found")
+        return session
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Error accediendo a agenda_sessions (tabla puede no existir): {e}")
+        raise HTTPException(status_code=503, detail="agenda_service_unavailable")
 
 
 def _item_to_dto(item: AgendaItem) -> AgendaItemDto:
@@ -156,22 +165,26 @@ async def create_agenda_session(
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_primary_session),
 ):
-    session = AgendaSession(
-        user_id=str(user.id) if hasattr(user, "id") else str(user.get("user_id")),
-        class_name=payload.class_name,
-        teacher_name=payload.teacher_name,
-        teacher_email=payload.teacher_email,
-        topic_hint=payload.topic_hint,
-        session_datetime=payload.session_datetime or datetime.utcnow(),
-        timezone=payload.timezone,
-        status="recording",
-        live_transcript="",
-        extracted_state={},
-    )
-    db.add(session)
-    await db.commit()
-    await db.refresh(session)
-    return CreateAgendaSessionResponse(session_id=session.id, status=session.status)
+    try:
+        session = AgendaSession(
+            user_id=str(user.id) if hasattr(user, "id") else str(user.get("user_id")),
+            class_name=payload.class_name,
+            teacher_name=payload.teacher_name,
+            teacher_email=payload.teacher_email,
+            topic_hint=payload.topic_hint,
+            session_datetime=payload.session_datetime or datetime.utcnow(),
+            timezone=payload.timezone,
+            status="recording",
+            live_transcript="",
+            extracted_state={},
+        )
+        db.add(session)
+        await db.commit()
+        await db.refresh(session)
+        return CreateAgendaSessionResponse(session_id=session.id, status=session.status)
+    except Exception as e:
+        logger.warning(f"Error creando sesión de agenda (tabla puede no existir): {e}")
+        raise HTTPException(status_code=503, detail="agenda_service_unavailable")
 
 
 @router.get("/sessions/{session_id}", response_model=AgendaSessionDto)
@@ -180,28 +193,34 @@ async def get_agenda_session(
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_primary_session),
 ):
-    user_id = str(user.id) if hasattr(user, "id") else str(user.get("user_id"))
-    session = await _get_session_or_404(db, user_id, session_id)
+    try:
+        user_id = str(user.id) if hasattr(user, "id") else str(user.get("user_id"))
+        session = await _get_session_or_404(db, user_id, session_id)
 
-    items_res = await db.execute(
-        select(AgendaItem)
-        .where(and_(AgendaItem.session_id == session_id, AgendaItem.user_id == user_id))
-        .order_by(AgendaItem.order_index.asc(), AgendaItem.created_at.asc())
-    )
-    items = items_res.scalars().all()
+        items_res = await db.execute(
+            select(AgendaItem)
+            .where(and_(AgendaItem.session_id == session_id, AgendaItem.user_id == user_id))
+            .order_by(AgendaItem.order_index.asc(), AgendaItem.created_at.asc())
+        )
+        items = items_res.scalars().all()
 
-    return AgendaSessionDto(
-        id=session.id,
-        status=session.status,
-        class_name=session.class_name,
-        teacher_name=session.teacher_name,
-        teacher_email=session.teacher_email,
-        topic_hint=session.topic_hint,
-        session_datetime=session.session_datetime,
-        timezone=session.timezone,
-        live_transcript=session.live_transcript,
-        items=[_item_to_dto(i) for i in items],
-    )
+        return AgendaSessionDto(
+            id=session.id,
+            status=session.status,
+            class_name=session.class_name,
+            teacher_name=session.teacher_name,
+            teacher_email=session.teacher_email,
+            topic_hint=session.topic_hint,
+            session_datetime=session.session_datetime,
+            timezone=session.timezone,
+            live_transcript=session.live_transcript,
+            items=[_item_to_dto(i) for i in items],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Error obteniendo sesión de agenda (tabla puede no existir): {e}")
+        raise HTTPException(status_code=503, detail="agenda_service_unavailable")
 
 
 @router.post("/sessions/{session_id}/chunks")
