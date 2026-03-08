@@ -90,44 +90,48 @@ class PermissionsService:
         permissions: Dict[str, Any],
         device_info: Dict[str, Any],
         db: Session
-    ) -> UserPermissions:
+    ) -> Optional[UserPermissions]:
         """💾 Guarda permisos de usuario en base de datos"""
         
-        # Buscar registro existente
-        existing = db.query(UserPermissions).filter(
-            UserPermissions.user_id == user_id
-        ).first()
-        
-        permissions_data = {
-            "local_storage": permissions.get('local_storage', {}),
-            "notifications": permissions.get('notifications', {}),
-            "geolocation": permissions.get('geolocation', {}),
-            "microphone": permissions.get('microphone', {}),
-            "camera": permissions.get('camera', {}),
-            "file_system": permissions.get('file_system', {}),
-            "device_info": device_info
-        }
-        
-        if existing:
-            # Actualizar existente
-            existing.permissions_data = permissions_data
-            existing.granted_at = datetime.utcnow()
-            existing.last_updated = datetime.utcnow()
-            db.commit()
-            db.refresh(existing)
-            return existing
-        else:
-            # Crear nuevo
-            new_permissions = UserPermissions(
-                user_id=user_id,
-                permissions_data=permissions_data,
-                granted_at=datetime.utcnow(),
-                last_updated=datetime.utcnow()
-            )
-            db.add(new_permissions)
-            db.commit()
-            db.refresh(new_permissions)
-            return new_permissions
+        try:
+            # Buscar registro existente
+            existing = db.query(UserPermissions).filter(
+                UserPermissions.user_id == user_id
+            ).first()
+            
+            permissions_data = {
+                "local_storage": permissions.get('local_storage', {}),
+                "notifications": permissions.get('notifications', {}),
+                "geolocation": permissions.get('geolocation', {}),
+                "microphone": permissions.get('microphone', {}),
+                "camera": permissions.get('camera', {}),
+                "file_system": permissions.get('file_system', {}),
+                "device_info": device_info
+            }
+            
+            if existing:
+                # Actualizar existente
+                existing.permissions_data = permissions_data
+                existing.granted_at = datetime.utcnow()
+                existing.last_updated = datetime.utcnow()
+                db.commit()
+                db.refresh(existing)
+                return existing
+            else:
+                # Crear nuevo
+                new_permissions = UserPermissions(
+                    user_id=user_id,
+                    permissions_data=permissions_data,
+                    granted_at=datetime.utcnow(),
+                    last_updated=datetime.utcnow()
+                )
+                db.add(new_permissions)
+                db.commit()
+                db.refresh(new_permissions)
+                return new_permissions
+        except Exception as e:
+            logger.warning(f"Error guardando permisos (tabla puede no existir): {e}")
+            return None
     
     async def _configure_storage_strategy(
         self, 
@@ -193,23 +197,27 @@ class PermissionsService:
     ):
         """💾 Guarda estrategia de almacenamiento"""
         
-        existing = db.query(StorageStrategy).filter(
-            StorageStrategy.user_id == user_id
-        ).first()
-        
-        if existing:
-            existing.strategy_config = strategy
-            existing.last_updated = datetime.utcnow()
-        else:
-            new_strategy = StorageStrategy(
-                user_id=user_id,
-                strategy_config=strategy,
-                created_at=datetime.utcnow(),
-                last_updated=datetime.utcnow()
-            )
-            db.add(new_strategy)
-        
-        db.commit()
+        try:
+            existing = db.query(StorageStrategy).filter(
+                StorageStrategy.user_id == user_id
+            ).first()
+            
+            if existing:
+                existing.strategy_config = strategy
+                existing.last_updated = datetime.utcnow()
+            else:
+                new_strategy = StorageStrategy(
+                    user_id=user_id,
+                    strategy_config=strategy,
+                    created_at=datetime.utcnow(),
+                    last_updated=datetime.utcnow()
+                )
+                db.add(new_strategy)
+            
+            db.commit()
+        except Exception as e:
+            logger.warning(f"Error guardando estrategia (tabla puede no existir): {e}")
+            # No propagar error - funcionalidad no crítica
     
     async def _configure_notifications(
         self,
@@ -373,31 +381,35 @@ class PermissionsService:
     ):
         """💾 Guarda métricas de ahorro de costos"""
         
-        existing = db.query(CostSavings).filter(
-            CostSavings.user_id == user_id
-        ).first()
-        
-        if existing:
-            existing.monthly_savings_usd = savings["monthly_cost_saved_usd"]
-            existing.annual_savings_usd = savings["annual_cost_saved_usd"]
-            existing.requests_saved = savings["monthly_db_requests_saved"]
-            existing.storage_saved_mb = savings["monthly_storage_mb_saved"]
-            existing.carbon_saved_kg = savings["carbon_footprint_reduced_kg"]
-            existing.last_calculated = datetime.utcnow()
-        else:
-            new_savings = CostSavings(
-                user_id=user_id,
-                monthly_savings_usd=savings["monthly_cost_saved_usd"],
-                annual_savings_usd=savings["annual_cost_saved_usd"],
-                requests_saved=savings["monthly_db_requests_saved"],
-                storage_saved_mb=savings["monthly_storage_mb_saved"],
-                carbon_saved_kg=savings["carbon_footprint_reduced_kg"],
-                created_at=datetime.utcnow(),
-                last_calculated=datetime.utcnow()
-            )
-            db.add(new_savings)
-        
-        db.commit()
+        try:
+            existing = db.query(CostSavings).filter(
+                CostSavings.user_id == user_id
+            ).first()
+            
+            if existing:
+                existing.monthly_savings_usd = savings["monthly_cost_saved_usd"]
+                existing.annual_savings_usd = savings["annual_cost_saved_usd"]
+                existing.requests_saved = savings["monthly_db_requests_saved"]
+                existing.storage_saved_mb = savings["monthly_storage_mb_saved"]
+                existing.carbon_saved_kg = savings["carbon_footprint_reduced_kg"]
+                existing.last_calculated = datetime.utcnow()
+            else:
+                new_savings = CostSavings(
+                    user_id=user_id,
+                    monthly_savings_usd=savings["monthly_cost_saved_usd"],
+                    annual_savings_usd=savings["annual_cost_saved_usd"],
+                    requests_saved=savings["monthly_db_requests_saved"],
+                    storage_saved_mb=savings["monthly_storage_mb_saved"],
+                    carbon_saved_kg=savings["carbon_footprint_reduced_kg"],
+                    created_at=datetime.utcnow(),
+                    last_calculated=datetime.utcnow()
+                )
+                db.add(new_savings)
+            
+            db.commit()
+        except Exception as e:
+            logger.warning(f"Error guardando cost savings (tabla puede no existir): {e}")
+            # No propagar error - funcionalidad no crítica
     
     async def _generate_frontend_config(
         self,
@@ -491,12 +503,13 @@ class PermissionsService:
             }
             
         except Exception as e:
-            logger.error(f"Error getting permissions status for user {user_id}: {str(e)}")
+            logger.warning(f"Error getting permissions status (tabla puede no existir): {e}")
             return {
                 "permissions": {},
                 "storage_strategy": {},
                 "cost_savings": {},
-                "recommendations": []
+                "recommendations": [],
+                "error": "Permissions service unavailable"
             }
     
     async def _generate_recommendations(
@@ -579,8 +592,16 @@ class PermissionsService:
                 raise Exception("No se encontró estrategia existente")
                 
         except Exception as e:
-            logger.error(f"Error updating storage strategy for user {user_id}: {str(e)}")
-            raise Exception(f"Error actualizando estrategia: {str(e)}")
+            logger.warning(f"Error updating storage strategy (tabla puede no existir): {e}")
+            return {
+                "strategy": new_strategy,
+                "impact": {
+                    "cost_change": 0.0,
+                    "performance_change": "standard",
+                    "storage_change": 0
+                },
+                "error": "Storage strategy update unavailable"
+            }
 
 # 🌐 Instancia global del servicio
 permissions_service = PermissionsService()

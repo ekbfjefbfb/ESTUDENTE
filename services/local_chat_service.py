@@ -328,33 +328,37 @@ class LocalChatService:
     ) -> Dict[str, Any]:
         """☁️ Sincroniza mensaje específico con cloud"""
         
-        message_id = message.get("id")
-        
-        # Verificar si ya existe metadata
-        existing = db.query(ChatMessage).filter(
-            ChatMessage.id == message_id,
-            ChatMessage.user_id == user_id
-        ).first()
-        
-        if existing and existing.metadata_only:
-            # Actualizar de metadata a contenido completo
-            existing.content = json.dumps(message.get("content", ""))
-            existing.metadata_only = False
-            existing.sync_priority = "synced"
-            existing.updated_at = datetime.utcnow()
+        try:
+            message_id = message.get("id")
             
-            db.commit()
+            # Verificar si ya existe metadata
+            existing = db.query(ChatMessage).filter(
+                ChatMessage.id == message_id,
+                ChatMessage.user_id == user_id
+            ).first()
             
-            cost_saved = 0  # Ya no hay ahorro al sincronizar
-        else:
-            # Crear nuevo registro completo
-            await self._save_full_message_to_cloud(user_id, message, db)
-            cost_saved = 0
-        
-        return {
-            "synced": True,
-            "cost_saved": cost_saved
-        }
+            if existing and existing.metadata_only:
+                # Actualizar de metadata a contenido completo
+                existing.content = json.dumps(message.get("content", ""))
+                existing.metadata_only = False
+                existing.sync_priority = "synced"
+                existing.updated_at = datetime.utcnow()
+                
+                db.commit()
+                
+                cost_saved = 0  # Ya no hay ahorro al sincronizar
+            else:
+                # Crear nuevo registro completo
+                await self._save_full_message_to_cloud(user_id, message, db)
+                cost_saved = 0
+            
+            return {
+                "synced": True,
+                "cost_saved": cost_saved
+            }
+        except Exception as e:
+            logger.warning(f"Error sincronizando mensaje (tabla puede no existir): {e}")
+            return {"synced": False, "cost_saved": 0, "error": str(e)}
     
     async def get_user_chat_stats(
         self,
@@ -413,8 +417,20 @@ class LocalChatService:
             }
             
         except Exception as e:
-            logger.error(f"Error getting chat stats for user {user_id}: {str(e)}")
-            raise Exception(f"Error obteniendo estadísticas: {str(e)}")
+            logger.warning(f"Error getting chat stats (tabla puede no existir): {e}")
+            # Retornar valores por defecto seguros
+            return {
+                "total_messages": 0,
+                "local_messages": 0,
+                "cloud_messages": 0,
+                "local_percentage": 0.0,
+                "total_size_mb": 0.0,
+                "storage_saved_mb": 0.0,
+                "monthly_cost_saved_usd": 0.0,
+                "annual_cost_saved_usd": 0.0,
+                "optimization_score": 0,
+                "error": "Chat stats unavailable"
+            }
     
     async def cleanup_old_local_messages(
         self,
@@ -424,37 +440,46 @@ class LocalChatService:
     ) -> Dict[str, Any]:
         """🧹 Limpia mensajes locales antiguos"""
         
-        if not db:
-            db = next(get_db())
-        
-        cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
-        
-        # Encontrar mensajes para limpiar
-        old_metadata = db.query(LocalChatMetadata).filter(
-            LocalChatMetadata.user_id == user_id,
-            LocalChatMetadata.created_at < cutoff_date
-        ).all()
-        
-        cleanup_stats = {
-            "messages_cleaned": len(old_metadata),
-            "storage_freed_mb": 0.0,
-            "messages_to_delete": []
-        }
-        
-        for metadata in old_metadata:
-            cleanup_stats["storage_freed_mb"] += metadata.size_bytes / (1024 * 1024)
-            cleanup_stats["messages_to_delete"].append({
-                "message_id": metadata.message_id,
-                "local_storage_key": metadata.local_storage_key,
-                "size_mb": round(metadata.size_bytes / (1024 * 1024), 3)
-            })
+        try:
+            if not db:
+                db = next(get_db())
             
-            # Eliminar metadata
-            db.delete(metadata)
-        
-        db.commit()
-        
-        return cleanup_stats
+            cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
+            
+            # Encontrar mensajes para limpiar
+            old_metadata = db.query(LocalChatMetadata).filter(
+                LocalChatMetadata.user_id == user_id,
+                LocalChatMetadata.created_at < cutoff_date
+            ).all()
+            
+            cleanup_stats = {
+                "messages_cleaned": len(old_metadata),
+                "storage_freed_mb": 0.0,
+                "messages_to_delete": []
+            }
+            
+            for metadata in old_metadata:
+                cleanup_stats["storage_freed_mb"] += metadata.size_bytes / (1024 * 1024)
+                cleanup_stats["messages_to_delete"].append({
+                    "message_id": metadata.message_id,
+                    "local_storage_key": metadata.local_storage_key,
+                    "size_mb": round(metadata.size_bytes / (1024 * 1024), 3)
+                })
+                
+                # Eliminar metadata
+                db.delete(metadata)
+            
+            db.commit()
+            
+            return cleanup_stats
+        except Exception as e:
+            logger.warning(f"Error en cleanup (tabla puede no existir): {e}")
+            return {
+                "messages_cleaned": 0,
+                "storage_freed_mb": 0.0,
+                "messages_to_delete": [],
+                "error": "Cleanup unavailable"
+            }
     
     # 🔧 MÉTODOS AUXILIARES
     
@@ -527,29 +552,33 @@ class LocalChatService:
     ):
         """📊 Actualiza estado de sincronización"""
         
-        existing = db.query(ChatSyncStatus).filter(
-            ChatSyncStatus.user_id == user_id
-        ).first()
-        
-        if existing:
-            existing.last_sync = datetime.utcnow()
-            existing.messages_synced += sync_results["messages_synced"]
-            existing.messages_local += sync_results["messages_kept_local"]
-            existing.storage_saved_mb += sync_results["storage_saved_mb"]
-            existing.cost_saved_usd += sync_results["cost_saved_usd"]
-        else:
-            new_status = ChatSyncStatus(
-                user_id=user_id,
-                last_sync=datetime.utcnow(),
-                messages_synced=sync_results["messages_synced"],
-                messages_local=sync_results["messages_kept_local"],
-                storage_saved_mb=sync_results["storage_saved_mb"],
-                cost_saved_usd=sync_results["cost_saved_usd"],
-                created_at=datetime.utcnow()
-            )
-            db.add(new_status)
-        
-        db.commit()
+        try:
+            existing = db.query(ChatSyncStatus).filter(
+                ChatSyncStatus.user_id == user_id
+            ).first()
+            
+            if existing:
+                existing.last_sync = datetime.utcnow()
+                existing.messages_synced += sync_results["messages_synced"]
+                existing.messages_local += sync_results["messages_kept_local"]
+                existing.storage_saved_mb += sync_results["storage_saved_mb"]
+                existing.cost_saved_usd += sync_results["cost_saved_usd"]
+            else:
+                new_status = ChatSyncStatus(
+                    user_id=user_id,
+                    last_sync=datetime.utcnow(),
+                    messages_synced=sync_results["messages_synced"],
+                    messages_local=sync_results["messages_kept_local"],
+                    storage_saved_mb=sync_results["storage_saved_mb"],
+                    cost_saved_usd=sync_results["cost_saved_usd"],
+                    created_at=datetime.utcnow()
+                )
+                db.add(new_status)
+            
+            db.commit()
+        except Exception as e:
+            logger.warning(f"Error actualizando sync status (tabla puede no existir): {e}")
+            # No propagar error - funcionalidad no crítica
 
 # 🌐 Instancia global del servicio
 local_chat_service = LocalChatService()

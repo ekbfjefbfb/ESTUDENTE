@@ -354,44 +354,59 @@ class EncryptionService:
         Returns:
             Dict con claves públicas
         """
-        # Identity key
-        identity_query = select(EncryptionKey).where(
-            EncryptionKey.user_id == user_id,
-            EncryptionKey.key_type == "identity",
-            EncryptionKey.is_active == True
-        )
-        identity_result = await self.db.execute(identity_query)
-        identity_key = identity_result.scalar_one_or_none()
-        
-        # Signed prekey
-        signed_query = select(EncryptionKey).where(
-            EncryptionKey.user_id == user_id,
-            EncryptionKey.key_type == "signed_prekey",
-            EncryptionKey.is_active == True
-        )
-        signed_result = await self.db.execute(signed_query)
-        signed_key = signed_result.scalar_one_or_none()
-        
-        # Prekey disponible
-        prekey_query = select(EncryptionKey).where(
-            EncryptionKey.user_id == user_id,
-            EncryptionKey.key_type == "prekey",
-            EncryptionKey.is_active == True
-        ).limit(1)
-        prekey_result = await self.db.execute(prekey_query)
-        prekey = prekey_result.scalar_one_or_none()
-        
-        return {
-            "identity_key": identity_key.public_key if identity_key else None,
-            "signed_prekey": {
-                "public_key": signed_key.public_key if signed_key else None,
-                "signature": signed_key.signature if signed_key else None
-            },
-            "prekey": {
-                "id": prekey.key_id if prekey else None,
-                "public_key": prekey.public_key if prekey else None
+        try:
+            # Identity key
+            identity_query = select(EncryptionKey).where(
+                EncryptionKey.user_id == user_id,
+                EncryptionKey.key_type == "identity",
+                EncryptionKey.is_active == True
+            )
+            identity_result = await self.db.execute(identity_query)
+            identity_key = identity_result.scalar_one_or_none()
+            
+            # Signed prekey
+            signed_query = select(EncryptionKey).where(
+                EncryptionKey.user_id == user_id,
+                EncryptionKey.key_type == "signed_prekey",
+                EncryptionKey.is_active == True
+            )
+            signed_result = await self.db.execute(signed_query)
+            signed_key = signed_result.scalar_one_or_none()
+            
+            # Prekey disponible
+            prekey_query = select(EncryptionKey).where(
+                EncryptionKey.user_id == user_id,
+                EncryptionKey.key_type == "prekey",
+                EncryptionKey.is_active == True
+            ).limit(1)
+            prekey_result = await self.db.execute(prekey_query)
+            prekey = prekey_result.scalar_one_or_none()
+            
+            return {
+                "identity_key": identity_key.public_key if identity_key else None,
+                "signed_prekey": {
+                    "public_key": signed_key.public_key if signed_key else None,
+                    "signature": signed_key.signature if signed_key else None
+                },
+                "prekey": {
+                    "id": prekey.key_id if prekey else None,
+                    "public_key": prekey.public_key if prekey else None
+                }
             }
-        }
+        except Exception as e:
+            logger.warning(f"Error obteniendo claves (tabla puede no existir): {e}")
+            return {
+                "identity_key": None,
+                "signed_prekey": {
+                    "public_key": None,
+                    "signature": None
+                },
+                "prekey": {
+                    "id": None,
+                    "public_key": None
+                },
+                "error": "Encryption keys unavailable"
+            }
 
 
 # Export
