@@ -38,6 +38,9 @@ reportlab==4.2.5
 # Web search
 aiolimiter==1.1.0
 
+# Embeddings
+numpy==1.26.4
+
 # Optional runtime deps still referenced by existing modules
 prometheus-client==0.20.0
 redis==4.6.0
