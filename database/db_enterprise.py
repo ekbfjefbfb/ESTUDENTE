@@ -17,6 +17,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from collections import defaultdict
 
+from config import ENVIRONMENT, DATABASE_URL as CONFIG_DATABASE_URL
+
 # SQLAlchemy Enterprise
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy import text, event, pool
@@ -379,9 +381,12 @@ def create_database_config() -> DatabaseConfig:
     """Crea configuración de base de datos desde environment"""
     
     # URL principal
-    primary_url = os.getenv("DATABASE_URL")
+    primary_url = os.getenv("DATABASE_URL") or CONFIG_DATABASE_URL
     if not primary_url:
-        raise RuntimeError("❌ DATABASE_URL no está definido")
+        if ENVIRONMENT == "production":
+            raise RuntimeError("❌ DATABASE_URL no está definido")
+        # Fallback seguro para desarrollo local
+        primary_url = "sqlite+aiosqlite:///./backend_super.db"
     
     # Convertir a asyncpg si es necesario
     if primary_url.startswith("postgresql://"):

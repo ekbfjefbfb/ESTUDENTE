@@ -621,6 +621,7 @@ async def unified_chat_message(
 
         # Obtener respuesta estructurada (no stream)
         structured = await get_ai_response_with_structured_data(user_id, message, user_context)
+        structured = _sanitize_structured_data(structured)
         
         # Guardar progreso del usuario
         await save_user_progress(user_id, message, structured)
@@ -650,7 +651,15 @@ async def unified_chat_message(
             ]
         )
         
+    except RuntimeError as e:
+        if "GROQ_API_KEY" in str(e):
+            raise HTTPException(status_code=503, detail="llm_unavailable_missing_groq_api_key")
+        raise
     except Exception as e:
+        logger.exception(
+            "unified_chat_message_json_failed",
+            extra={"user_id": str(user.get("user_id") if isinstance(user, dict) else ""), "error": str(e)},
+        )
         raise HTTPException(
             status_code=500,
             detail={
@@ -766,6 +775,7 @@ async def unified_chat_message_json(
         
         # Obtener respuesta estructurada
         structured = await get_ai_response_with_structured_data(user_id, request.message, user_context)
+        structured = _sanitize_structured_data(structured)
         
         # Guardar progreso
         await save_user_progress(user_id, request.message, structured)
@@ -795,6 +805,10 @@ async def unified_chat_message_json(
             ]
         )
         
+    except RuntimeError as e:
+        if "GROQ_API_KEY" in str(e):
+            raise HTTPException(status_code=503, detail="llm_unavailable_missing_groq_api_key")
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,

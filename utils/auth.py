@@ -4,6 +4,7 @@ Utilidades de Autenticación Enterprise - Mi Backend Super IA
 import logging
 from typing import Optional, Dict, Any, TYPE_CHECKING
 from datetime import datetime, timedelta
+import time
 from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +32,29 @@ def get_db_session():
 logger = logging.getLogger("auth_utils")
 security = HTTPBearer(auto_error=False)
 
+_last_activity_column_exists: Optional[bool] = None
+
+
+async def _users_last_activity_column_exists(db: AsyncSession) -> bool:
+    global _last_activity_column_exists
+    if _last_activity_column_exists is not None:
+        return _last_activity_column_exists
+    try:
+        result = await db.execute(
+            text(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'users' AND column_name = 'last_activity'
+                LIMIT 1
+                """
+            )
+        )
+        _last_activity_column_exists = result.first() is not None
+    except Exception:
+        _last_activity_column_exists = False
+    return bool(_last_activity_column_exists)
+
 class AuthUser(dict):
     def __getattr__(self, item):
         try:
@@ -43,12 +67,17 @@ class AuthUser(dict):
 
 # Redis para blacklist de tokens
 redis_client = None
+_redis_unavailable_until: float = 0.0
 
 async def get_redis_client():
     """
     Obtiene cliente Redis para manejo de tokens
     """
     global redis_client
+    global _redis_unavailable_until
+    now = time.time()
+    if _redis_unavailable_until and now < _redis_unavailable_until:
+        return None
     if redis_client is None:
         try:
             redis_client = redis.from_url(REDIS_URL)
@@ -57,6 +86,7 @@ async def get_redis_client():
         except Exception as e:
             logger.warning(f"⚠️ Redis no disponible para auth: {e}")
             redis_client = None
+            _redis_unavailable_until = now + 60.0
     return redis_client
 
 async def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
@@ -223,11 +253,12 @@ async def get_current_user(
         
         # Actualizar última actividad (opcional)
         try:
-            await db.execute(
-                text("UPDATE users SET last_activity = NOW() WHERE id = :user_id"),
-                {"user_id": str(user_id_db)},
-            )
-            await db.commit()
+            if await _users_last_activity_column_exists(db):
+                await db.execute(
+                    text("UPDATE users SET last_activity = NOW() WHERE id = :user_id"),
+                    {"user_id": str(user_id_db)},
+                )
+                await db.commit()
         except Exception as e:
             logger.warning(f"No se pudo actualizar última actividad: {e}")
         

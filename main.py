@@ -356,6 +356,9 @@ app.include_router(auth_routes.router, prefix="/api/auth", tags=["Authentication
 # Chat e IA
 app.include_router(unified_chat_router.router, prefix="/api", tags=["💬 Chat IA"])
 
+# Compatibilidad legacy: algunos clientes conectan sin prefijo /api (p.ej. WebSockets)
+app.include_router(unified_chat_router.router, prefix="", tags=["💬 Chat IA (legacy)"])
+
 # Documents
 app.include_router(apa7_pdf_router.router, tags=["Documents"])
 
