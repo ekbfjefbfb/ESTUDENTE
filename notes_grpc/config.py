@@ -2,12 +2,16 @@ import os
 
 
 class Settings:
-    SILICONFLOW_API_KEY: str = os.getenv("SILICONFLOW_API_KEY", "").strip()
-    SILICONFLOW_BASE_URL: str = os.getenv("SILICONFLOW_URL", "https://api.siliconflow.cn/v1").strip()
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "").strip()
 
-    # Models - Ahora solo Qwen3-VL-32B
-    LLM_MODEL: str = os.getenv("SILICONFLOW_LLM_MODEL", "Qwen/Qwen3-VL-32B-Instruct").strip()
-    STT_MODEL: str = os.getenv("SILICONFLOW_STT_MODEL", "FunAudioLLM/SenseVoiceSmall").strip()
+    LLM_FAST_MODEL: str = os.getenv(
+        "GROQ_LLM_FAST_MODEL",
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+    ).strip()
+    LLM_REASONING_MODEL: str = os.getenv(
+        "GROQ_LLM_REASONING_MODEL",
+        "openai/gpt-oss-120b",
+    ).strip()
 
     # Storage
     SQLITE_PATH: str = os.getenv("NOTES_SQLITE_PATH", "notes.db").strip()

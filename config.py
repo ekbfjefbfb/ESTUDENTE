@@ -95,24 +95,10 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # Backend: Railway/Render/Heroku (sin GPU)
 # Modelos IA: RunPod/Vast.ai/Colab (con GPU)
 
-USE_REMOTE_AI = os.getenv("USE_REMOTE_AI", "false").lower() in ("true", "1", "t")
-
-# URL del servidor de IA (SiliconFlow, Ollama o modelos propios)
-SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY")
-SILICONFLOW_URL = os.getenv("SILICONFLOW_URL", "https://api.siliconflow.cn/v1")
-
-if USE_REMOTE_AI:
-    # Producción: Priorizar SiliconFlow si hay API Key, si no usar AI_SERVER_URL genérico
-    AI_SERVER_URL = os.getenv("AI_SERVER_URL", SILICONFLOW_URL if SILICONFLOW_API_KEY else None)
-    if not AI_SERVER_URL and ENVIRONMENT == "production":
-        raise ValueError("AI_SERVER_URL o SILICONFLOW_API_KEY es requerido cuando USE_REMOTE_AI=true")
-else:
-    # Desarrollo: Ollama local para testing
-    AI_SERVER_URL = os.getenv("AI_SERVER_URL", "http://localhost:11434")
-
-AI_MODEL = os.getenv("AI_MODEL", "Qwen/Qwen3-VL-32B-Instruct")  # ✅ Un solo modelo: multimodal, rápido, económico
-VISION_MODEL = os.getenv("VISION_MODEL", "Qwen/Qwen3-VL-32B-Instruct")  # Mismo modelo para visión
-TEXT_MODEL = os.getenv("TEXT_MODEL", "Qwen/Qwen3-VL-32B-Instruct")  # Mismo modelo para texto
+AI_SERVER_URL = os.getenv("AI_SERVER_URL", "").strip() or None
+AI_MODEL = os.getenv("AI_MODEL", "").strip() or None
+VISION_MODEL = os.getenv("VISION_MODEL", "").strip() or None
+TEXT_MODEL = os.getenv("TEXT_MODEL", "").strip() or None
 
 SEARXNG_URL = os.getenv("SEARXNG_URL", "")  # URL de SearXNG para LiveSearch (opcional)
 LIVESEARCH_ENABLED = os.getenv("LIVESEARCH_ENABLED", "true").lower() in ("true", "1", "t")
@@ -262,7 +248,7 @@ FEATURE_FLAGS = {
 # =========================
 APP_NAME = "Backend Súper IA v5.0"
 APP_VERSION = "5.0.0"
-APP_DESCRIPTION = "Backend Enterprise - Qwen3-VL-32B via SiliconFlow"
+APP_DESCRIPTION = "Backend Enterprise - Groq"
 
 # =========================
 # Timeouts y Workers v4.0 - Optimizados

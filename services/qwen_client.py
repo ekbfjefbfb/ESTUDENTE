@@ -1,23 +1,20 @@
-"""
-Cliente HTTP unificado para Qwen via SiliconFlow
-Reemplaza: deepseek_client.py, deepseek_vl_client.py
-Modelo multimodal: Chat + Visión + Audio
+from __future__ import annotations
+
+"""Cliente legacy (no usado).
+
+Este proyecto usa Groq para LLM/STT/TTS. Se mantiene el módulo solo por compatibilidad
+con imports antiguos; no se inicializa ni realiza llamadas externas.
 """
 
-import httpx
 import logging
-import asyncio
-import base64
-import os
-from typing import Optional, Dict, Any, List, AsyncGenerator
-from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
 class QwenClient:
     """
-    Cliente HTTP para Qwen via SiliconFlow
+    Cliente HTTP legacy (deshabilitado)
     
     Características:
     - Chat texto
@@ -26,23 +23,14 @@ class QwenClient:
     - Streaming de respuestas
     """
     
-    def __init__(
-        self,
-        base_url: str = None,
-        model: str = "Qwen/Qwen3-VL-32B-Instruct",
-        timeout: float = 300.0
-    ):
-        self.base_url = (base_url or os.getenv("SILICONFLOW_URL", "https://api.siliconflow.cn/v1")).rstrip("/")
-        self.model = model
-        self.api_key = os.getenv("SILICONFLOW_API_KEY", "")
-        self.client = httpx.AsyncClient(timeout=timeout)
-        logger.info(f"QwenClient inicializado: {self.base_url} modelo={self.model}")
+    def __init__(self, *_args, **_kwargs):
+        raise RuntimeError("QwenClient is disabled. This project uses Groq.")
     
     async def health_check(self) -> bool:
-        """Verifica que SiliconFlow esté disponible."""
+        """Legacy no-op."""
         try:
             if not self.api_key:
-                logger.warning("SiliconFlow API key no configurada")
+                logger.warning("Legacy API key not configured")
                 return False
             
             headers = {
@@ -60,10 +48,10 @@ class QwenClient:
             model_names = [m.get("id", "") for m in models]
             
             if not any("qwen" in name.lower() for name in model_names):
-                logger.warning(f"Qwen no encontrado en SiliconFlow. Modelos disponibles: {model_names[:5]}")
+                logger.warning(f"Qwen model not found. Models available: {model_names[:5]}")
                 return False
             
-            logger.info("✅ SiliconFlow con Qwen disponible")
+            logger.info("✅ Legacy client available")
             return True
             
         except Exception as e:
@@ -302,7 +290,7 @@ class QwenClient:
             raise
     
     async def list_models(self) -> List[Dict[str, Any]]:
-        """Lista todos los modelos disponibles en SiliconFlow."""
+        """Legacy."""
         try:
             headers = {"Authorization": f"Bearer {self.api_key}"}
             response = await self.client.get(f"{self.base_url}/models", headers=headers)
@@ -324,18 +312,11 @@ _qwen_client: Optional[QwenClient] = None
 
 async def get_qwen_client() -> QwenClient:
     """
-    Obtiene o crea la instancia global de QwenClient via SiliconFlow.
+    Obtiene o crea la instancia global de QwenClient (legacy).
     """
     global _qwen_client
     
-    if _qwen_client is None:
-        from config import SILICONFLOW_URL, AI_MODEL
-        _qwen_client = QwenClient(base_url=SILICONFLOW_URL, model=AI_MODEL)
-        
-        if not await _qwen_client.health_check():
-            logger.warning("⚠️ Qwen no disponible en SiliconFlow")
-    
-    return _qwen_client
+    raise RuntimeError("QwenClient is disabled. This project uses Groq.")
 
 
 async def initialize_qwen_client() -> bool:
@@ -345,12 +326,7 @@ async def initialize_qwen_client() -> bool:
     Returns:
         True si está disponible, False si no
     """
-    try:
-        client = await get_qwen_client()
-        return await client.health_check()
-    except Exception as e:
-        logger.error(f"Error inicializando Qwen: {e}")
-        return False
+    return False
 
 
 __all__ = [

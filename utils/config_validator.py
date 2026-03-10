@@ -16,8 +16,8 @@ REQUIRED_PRODUCTION_VARS = {
     "SECRET_KEY": "Clave secreta para JWT y encriptación",
     "DATABASE_URL": "URL de la base de datos PostgreSQL",
     
-    # AI Server - ahora opcional (SiliconFlow usa SILICONFLOW_API_KEY)
-    # "AI_SERVER_URL": "URL del servidor de IA con modelos",
+    # LLM
+    "GROQ_API_KEY": "Groq API key",
     
     # Pagos (al menos uno) - ahora opcional
     # "payment_gateway": [

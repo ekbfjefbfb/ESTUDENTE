@@ -313,14 +313,15 @@ async def append_audio(
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_primary_session),
 ):
-    from services.siliconflow_ai_service import transcribe_audio, chat_with_ai
+    from services.groq_ai_service import chat_with_ai
+    from services.groq_voice_service import transcribe_audio_groq
     
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="empty_audio_file")
 
     try:
-        text = await transcribe_audio(raw)
+        text = await transcribe_audio_groq(raw, language="es")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"transcription_failed: {str(e)}")
 
@@ -653,9 +654,9 @@ async def _extract_incremental_agenda(transcript: str, state: Dict[str, Any]) ->
     """MVP: reuse existing segmented extractor; returns normalized state."""
     try:
         from notes_grpc.extractor import extract_note_segmented
-        from notes_grpc.siliconflow_client import SiliconFlowClient
+        from notes_grpc.groq_client import GroqClient
 
-        client = SiliconFlowClient()
+        client = GroqClient()
         extracted = await extract_note_segmented(client=client, transcript=transcript, title_hint="")
 
         return {
@@ -685,9 +686,9 @@ async def _classify_chunk_relevance(text: str) -> Dict[str, Any]:
     - relevance_score: float (0..1)
     """
     try:
-        from notes_grpc.siliconflow_client import SiliconFlowClient
+        from notes_grpc.groq_client import GroqClient
 
-        client = SiliconFlowClient()
+        client = GroqClient()
         system = (
             "Eres un clasificador de fragmentos de una clase. Devuelve SOLO JSON estricto. "
             "Clasifica relevance_label en: IMPORTANTE, SECUNDARIO, IRRELEVANTE. "
@@ -985,7 +986,7 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
 
                 # MVP: answer using unified chat model with transcript context
                 try:
-                    from services.siliconflow_ai_service import chat_with_ai
+                    from services.groq_ai_service import chat_with_ai
 
                     async with get_primary_session() as db:
                         session = await _get_session_or_404(db, user_id, session_id)
@@ -1127,7 +1128,7 @@ async def get_session_summary(
         }
     
     try:
-        from services.siliconflow_ai_service import chat_with_ai
+        from services.groq_ai_service import chat_with_ai
         
         summary = await chat_with_ai(
             messages=[

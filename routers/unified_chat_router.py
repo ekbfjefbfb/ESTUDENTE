@@ -4,16 +4,20 @@ Chat con IA + Voz + Monitoreo de Contexto Automático + Contexto de Tareas y Gra
 Diseñado para integración óptima con frontend
 """
 
+import asyncio
 from fastapi import APIRouter, WebSocket, UploadFile, File, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
-from typing import List, Optional, Dict, Any, AsyncGenerator
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 import json
 import logging
 from datetime import datetime, date, timedelta
 
-from services.siliconflow_ai_service import chat_with_ai, should_refresh_context, get_context_info
-from utils.auth import get_current_user
+from services.groq_ai_service import chat_with_ai, should_refresh_context, get_context_info
+from utils.auth import get_current_user, verify_token
+
+_WS_MAX_AUDIO_BYTES = 10 * 1024 * 1024
+_WS_PARTIAL_INTERVAL_MS = 700
+_WS_TAIL_WINDOW_MS = 4500
 
 logger = logging.getLogger("unified_chat_router")
 
@@ -52,11 +56,72 @@ class ContextResponse(BaseModel):
     messages_count: int
     last_check: Optional[str] = None
 
+class STTRequest(BaseModel):
+    """Request para Speech-to-Text"""
+    language: Optional[str] = "es"
+
+class STTResponse(BaseModel):
+    """Response de Speech-to-Text"""
+    success: bool
+    text: str
+    language: str
+    duration_ms: Optional[int] = None
+    timestamp: str
+
+class TTSRequest(BaseModel):
+    """Request para Text-to-Speech"""
+    text: str
+    voice: Optional[str] = "male_1"
+    speed: Optional[float] = 1.0
+
+class TTSResponse(BaseModel):
+    """Response de Text-to-Speech"""
+    success: bool
+    audio: str  # base64 data URI
+    text: str
+    voice: str
+    timestamp: str
+
 class ErrorResponse(BaseModel):
     success: bool = False
     error: str
     error_code: str
     timestamp: str
+
+
+async def _ws_auth_user_id(websocket: WebSocket) -> str:
+    token = websocket.query_params.get("token")
+    if not token:
+        raise HTTPException(status_code=401, detail="missing_token")
+    payload = await verify_token(token)
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="invalid_token")
+    return str(user_id)
+
+
+def _ws_now_iso() -> str:
+    return datetime.utcnow().isoformat()
+
+
+def _estimate_duration_ms_from_bytes(audio_len: int) -> int:
+    # Heurística: si llega PCM16 mono 16kHz => 32000 bytes/s
+    # Si llega otro formato (webm/mp3), esto será sólo una aproximación.
+    return int((audio_len / 32000.0) * 1000)
+
+
+def _tail_bytes_for_pcm16(*, buf: bytearray, sample_rate: int, tail_window_ms: int) -> bytes:
+    bytes_per_second = sample_rate * 2
+    tail_len = int((tail_window_ms / 1000.0) * bytes_per_second)
+    if tail_len <= 0:
+        return bytes(buf)
+    if tail_len >= len(buf):
+        return bytes(buf)
+    return bytes(buf[-tail_len:])
+
+
+async def _ws_send_json(websocket: WebSocket, payload: Dict[str, Any]) -> None:
+    await websocket.send_text(json.dumps(payload, ensure_ascii=False))
 
 # =========================
 # PERSISTENCIA DE PROGRESO
@@ -347,7 +412,7 @@ async def get_ai_response_with_structured_data(
     user_context: Dict[str, Any]
 ) -> Dict[str, Any]:
     """Obtiene respuesta de IA con datos estructurados (tasks, plan)"""
-    from services.siliconflow_ai_service import chat_with_ai
+    from services.groq_ai_service import chat_with_ai
     
     context_prompt = build_context_prompt(user_context)
     
@@ -513,6 +578,7 @@ async def unified_chat_message(
             }
         )
 
+
 @router.post("/message/json", response_model=ChatResponse)
 async def unified_chat_message_json(
     request: ChatMessageRequest,
@@ -586,68 +652,14 @@ async def unified_chat_message_json(
             }
         )
 
-@router.post("/voice/message", response_model=VoiceChatResponse)
-async def chat_with_voice(
-    audio: UploadFile = File(...),
-    user: dict = Depends(get_current_user),
-):
-    """Chat por voz - STT → Qwen3 → TTS"""
-    
-    try:
-        audio_bytes = await audio.read()
-        
-        from services.siliconflow_ai_service import transcribe_audio, text_to_speech
-        
-        text = await transcribe_audio(audio_bytes)
-        
-        response = await chat_with_ai(
-            messages=[{"role": "user", "content": text}],
-            user=user["user_id"]
-        )
-        
-        audio_response = await text_to_speech(response)
-        
-        return VoiceChatResponse(
-            success=True,
-            transcribed=text,
-            response=response,
-            audio=audio_response,
-            user_id=user["user_id"],
-            timestamp=datetime.utcnow().isoformat(),
-            message_id=f"voice_{datetime.utcnow().timestamp()}"
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "success": False,
-                "error": str(e),
-                "error_code": "VOICE_CHAT_ERROR",
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        )
-
-@router.get("/context/{user_id}", response_model=ContextResponse)
-async def get_user_context(user_id: str):
-    """Obtener información de contexto del usuario"""
-    info = get_context_info(user_id)
-    return ContextResponse(
-        user_id=user_id,
-        usage_percent=round(info.get("usage", 0) * 100, 1),
-        messages_count=info.get("messages_count", 0),
-        last_check=info.get("last_check").isoformat() if info.get("last_check") else None
-    )
-
 @router.post("/context/refresh/{user_id}")
 async def refresh_user_context(user_id: str):
     """Forzar refresh del contexto del usuario"""
-    from services.siliconflow_ai_service import user_contexts
+    from services.groq_ai_service import user_contexts
     if user_id in user_contexts:
         del user_contexts[user_id]
     return {
-        "success": True, 
-        "message": "Contexto refrescado", 
+        "success": True,
         "user_id": user_id,
         "timestamp": datetime.utcnow().isoformat()
     }
@@ -669,8 +681,8 @@ async def chat_info():
     return {
         "service": "unified-chat",
         "version": "5.0",
-        "model": "Qwen/Qwen3-VL-32B-Instruct",
-        "provider": "SiliconFlow",
+        "model": "auto",
+        "provider": "Groq",
         "features": {
             "text_chat": True,
             "voice_chat": True,
@@ -725,13 +737,96 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             "timestamp": datetime.utcnow().isoformat()
         }))
         await websocket.close()
+
+
+@router.websocket("/voice/ws")
+async def voice_stream_ws(websocket: WebSocket):
+    """WebSocket para voz en streaming: STT parcial -> LLM -> TTS."""
+    await websocket.accept()
+
+    try:
+        user_id = await _ws_auth_user_id(websocket)
+    except Exception:
+        await _ws_send_json(
+            websocket,
+            {
+                "type": "error",
+                "code": "UNAUTHORIZED",
+                "message": "invalid_or_missing_token",
+                "ts": _ws_now_iso(),
+            },
+        )
+        await websocket.close(code=1008)
+        return
+
+    from services.voice_ws_session import VoiceWsConfig, VoiceWsSession
+
+    session = VoiceWsSession(
+        send_json=lambda payload: _ws_send_json(websocket, payload),
+        chat_with_ai=chat_with_ai,
+        now_ts=_ws_now_iso,
+        estimate_duration_ms=_estimate_duration_ms_from_bytes,
+        tail_bytes_for_pcm16=_tail_bytes_for_pcm16,
+        config=VoiceWsConfig(
+            max_audio_bytes=_WS_MAX_AUDIO_BYTES,
+            partial_interval_ms=_WS_PARTIAL_INTERVAL_MS,
+            tail_window_ms=_WS_TAIL_WINDOW_MS,
+        ),
+    )
+
+    # Loop
+    try:
+        while True:
+            msg = await websocket.receive()
+
+            if msg.get("type") == "websocket.disconnect":
+                break
+
+            if "text" in msg and msg["text"] is not None:
+                try:
+                    data = json.loads(msg["text"])
+                except Exception:
+                    await _ws_send_json(
+                        websocket,
+                        {"type": "error", "code": "INVALID_JSON", "message": "invalid_json", "ts": _ws_now_iso()},
+                    )
+                    continue
+
+                mtype = data.get("type")
+                if mtype == "start":
+                    await session.start_turn(data, user_id=user_id)
+
+                elif mtype == "end":
+                    await session.end_turn(user_id=user_id)
+
+                else:
+                    await _ws_send_json(
+                        websocket,
+                        {"type": "error", "code": "UNKNOWN_MESSAGE", "message": str(mtype), "ts": _ws_now_iso()},
+                    )
+
+            if "bytes" in msg and msg["bytes"] is not None:
+                chunk = msg["bytes"]
+                if not isinstance(chunk, (bytes, bytearray)):
+                    continue
+
+                try:
+                    await session.add_audio_chunk(bytes(chunk))
+                except ValueError:
+                    await websocket.close(code=1009)
+                    return
+
     except Exception as e:
-        await websocket.send_text(json.dumps({
-            "success": False,
-            "error": str(e),
-            "error_code": "WS_ERROR",
-            "timestamp": datetime.utcnow().isoformat()
-        }))
-        await websocket.close()
+        try:
+            await _ws_send_json(
+                websocket,
+                {"type": "error", "code": "WS_ERROR", "message": str(e), "ts": _ws_now_iso()},
+            )
+        except Exception:
+            pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 __all__ = ["router"]

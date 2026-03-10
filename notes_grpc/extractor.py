@@ -7,7 +7,7 @@ from typing import Any, List, Optional
 import asyncio
 import re
 
-from notes_grpc.siliconflow_client import SiliconFlowClient
+from notes_grpc.groq_client import GroqClient
 
 
 @dataclass
@@ -48,7 +48,7 @@ def _parse_due_date(value: Any) -> Optional[datetime]:
         return None
 
 
-async def extract_note_from_text(*, client: SiliconFlowClient, transcript: str, title_hint: str = "") -> ExtractedNote:
+async def extract_note_from_text(*, client: GroqClient, transcript: str, title_hint: str = "") -> ExtractedNote:
     user_prompt = (
         f"Transcript:\n{transcript}\n\n"
         f"Title hint (optional): {title_hint}\n\n"
@@ -166,7 +166,7 @@ def _dedupe_keep_order(items: List[str], *, max_items: int) -> List[str]:
 
 async def extract_note_segmented(
     *,
-    client: SiliconFlowClient,
+    client: GroqClient,
     transcript: str,
     title_hint: str = "",
     max_chunk_chars: int = 1800,

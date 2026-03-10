@@ -11,7 +11,7 @@ from utils.auth import get_current_user
 
 from notes_grpc.config import settings
 from notes_grpc.extractor import extract_note_segmented
-from notes_grpc.siliconflow_client import SiliconFlowClient
+from notes_grpc.groq_client import GroqClient
 from notes_grpc.storage import Storage
 
 
@@ -74,7 +74,7 @@ class UpdateNoteRequest(BaseModel):
     key_points: Optional[List[str]] = Field(None, max_length=100)
 
 
-async def _extract_topics(*, client: SiliconFlowClient, transcript: str) -> List[str]:
+async def _extract_topics(*, client: GroqClient, transcript: str) -> List[str]:
     system = "Return STRICT JSON only. Schema: {topics:[string]}"
     user = (
         "Extract the main class topics (short phrases) from this transcript. "
@@ -110,7 +110,7 @@ async def create_note_from_transcript(
 ):
     title_hint = (payload.title_hint or "").strip()
 
-    client = SiliconFlowClient()
+    client = GroqClient()
     try:
         extracted = await extract_note_segmented(
             client=client,

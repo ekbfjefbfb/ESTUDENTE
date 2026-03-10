@@ -123,19 +123,10 @@ async def lifespan(app: FastAPI):
             logger.warning(f" Database initialization warning: {e}")
     startup_tasks.append(init_database())
     
-    # Task 3: Precargar modelo IA (Qwen via SiliconFlow)
+    # Task 3: Precarga ligera (sin warmup de terceros)
     async def preload_ai_models():
-        logger.info("🤖 Initializing AI client...")
-        try:
-            from services.qwen_client import initialize_qwen_client
-            ai_available = await initialize_qwen_client()
-            if ai_available:
-                logger.info("✅ Qwen3-VL connected via SiliconFlow")
-            else:
-                logger.warning("⚠️ Qwen no disponible (normal si servidor remoto)")
-        except Exception as e:
-            logger.warning(f"⚠️ Qwen init warning: {e}")
-    
+        logger.info("🤖 AI client ready (Groq)")
+
     startup_tasks.append(preload_ai_models())
     
     # 🚀 Ejecutar todo en paralelo (3x más rápido que v3.0)
@@ -165,7 +156,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=APP_NAME,
     version="5.0",
-    description=f"{APP_DESCRIPTION} - Qwen3-VL-32B via SiliconFlow",
+    description=f"{APP_DESCRIPTION} - Groq",
     lifespan=lifespan,
     default_response_class=ORJSONResponse,
     docs_url="/docs" if DEBUG else None,
@@ -340,7 +331,7 @@ async def health_check():
     except Exception:
         health_status["components"]["cache"] = "unavailable"
     
-    # AI models - siempre healthy si el servidor está corriendo (SiliconFlow es externo)
+    # AI models - always ready if server is running (provider is external)
     health_status["components"]["ai_models"] = "ready"
     
     return health_status

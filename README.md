@@ -1,6 +1,6 @@
 # kiis
 
-Backend slim (FastAPI) para asistente estudiantil: autenticación, chat (SiliconFlow) y búsqueda web.
+Backend slim (FastAPI) para asistente estudiantil: autenticación, chat (Groq) y búsqueda web.
 
 ## Requisitos
 - Python 3.10+
@@ -8,9 +8,10 @@ Backend slim (FastAPI) para asistente estudiantil: autenticación, chat (Silicon
 ## Variables de entorno
 Crea un archivo `.env` (no lo subas a git) con:
 
-- `SILICONFLOW_API_KEY=...`  
-- `SILICONFLOW_LLM_MODEL=deepseek-ai/DeepSeek-V3.2-Exp` (opcional)
-- `SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1` (opcional)
+- `GROQ_API_KEY=...`
+- `GROQ_LLM_FAST_MODEL=meta-llama/llama-4-scout-17b-16e-instruct` (opcional)
+- `GROQ_LLM_REASONING_MODEL=openai/gpt-oss-120b` (opcional)
+- `GROQ_LLM_REASONING_EFFORT=medium` (opcional)
 
 Para búsqueda web (opcional, recomendado):
 - `SERPAPI_KEY=...`

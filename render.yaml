@@ -11,12 +11,20 @@ services:
         value: 3.10.0
       - key: ENVIRONMENT
         value: production
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_LLM_FAST_MODEL
+        value: meta-llama/llama-4-scout-17b-16e-instruct
+      - key: GROQ_LLM_REASONING_MODEL
+        value: openai/gpt-oss-120b
+      - key: GROQ_LLM_REASONING_EFFORT
+        value: medium
       - key: PORT
         fromService: 
           type: web
           name: mi-backend-super-api
           property: port
       - key: DATABASE_URL
-        value: "postgresql+asyncpg://postgres:ejxzMxqz1JWk7XHn@vtixhvyyavxgshwsotwy.db.us-east-1.nhost.run:5432/vtixhvyyavxgshwsotwy"
+        sync: false
       - key: DATABASE_URL_SYNC
-        value: "postgresql://postgres:ejxzMxqz1JWk7XHn@vtixhvyyavxgshwsotwy.db.us-east-1.nhost.run:5432/vtixhvyyavxgshwsotwy"
+        sync: false

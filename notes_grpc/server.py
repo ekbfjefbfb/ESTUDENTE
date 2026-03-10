@@ -13,7 +13,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 from notes_grpc.config import settings
 from notes_grpc.extractor import extract_note_segmented
-from notes_grpc.siliconflow_client import SiliconFlowClient
+from notes_grpc.groq_client import GroqClient
 from notes_grpc.storage import Storage
 
 def _ensure_proto_generated() -> None:
@@ -75,7 +75,7 @@ def _ts_to_dt(ts: Timestamp) -> datetime:
 
 
 class NotesService(notes_pb2_grpc.NotesServiceServicer):
-    def __init__(self, *, storage: Storage, sf: SiliconFlowClient):
+    def __init__(self, *, storage: Storage, sf: GroqClient):
         self._storage = storage
         self._sf = sf
 
@@ -251,7 +251,7 @@ async def serve() -> None:
     storage = Storage(settings.SQLITE_PATH)
     await storage.init()
 
-    sf = SiliconFlowClient()
+    sf = GroqClient()
 
     server = grpc.aio.server(options=[("grpc.max_receive_message_length", 20 * 1024 * 1024)])
     notes_pb2_grpc.add_NotesServiceServicer_to_server(NotesService(storage=storage, sf=sf), server)
