@@ -6,7 +6,7 @@
 ## 🌐 Base URL
 
 ```
-Production: https://tu-app.onrender.com
+Production: https://estudente.onrender.com
 Local:      http://localhost:8000
 ```
 
@@ -52,6 +52,13 @@ Authorization: Bearer <jwt_token>
 ## 🤖 Chat IA (Unified Chat)
 
 Base: `/api/unified-chat`
+
+### Recomendado (baja latencia): WebSockets
+
+- **Texto (WS)**: `wss://estudente.onrender.com/api/unified-chat/ws/{user_id}?token=<jwt_token>`
+- **Voz streaming (WS)**: `wss://estudente.onrender.com/api/unified-chat/voice/ws?token=<jwt_token>`
+
+Los endpoints HTTP se mantienen como fallback, pero para UX “instantánea” el frontend debe usar WS.
 
 ### 1. Chat Simple (Form Data)
 
@@ -201,10 +208,12 @@ Base: `/api/unified-chat`
 
 ### 6. WebSocket Chat Texto
 
-**WebSocket** `wss://tu-app.onrender.com/api/unified-chat/ws/{user_id}`
+**WebSocket** `wss://estudente.onrender.com/api/unified-chat/ws/{user_id}?token=<jwt_token>`
 
 **Query Params:**
 - `token` (requerido): JWT token
+
+**Importante:** el `user_id` del path debe coincidir con el `sub` del token (si no, cierra con 1008).
 
 **Mensaje de entrada (JSON):**
 ```json
