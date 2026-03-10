@@ -31,6 +31,16 @@ def get_db_session():
 logger = logging.getLogger("auth_utils")
 security = HTTPBearer(auto_error=False)
 
+class AuthUser(dict):
+    def __getattr__(self, item):
+        try:
+            return self[item]
+        except KeyError as e:
+            raise AttributeError(item) from e
+
+    def is_premium_user(self) -> bool:
+        return bool(self.get("is_premium", False))
+
 # Redis para blacklist de tokens
 redis_client = None
 
@@ -177,9 +187,10 @@ async def get_current_user(
             )
         
         # Buscar usuario en DB con SQL directo
+        # Nota: en producción la tabla users puede no tener columnas como is_admin.
         result = await db.execute(
-            text("SELECT id, email, username, is_active, is_admin FROM users WHERE id = :user_id"),
-            {"user_id": user_id}
+            text("SELECT id, email, username, is_active FROM users WHERE id = :user_id"),
+            {"user_id": user_id},
         )
         row = result.first()
         
@@ -189,7 +200,8 @@ async def get_current_user(
                 detail="Usuario no encontrado"
             )
         
-        user_id, email, username, is_active, is_admin = row
+        user_id_db, email, username, is_active = row
+        is_admin = False
         
         # Verificar que el usuario esté activo
         if not is_active:
@@ -198,20 +210,22 @@ async def get_current_user(
                 detail="Usuario desactivado"
             )
         
-        # Crear objeto User simplificado
-        user = type('User', (), {
-            'id': user_id,
-            'email': email,
-            'username': username,
-            'is_active': is_active,
-            'is_admin': is_admin
-        })()
+        user = AuthUser(
+            {
+                "id": str(user_id_db),
+                "user_id": str(user_id_db),
+                "email": email,
+                "username": username,
+                "is_active": bool(is_active) if is_active is not None else True,
+                "is_admin": bool(is_admin),
+            }
+        )
         
         # Actualizar última actividad (opcional)
         try:
             await db.execute(
                 text("UPDATE users SET last_activity = NOW() WHERE id = :user_id"),
-                {"user_id": user_id}
+                {"user_id": str(user_id_db)},
             )
             await db.commit()
         except Exception as e:
@@ -234,7 +248,9 @@ async def get_current_user_id(
     """
     Obtiene solo el ID del usuario actual
     """
-    return current_user.id
+    if isinstance(current_user, dict):
+        return str(current_user.get("user_id") or current_user.get("id") or "")
+    return str(getattr(current_user, "id"))
 
 async def get_current_user_optional(
     authorization: Optional[str] = Header(None)
@@ -261,24 +277,24 @@ async def get_current_user_optional(
         session = await get_primary_session()
         async with session:
             result = await session.execute(
-                text("SELECT id, email, username, is_active, is_admin FROM users WHERE id = :user_id"),
-                {"user_id": str(user_id)}
+                text("SELECT id, email, username, is_active FROM users WHERE id = :user_id"),
+                {"user_id": str(user_id)},
             )
             row = result.first()
             if row is None:
                 return None
-            
-            user_id_val, email, username, is_active, is_admin = row
-            
-            # Crear objeto User simplificado
-            user = type('User', (), {
-                'id': user_id_val,
-                'email': email,
-                'username': username,
-                'is_active': is_active,
-                'is_admin': is_admin
-            })()
-            return user
+
+            user_id_val, email, username, is_active = row
+            return AuthUser(
+                {
+                    "id": str(user_id_val),
+                    "user_id": str(user_id_val),
+                    "email": email,
+                    "username": username,
+                    "is_active": bool(is_active) if is_active is not None else True,
+                    "is_admin": False,
+                }
+            )
             
     except Exception as e:
         logger.debug(f"Token opcional inválido: {e}")
@@ -290,7 +306,8 @@ async def get_current_active_user(
     """
     Obtiene usuario actual verificando que esté activo
     """
-    if not current_user.is_active:
+    is_active = current_user.get("is_active") if isinstance(current_user, dict) else getattr(current_user, "is_active", True)
+    if not is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Usuario inactivo"
@@ -303,7 +320,8 @@ async def get_current_admin_user(
     """
     Obtiene usuario actual verificando que sea admin
     """
-    if not current_user.is_admin:
+    is_admin = current_user.get("is_admin") if isinstance(current_user, dict) else getattr(current_user, "is_admin", False)
+    if not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permisos de administrador requeridos"
@@ -316,7 +334,8 @@ async def get_current_premium_user(
     """
     Obtiene usuario actual verificando que sea premium
     """
-    if not current_user.is_premium_user():
+    is_premium = current_user.get("is_premium") if isinstance(current_user, dict) else bool(getattr(current_user, "is_premium_user", lambda: False)())
+    if not is_premium:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Suscripción premium requerida"

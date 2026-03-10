@@ -52,13 +52,19 @@ def _get_supabase_storage_keys() -> tuple[str, str]:
 
 @router.get("/me", response_model=MeResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
+    user_id = str(current_user.get("user_id") or current_user.get("id")) if isinstance(current_user, dict) else str(current_user.id)
+    username = current_user.get("username") if isinstance(current_user, dict) else current_user.username
+    email = current_user.get("email") if isinstance(current_user, dict) else current_user.email
+    full_name = current_user.get("full_name") if isinstance(current_user, dict) else getattr(current_user, "full_name", None)
+    phone_number = current_user.get("phone_number") if isinstance(current_user, dict) else getattr(current_user, "phone_number", None)
+    profile_picture_url = current_user.get("profile_picture_url") if isinstance(current_user, dict) else getattr(current_user, "profile_picture_url", None)
     return MeResponse(
-        id=str(current_user.id),
-        username=current_user.username,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        phone_number=current_user.phone_number,
-        profile_picture_url=current_user.profile_picture_url,
+        id=user_id,
+        username=username,
+        email=email,
+        full_name=full_name,
+        phone_number=phone_number,
+        profile_picture_url=profile_picture_url,
     )
 
 
@@ -85,7 +91,7 @@ async def update_me(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Actualizar datos del perfil del usuario"""
-    user_id = str(current_user.id)
+    user_id = str(current_user.get("user_id") or current_user.get("id")) if isinstance(current_user, dict) else str(current_user.id)
     
     # Validar username único si se está actualizando
     if payload.username is not None:
@@ -111,15 +117,16 @@ async def update_me(
         values["updated_at"] = datetime.utcnow()
         await db.execute(update(User).where(User.id == user_id).values(**values))
         await db.commit()
-        await db.refresh(current_user)
+        if not isinstance(current_user, dict):
+            await db.refresh(current_user)
     
     return UpdateProfileResponse(
         id=user_id,
-        username=current_user.username,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        phone_number=current_user.phone_number,
-        profile_picture_url=current_user.profile_picture_url,
+        username=(payload.username if payload.username is not None else (current_user.get("username") if isinstance(current_user, dict) else current_user.username)),
+        email=(current_user.get("email") if isinstance(current_user, dict) else current_user.email),
+        full_name=(payload.full_name if payload.full_name is not None else (current_user.get("full_name") if isinstance(current_user, dict) else getattr(current_user, "full_name", None))),
+        phone_number=(payload.phone_number if payload.phone_number is not None else (current_user.get("phone_number") if isinstance(current_user, dict) else getattr(current_user, "phone_number", None))),
+        profile_picture_url=(current_user.get("profile_picture_url") if isinstance(current_user, dict) else getattr(current_user, "profile_picture_url", None)),
         updated_at=datetime.utcnow().isoformat(),
     )
 
@@ -146,7 +153,8 @@ async def upload_avatar(
 
     ext = "jpg" if content_type == "image/jpeg" else "png" if content_type == "image/png" else "webp"
     ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    object_path = f"{current_user.id}/{ts}.{ext}"
+    user_id = str(current_user.get("user_id") or current_user.get("id")) if isinstance(current_user, dict) else str(current_user.id)
+    object_path = f"{user_id}/{ts}.{ext}"
 
     upload_url = f"{supabase_url}/storage/v1/object/{bucket}/{object_path}"
 
@@ -172,7 +180,7 @@ async def upload_avatar(
 
     await db.execute(
         update(User)
-        .where(User.id == str(current_user.id))
+        .where(User.id == user_id)
         .values(profile_picture_url=public_url)
     )
     await db.commit()
