@@ -5,7 +5,7 @@ Diseñado para integración óptima con frontend
 """
 
 import asyncio
-from fastapi import APIRouter, WebSocket, UploadFile, File, Depends, HTTPException, Request
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Depends, HTTPException, Request
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 import json
@@ -926,8 +926,13 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
         logger.info(f"WebSocket connected successfully for user_id={user_id}, waiting for messages")
 
         while True:
-            logger.debug(f"Waiting for message from user_id={user_id}")
-            data = await websocket.receive_text()
+            try:
+                logger.debug(f"Waiting for message from user_id={user_id}")
+                data = await websocket.receive_text()
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket disconnect user_id={user_id}")
+                break
+
             logger.info(f"Received message from user_id={user_id}, len={len(data) if data else 0}")
             if data is not None and len(data) > max_text_len:
                 await _ws_send_json(
@@ -939,18 +944,48 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                         "ts": _ws_now_iso(),
                     },
                 )
-                await websocket.close(code=1009)
-                return
-            message_data = json.loads(data)
+                try:
+                    await websocket.close(code=1009)
+                except Exception:
+                    pass
+                break
+
+            try:
+                message_data = json.loads(data)
+            except Exception as e:
+                logger.warning(f"WebSocket invalid JSON user_id={user_id}: {e}")
+                await _ws_send_json(
+                    websocket,
+                    {
+                        "type": "error",
+                        "code": "INVALID_JSON",
+                        "message": "invalid_json",
+                        "ts": _ws_now_iso(),
+                    },
+                )
+                continue
 
             messages = [{"role": "user", "content": message_data.get("message", "")}]
             needs_refresh = should_refresh_context(user_id, messages)
 
-            response = await chat_with_ai(
-                messages=messages,
-                user=user_id,
-                fast_reasoning=message_data.get("fast_reasoning", True),
-            )
+            try:
+                response = await chat_with_ai(
+                    messages=messages,
+                    user=user_id,
+                    fast_reasoning=message_data.get("fast_reasoning", True),
+                )
+            except Exception as e:
+                logger.exception(f"WebSocket LLM error user_id={user_id}: {e}")
+                await _ws_send_json(
+                    websocket,
+                    {
+                        "type": "error",
+                        "code": "LLM_ERROR",
+                        "message": str(e),
+                        "ts": _ws_now_iso(),
+                    },
+                )
+                continue
 
             await _ws_send_json(
                 websocket,
