@@ -11,6 +11,7 @@ from pydantic import BaseModel
 import json
 import logging
 from datetime import datetime, date, timedelta
+from datetime import date as _date
 
 from services.groq_ai_service import chat_with_ai, should_refresh_context, get_context_info
 from services.groq_voice_service import transcribe_audio_groq, text_to_speech_groq
@@ -131,8 +132,67 @@ async def _ws_send_json(websocket: WebSocket, payload: Dict[str, Any]) -> None:
 
 _user_progress: Dict[str, Dict[str, Any]] = {}
 
+
+def _sanitize_structured_data(structured_data: Any) -> Dict[str, Any]:
+    if not isinstance(structured_data, dict):
+        return {"tasks": [], "plan": [], "response": str(structured_data) if structured_data is not None else "", "is_stream": False}
+
+    tasks_raw = structured_data.get("tasks")
+    plan_raw = structured_data.get("plan")
+    response_raw = structured_data.get("response")
+
+    tasks: List[Dict[str, Any]] = []
+    if isinstance(tasks_raw, list):
+        for item in tasks_raw[:20]:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            title = title[:200]
+            priority = str(item.get("priority") or "medium").lower().strip()
+            if priority not in {"high", "medium", "low"}:
+                priority = "medium"
+            due_date = item.get("due_date")
+            due_date_out: Optional[str] = None
+            if isinstance(due_date, str):
+                s = due_date.strip()
+                if s:
+                    try:
+                        _date.fromisoformat(s)
+                        due_date_out = s
+                    except Exception:
+                        due_date_out = None
+            tasks.append({"title": title, "due_date": due_date_out, "priority": priority})
+
+    plan: List[Dict[str, Any]] = []
+    if isinstance(plan_raw, list):
+        for step in plan_raw[:15]:
+            if not isinstance(step, dict):
+                continue
+            step_text = str(step.get("step") or "").strip()
+            if not step_text:
+                continue
+            duration = step.get("duration")
+            duration_out: Optional[str] = None
+            if isinstance(duration, str):
+                d = duration.strip()
+                duration_out = d[:60] if d else None
+            plan.append({"step": step_text[:300], "duration": duration_out})
+
+    response = ""
+    if isinstance(response_raw, str):
+        response = response_raw.strip()
+    elif response_raw is not None:
+        response = str(response_raw)
+    response = response[:6000]
+
+    is_stream = bool(structured_data.get("is_stream", False))
+    return {"tasks": tasks, "plan": plan, "response": response, "is_stream": is_stream}
+
 async def save_user_progress(user_id: str, message: str, structured_data: Dict[str, Any]):
     """Guarda el progreso del usuario en memoria (en producción usar Redis/DB)"""
+    structured_data = _sanitize_structured_data(structured_data)
     if user_id not in _user_progress:
         _user_progress[user_id] = {
             "today_tasks": [],
@@ -173,9 +233,12 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
         async with db:
             # Aquí persistimos las tareas detectadas directamente en la DB de NHost
             for task_data in structured_data.get("tasks", []):
+                title = (task_data.get("title") or "").strip()
+                if not title:
+                    continue
                 new_task = AgendaItem(
                     user_id=user_id,
-                    title=task_data.get("title"),
+                    title=title,
                     item_type="task",
                     status="pending",
                     priority=task_data.get("priority", "medium"),
@@ -242,6 +305,22 @@ async def complete_task(task_id: str, user=Depends(get_current_user)):
 async def save_plan(plan: List[Dict[str, Any]], user=Depends(get_current_user)):
     """Guardar plan de estudio"""
     user_id = user["user_id"]
+
+    # Sanitizar plan recibido por cliente
+    safe_plan: List[Dict[str, Any]] = []
+    if isinstance(plan, list):
+        for step in plan[:15]:
+            if not isinstance(step, dict):
+                continue
+            step_text = str(step.get("step") or "").strip()
+            if not step_text:
+                continue
+            duration = step.get("duration")
+            duration_out: Optional[str] = None
+            if isinstance(duration, str):
+                d = duration.strip()
+                duration_out = d[:60] if d else None
+            safe_plan.append({"step": step_text[:300], "duration": duration_out})
     
     if user_id not in _user_progress:
         _user_progress[user_id] = {
@@ -252,7 +331,7 @@ async def save_plan(plan: List[Dict[str, Any]], user=Depends(get_current_user)):
             "last_interaction": None
         }
     
-    _user_progress[user_id]["last_plan"] = plan
+    _user_progress[user_id]["last_plan"] = safe_plan
     _user_progress[user_id]["last_interaction"] = datetime.utcnow().isoformat()
     
     return {"success": True, "message": "Plan guardado"}
