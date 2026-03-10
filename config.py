@@ -89,14 +89,11 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # =========================
-# 🤖 Configuración de IA - ARQUITECTURA SEPARADA
-# =========================
-# Backend API y Modelos IA están en servidores DIFERENTES
-# Backend: Railway/Render/Heroku (sin GPU)
-# Modelos IA: RunPod/Vast.ai/Colab (con GPU)
-
-AI_SERVER_URL = os.getenv("AI_SERVER_URL", "").strip() or None
-AI_MODEL = os.getenv("AI_MODEL", "").strip() or None
+# 🤖 Configuración de IA - ARQUITECTURA GROQ-ONLY
+# Backend usa Groq Cloud API para LLM/STT/TTS
+USE_REMOTE_AI = True  # Siempre True - usamos Groq API externa
+AI_SERVER_URL = os.getenv("AI_SERVER_URL", "https://api.groq.com").strip() or "https://api.groq.com"
+AI_MODEL = os.getenv("AI_MODEL", "auto").strip() or "auto"  # auto = fast/reasoning según complejidad
 VISION_MODEL = os.getenv("VISION_MODEL", "").strip() or None
 TEXT_MODEL = os.getenv("TEXT_MODEL", "").strip() or None
 
@@ -279,9 +276,10 @@ print(f"🚀 Backend API v6.0 - Arquitectura Distribuida")
 print(f"🎯 Features habilitadas: {[k for k, v in FEATURE_FLAGS.items() if v]}")
 
 if USE_REMOTE_AI:
-    print(f"🤖 IA Remota: {AI_SERVER_URL}")
-    print(f"📡 Modelo: {AI_MODEL}")
-    print(f"💡 Arquitectura: Backend (sin GPU) → Servidor IA (con GPU)")
+    print(f"🤖 IA: Groq Cloud API")
+    print(f"📡 Endpoint: {AI_SERVER_URL}")
+    print(f"� Modelo: {AI_MODEL} (fast/reasoning según complejidad)")
+    print(f"🎯 Arquitectura: Backend → Groq API")
 else:
     print(f"💻 IA Local: {AI_SERVER_URL} (solo desarrollo)")
     print(f"⚠️ Modo desarrollo: modelos locales ligeros")
