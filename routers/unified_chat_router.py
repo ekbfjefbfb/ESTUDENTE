@@ -888,7 +888,24 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
 
     try:
         logger.info(f"Starting auth for user_id={user_id}")
-        token_user_id = await _ws_auth_user_id(websocket)
+        try:
+            token_user_id = await _ws_auth_user_id(websocket)
+        except Exception as auth_error:
+            import traceback
+            logger.error(
+                f"WebSocket AUTH FAILED for user_id={user_id}: {type(auth_error).__name__}: {auth_error}\n{traceback.format_exc()}"
+            )
+            await _ws_send_json(
+                websocket,
+                {
+                    "type": "error",
+                    "code": "AUTH_ERROR",
+                    "message": f"auth_failed: {str(auth_error)}",
+                    "ts": _ws_now_iso(),
+                },
+            )
+            await websocket.close(code=1008)
+            return
         logger.info(f"Auth successful: token_user_id={token_user_id}, path_user_id={user_id}")
         
         if str(token_user_id) != str(user_id):
