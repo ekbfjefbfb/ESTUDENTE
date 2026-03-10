@@ -988,7 +988,8 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                 try:
                     from services.groq_ai_service import chat_with_ai
 
-                    async with get_primary_session() as db:
+                    db = await get_primary_session()
+                    async with db:
                         session = await _get_session_or_404(db, user_id, session_id)
                         context = session.live_transcript or ""
 

@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, date, timedelta
 
 from services.groq_ai_service import chat_with_ai, should_refresh_context, get_context_info
+from services.groq_voice_service import transcribe_audio_groq, text_to_speech_groq
 from utils.auth import get_current_user, verify_token
 
 _WS_MAX_AUDIO_BYTES = 10 * 1024 * 1024
@@ -73,6 +74,7 @@ class TTSRequest(BaseModel):
     text: str
     voice: Optional[str] = "male_1"
     speed: Optional[float] = 1.0
+    language: Optional[str] = "es"
 
 class TTSResponse(BaseModel):
     """Response de Text-to-Speech"""
@@ -167,7 +169,8 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
     try:
         from database.db_enterprise import get_primary_session
         from models.models import AgendaItem
-        async with get_primary_session() as db:
+        db = await get_primary_session()
+        async with db:
             # Aquí persistimos las tareas detectadas directamente en la DB de NHost
             for task_data in structured_data.get("tasks", []):
                 new_task = AgendaItem(
@@ -294,7 +297,8 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
     
     try:
         from database.db_enterprise import get_primary_session
-        async with get_primary_session() as db:
+        db = await get_primary_session()
+        async with db:
             today = date.today()
             end_week = today + timedelta(days=7)
             
@@ -579,6 +583,77 @@ async def unified_chat_message(
         )
 
 
+@router.post("/stt", response_model=STTResponse)
+async def stt_endpoint(
+    audio: UploadFile = File(...),
+    request: STTRequest = Depends(),
+    user: dict = Depends(get_current_user),
+):
+    """Speech-to-Text (multipart)."""
+    audio_bytes = await audio.read()
+    audio_format = (audio.content_type or "")
+    text = await transcribe_audio_groq(audio_bytes, language=request.language, audio_format=audio_format)
+    return STTResponse(
+        success=True,
+        text=text,
+        language=request.language or "",
+        duration_ms=_estimate_duration_ms_from_bytes(len(audio_bytes)),
+        timestamp=datetime.utcnow().isoformat(),
+    )
+
+
+@router.post("/tts", response_model=TTSResponse)
+async def tts_endpoint(
+    req: TTSRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Text-to-Speech (JSON)."""
+    text = (req.text or "").strip()
+    if not text or len(text) > 5000:
+        raise HTTPException(status_code=400, detail="text_empty_or_too_long_max_5000")
+    audio_uri = await text_to_speech_groq(text, voice=req.voice, speed=req.speed, language=req.language)
+    return TTSResponse(
+        success=True,
+        audio=audio_uri,
+        text=text,
+        voice=req.voice or "",
+        timestamp=datetime.utcnow().isoformat(),
+    )
+
+
+@router.post("/voice/message", response_model=VoiceChatResponse)
+async def voice_message_http(
+    audio: UploadFile = File(...),
+    language: str = "es",
+    voice: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    """Chat por voz via HTTP: STT -> LLM -> TTS."""
+    user_id = user["user_id"]
+    audio_bytes = await audio.read()
+    if len(audio_bytes) > _WS_MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=400, detail="audio_too_large_max_10mb")
+
+    audio_format = (audio.content_type or "")
+    transcribed = await transcribe_audio_groq(audio_bytes, language=language, audio_format=audio_format)
+
+    user_context = await get_user_context_for_chat(user_id)
+    structured = await get_ai_response_with_structured_data(user_id, transcribed, user_context)
+    response_text = structured.get("response") if isinstance(structured, dict) else str(structured)
+
+    audio_uri = await text_to_speech_groq(response_text, voice=voice, language=language)
+
+    return VoiceChatResponse(
+        success=True,
+        transcribed=transcribed,
+        response=response_text,
+        audio=audio_uri,
+        user_id=user_id,
+        timestamp=datetime.utcnow().isoformat(),
+        message_id=f"voice_{datetime.utcnow().timestamp()}",
+    )
+
+
 @router.post("/message/json", response_model=ChatResponse)
 async def unified_chat_message_json(
     request: ChatMessageRequest,
@@ -701,41 +776,75 @@ async def chat_info():
 @router.websocket("/ws/{user_id}")
 async def unified_chat_websocket(websocket: WebSocket, user_id: str):
     """WebSocket para chat en tiempo real con monitoreo de contexto"""
-    
+
     await websocket.accept()
-    
+
     try:
+        token_user_id = await _ws_auth_user_id(websocket)
+        if str(token_user_id) != str(user_id):
+            await _ws_send_json(
+                websocket,
+                {
+                    "type": "error",
+                    "code": "FORBIDDEN",
+                    "message": "user_id_mismatch",
+                    "ts": _ws_now_iso(),
+                },
+            )
+            await websocket.close(code=1008)
+            return
+
         while True:
             data = await websocket.receive_text()
             message_data = json.loads(data)
-            
+
             messages = [{"role": "user", "content": message_data.get("message", "")}]
             needs_refresh = should_refresh_context(user_id, messages)
-            
+
             response = await chat_with_ai(
                 messages=messages,
                 user=user_id,
-                fast_reasoning=message_data.get("fast_reasoning", True)
+                fast_reasoning=message_data.get("fast_reasoning", True),
             )
-            
-            await websocket.send_text(json.dumps({
-                "success": True,
-                "response": response,
-                "message_id": f"ws_{datetime.utcnow().timestamp()}",
-                "context": {
-                    "needs_refresh": needs_refresh,
-                    "auto_refreshed": needs_refresh
+
+            await _ws_send_json(
+                websocket,
+                {
+                    "success": True,
+                    "response": response,
+                    "message_id": f"ws_{datetime.utcnow().timestamp()}",
+                    "context": {
+                        "needs_refresh": needs_refresh,
+                        "auto_refreshed": needs_refresh,
+                    },
+                    "timestamp": datetime.utcnow().isoformat(),
                 },
-                "timestamp": datetime.utcnow().isoformat()
-            }))
-            
+            )
+
     except json.JSONDecodeError:
-        await websocket.send_text(json.dumps({
-            "success": False,
-            "error": "Invalid JSON",
-            "error_code": "INVALID_JSON",
-            "timestamp": datetime.utcnow().isoformat()
-        }))
+        await _ws_send_json(
+            websocket,
+            {
+                "success": False,
+                "error": "Invalid JSON",
+                "error_code": "INVALID_JSON",
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+        )
+        await websocket.close()
+    except Exception as e:
+        try:
+            await _ws_send_json(
+                websocket,
+                {
+                    "type": "error",
+                    "code": "WS_ERROR",
+                    "message": str(e),
+                    "ts": _ws_now_iso(),
+                },
+            )
+        except Exception:
+            pass
         await websocket.close()
 
 

@@ -140,7 +140,8 @@ async def blacklist_token(token: str, expires_in: int = None):
 async def _get_db_dependency():
     """Dependency lazy para evitar circular import"""
     from database.db_enterprise import get_primary_session
-    async with get_primary_session() as session:
+    session = await get_primary_session()
+    async with session:
         yield session
 
 async def get_current_user(
@@ -256,30 +257,28 @@ async def get_current_user_optional(
         if not user_id:
             return None
         
-        # Lazy load de la sesión DB usando async context manager
-        async with get_primary_session() as session:
-            try:
-                result = await session.execute(
-                    text("SELECT id, email, username, is_active, is_admin FROM users WHERE id = :user_id"),
-                    {"user_id": str(user_id)}
-                )
-                row = result.first()
-                if row is None:
-                    return None
-                
-                user_id_val, email, username, is_active, is_admin = row
-                
-                # Crear objeto User simplificado
-                user = type('User', (), {
-                    'id': user_id_val,
-                    'email': email,
-                    'username': username,
-                    'is_active': is_active,
-                    'is_admin': is_admin
-                })()
-                return user
-            finally:
-                await session.close()
+        from database.db_enterprise import get_primary_session
+        session = await get_primary_session()
+        async with session:
+            result = await session.execute(
+                text("SELECT id, email, username, is_active, is_admin FROM users WHERE id = :user_id"),
+                {"user_id": str(user_id)}
+            )
+            row = result.first()
+            if row is None:
+                return None
+            
+            user_id_val, email, username, is_active, is_admin = row
+            
+            # Crear objeto User simplificado
+            user = type('User', (), {
+                'id': user_id_val,
+                'email': email,
+                'username': username,
+                'is_active': is_active,
+                'is_admin': is_admin
+            })()
+            return user
             
     except Exception as e:
         logger.debug(f"Token opcional inválido: {e}")
