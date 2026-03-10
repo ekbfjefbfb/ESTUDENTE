@@ -810,6 +810,16 @@ async def unified_chat_message_json(
             raise HTTPException(status_code=503, detail="llm_unavailable_missing_groq_api_key")
         raise
     except Exception as e:
+        import traceback
+        tb_str = traceback.format_exc()
+        logger.error(
+            f"unified_chat_message_json FAILED: {type(e).__name__}: {e}\n{tb_str}",
+            extra={
+                "user_id": str(user.get("user_id") if isinstance(user, dict) else ""),
+                "error_type": type(e).__name__,
+                "error": str(e),
+            }
+        )
         raise HTTPException(
             status_code=500,
             detail={
