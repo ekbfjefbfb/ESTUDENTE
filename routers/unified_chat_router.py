@@ -728,9 +728,12 @@ async def unified_chat_message_json(
         )
 
 @router.post("/context/refresh/{user_id}")
-async def refresh_user_context(user_id: str):
+async def refresh_user_context(user_id: str, user: dict = Depends(get_current_user)):
     """Forzar refresh del contexto del usuario"""
     from services.groq_ai_service import user_contexts
+    token_user_id = str(user.get("user_id") or user.get("id") or "")
+    if token_user_id != str(user_id):
+        raise HTTPException(status_code=403, detail="forbidden_user_id_mismatch")
     if user_id in user_contexts:
         del user_contexts[user_id]
     return {
@@ -794,8 +797,22 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             await websocket.close(code=1008)
             return
 
+        max_text_len = 8000
+
         while True:
             data = await websocket.receive_text()
+            if data is not None and len(data) > max_text_len:
+                await _ws_send_json(
+                    websocket,
+                    {
+                        "type": "error",
+                        "code": "PAYLOAD_TOO_LARGE",
+                        "message": f"message_too_large_max_{max_text_len}",
+                        "ts": _ws_now_iso(),
+                    },
+                )
+                await websocket.close(code=1009)
+                return
             message_data = json.loads(data)
 
             messages = [{"role": "user", "content": message_data.get("message", "")}]

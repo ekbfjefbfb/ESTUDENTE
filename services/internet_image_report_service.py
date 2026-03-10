@@ -6,6 +6,9 @@ import httpx
 from PIL import Image
 import logging
 import os
+import ipaddress
+from urllib.parse import urlparse
+import socket
 
 logger = logging.getLogger("advanced_image_service")
 logger.setLevel(logging.INFO)
@@ -14,6 +17,8 @@ logger.setLevel(logging.INFO)
 MIN_WIDTH = 200
 MIN_HEIGHT = 200
 MAX_IMAGES_PER_PROMPT = 3
+MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024
+Image.MAX_IMAGE_PIXELS = 25_000_000
 
 # ---------------- Leer API Key del .env ----------------
 BING_API_KEY = os.getenv("BING_API_KEY")  # debes agregarlo a tu .env
@@ -41,11 +46,44 @@ async def search_images_google(query: str, num: int = 3) -> List[str]:
 
 # ---------------- Funciones de descarga ----------------
 async def download_image(url: str) -> BytesIO:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return None
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return None
+
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            img = Image.open(BytesIO(resp.content))
+        infos = socket.getaddrinfo(host, None)
+        for info in infos:
+            ip_str = info[4][0]
+            ip_obj = ipaddress.ip_address(ip_str)
+            if (
+                ip_obj.is_private
+                or ip_obj.is_loopback
+                or ip_obj.is_link_local
+                or ip_obj.is_multicast
+                or ip_obj.is_reserved
+            ):
+                return None
+    except Exception:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+            async with client.stream("GET", url) as resp:
+                resp.raise_for_status()
+                buf = bytearray()
+                async for chunk in resp.aiter_bytes():
+                    if not chunk:
+                        continue
+                    buf.extend(chunk)
+                    if len(buf) > MAX_DOWNLOAD_BYTES:
+                        return None
+
+            img = Image.open(BytesIO(bytes(buf)))
             if img.width >= MIN_WIDTH and img.height >= MIN_HEIGHT:
                 bio = BytesIO()
                 img.save(bio, format="PNG")

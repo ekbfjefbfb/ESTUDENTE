@@ -76,6 +76,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             return None
+        if not JWT_SECRET or JWT_SECRET == "default-jwt-secret-change-in-production":
+            return None
         token = auth_header.split(" ")[1]
         try:
             # Sintonizado con sub (string/UUID) para consistencia con el resto del sistema
