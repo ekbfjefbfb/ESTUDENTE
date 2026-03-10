@@ -884,10 +884,15 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
     """WebSocket para chat en tiempo real con monitoreo de contexto"""
 
     await websocket.accept()
+    logger.info(f"WebSocket accepted for user_id={user_id}")
 
     try:
+        logger.info(f"Starting auth for user_id={user_id}")
         token_user_id = await _ws_auth_user_id(websocket)
+        logger.info(f"Auth successful: token_user_id={token_user_id}, path_user_id={user_id}")
+        
         if str(token_user_id) != str(user_id):
+            logger.warning(f"User ID mismatch: token={token_user_id}, path={user_id}")
             await _ws_send_json(
                 websocket,
                 {
@@ -901,9 +906,12 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             return
 
         max_text_len = 8000
+        logger.info(f"WebSocket connected successfully for user_id={user_id}, waiting for messages")
 
         while True:
+            logger.debug(f"Waiting for message from user_id={user_id}")
             data = await websocket.receive_text()
+            logger.info(f"Received message from user_id={user_id}, len={len(data) if data else 0}")
             if data is not None and len(data) > max_text_len:
                 await _ws_send_json(
                     websocket,
@@ -941,18 +949,30 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 },
             )
 
-    except json.JSONDecodeError:
-        await _ws_send_json(
-            websocket,
-            {
-                "success": False,
-                "error": "Invalid JSON",
-                "error_code": "INVALID_JSON",
-                "timestamp": datetime.utcnow().isoformat(),
-            },
-        )
-        await websocket.close()
+    except json.JSONDecodeError as e:
+        logger.warning(f"WebSocket JSON decode error for user_id={user_id}: {e}")
+        try:
+            await _ws_send_json(
+                websocket,
+                {
+                    "success": False,
+                    "error": "Invalid JSON",
+                    "error_code": "INVALID_JSON",
+                    "timestamp": datetime.utcnow().isoformat(),
+                },
+            )
+        except Exception:
+            pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
     except Exception as e:
+        import traceback
+        tb_str = traceback.format_exc()
+        logger.error(
+            f"WebSocket ERROR for user_id={user_id}: {type(e).__name__}: {e}\n{tb_str}"
+        )
         try:
             await _ws_send_json(
                 websocket,
@@ -965,7 +985,10 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             )
         except Exception:
             pass
-        await websocket.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @router.websocket("/voice/ws")
