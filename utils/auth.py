@@ -366,8 +366,8 @@ async def refresh_access_token(refresh_token: str, db: AsyncSession) -> Dict[str
         
         # Verificar que el usuario existe y está activo con SQL directo
         result = await db.execute(
-            text("SELECT id, email, username, is_active, is_admin FROM users WHERE id = :user_id"),
-            {"user_id": user_id}
+            text("SELECT id, email, username, is_active FROM users WHERE id = :user_id"),
+            {"user_id": user_id},
         )
         row = result.first()
         
@@ -377,9 +377,8 @@ async def refresh_access_token(refresh_token: str, db: AsyncSession) -> Dict[str
                 detail="Usuario no válido"
             )
         
-        user_id_val, email, username, is_active, is_admin = row
-        
-        if not is_active:
+        user_id_val, email, username, is_active = row
+        if is_active is False:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Usuario no válido"

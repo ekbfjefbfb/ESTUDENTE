@@ -21,6 +21,11 @@ class SmartCacheStub:
         return None
     async def set(self, key: str, value: Any, ttl: int = 60):
         pass
+    async def get_or_set(self, namespace: str, key: str, factory, ttl: int = 60):
+        try:
+            return await factory()
+        except Exception:
+            return None
 
 smart_cache = SmartCacheStub()
 
