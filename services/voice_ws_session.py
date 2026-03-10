@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from array import array
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from services.groq_voice_service import normalize_voice, text_to_speech_groq, transcribe_audio_groq
+
+logger = logging.getLogger("voice_ws_session")
 
 
 SendJson = Callable[[Dict[str, Any]], Awaitable[None]]
@@ -40,11 +43,15 @@ class VoiceWsSession:
 
     current_user_id: str = ""
 
+    # VAD configuration (refined for background noise resilience)
     vad_enabled: bool = False
     vad_silence_ms: int = 900
     vad_threshold: int = 600
-    last_voice_at: float = 0.0
-    ending: bool = False
+    vad_min_amplitude: int = 300  # Minimum amplitude to consider as voice (noise floor)
+    vad_hysteresis: int = 100     # Hysteresis to prevent oscillation
+    vad_frames_processed: int = 0
+    vad_frames_voice: int = 0
+    vad_consecutive_silence: int = 0
 
     last_partial_sent_at: float = 0.0
     last_partial_text: str = ""
@@ -71,10 +78,16 @@ class VoiceWsSession:
         self.vad_enabled = bool(data.get("vad", False))
         self.vad_silence_ms = int(data.get("vad_silence_ms") or 900)
         self.vad_threshold = int(data.get("vad_threshold") or 600)
+        self.vad_min_amplitude = int(data.get("vad_min_amplitude") or 300)
         self.audio_buf = bytearray()
         self.last_partial_text = ""
         self.last_voice_at = asyncio.get_running_loop().time()
         self.ending = False
+        self.vad_frames_processed = 0
+        self.vad_frames_voice = 0
+        self.vad_consecutive_silence = 0
+
+        logger.info(f"Voice turn started for user={user_id}, format={self.format_name}, vad={self.vad_enabled}, threshold={self.vad_threshold}")
 
         await self.send_json(
             {
@@ -136,26 +149,58 @@ class VoiceWsSession:
             pcm.frombytes(chunk)
             if not pcm:
                 return
-            avg_abs = int(sum((abs(x) for x in pcm)) / len(pcm))
-        except Exception:
+            
+            # Calculate energy metrics
+            samples = list(pcm)
+            abs_samples = [abs(x) for x in samples]
+            avg_abs = int(sum(abs_samples) / len(abs_samples))
+            max_abs = max(abs_samples)
+            
+            # Refined VAD logic with hysteresis and noise floor
+            is_voice = False
+            if avg_abs > self.vad_min_amplitude:
+                if avg_abs >= (self.vad_threshold + self.vad_hysteresis):
+                    is_voice = True
+                elif avg_abs >= self.vad_threshold and self.last_voice_at > 0:
+                    # Continue voice state if recently had voice (hysteresis)
+                    if (now - self.last_voice_at) * 1000.0 < 200:
+                        is_voice = True
+            
+            self.vad_frames_processed += 1
+            
+        except Exception as e:
+            logger.warning(f"VAD processing error: {e}")
             return
 
-        if avg_abs >= self.vad_threshold:
+        if is_voice:
             self.last_voice_at = now
+            self.vad_frames_voice += 1
+            self.vad_consecutive_silence = 0
             return
 
         if self.last_voice_at <= 0.0:
             self.last_voice_at = now
             return
 
-        if (now - self.last_voice_at) * 1000.0 < float(self.vad_silence_ms):
+        # Count consecutive silence frames
+        self.vad_consecutive_silence += 1
+        silence_duration_ms = (now - self.last_voice_at) * 1000.0
+
+        if silence_duration_ms < float(self.vad_silence_ms):
+            return
+
+        # Require minimum voice activity before allowing auto-end
+        min_voice_frames = max(3, int(self.vad_frames_processed * 0.1))  # At least 10% frames with voice
+        if self.vad_frames_voice < min_voice_frames:
+            logger.debug(f"VAD: not enough voice frames ({self.vad_frames_voice}/{min_voice_frames})")
             return
 
         min_bytes = int(0.4 * self.sample_rate * 2)
         if len(self.audio_buf) < min_bytes:
             return
 
-        await self.send_json({"type": "vad_silence", "silence_ms": self.vad_silence_ms, "ts": self.now_ts()})
+        logger.info(f"VAD auto-end triggered: silence={silence_duration_ms:.0f}ms, voice_frames={self.vad_frames_voice}/{self.vad_frames_processed}")
+        await self.send_json({"type": "vad_silence", "silence_ms": int(silence_duration_ms), "ts": self.now_ts()})
         await self.end_turn(user_id=self.current_user_id)
 
     async def _maybe_emit_partial(self) -> None:
@@ -208,6 +253,7 @@ class VoiceWsSession:
                 "ts": self.now_ts(),
             }
         )
+        logger.debug(f"STT partial sent: '{text[:50]}...' ({len(text)} chars)")
 
     async def _emit_final_and_reply(self, *, user_id: str) -> None:
         if not self.audio_buf:
@@ -236,11 +282,13 @@ class VoiceWsSession:
                 "ts": self.now_ts(),
             }
         )
+        logger.info(f"STT final: '{final_text[:100]}...' ({len(final_text)} chars)")
 
         if self.mode == "stt_only":
             return
 
         # LLM
+        logger.info(f"Starting LLM processing for user={user_id}, text_len={len(final_text)}")
         try:
             if self.stream_llm:
                 gen = await self.chat_with_ai(
@@ -253,8 +301,9 @@ class VoiceWsSession:
                     if not isinstance(delta, str) or not delta:
                         continue
                     llm_parts.append(delta)
-                    await self.send_json({"type": "llm_partial", "delta": delta})
+                    await self.send_json({"type": "llm_partial", "delta": delta, "ts": self.now_ts()})
                 llm_text = "".join(llm_parts).strip()
+                logger.info(f"LLM streaming complete: {len(llm_text)} chars, {len(llm_parts)} deltas")
             else:
                 llm_text = await self.chat_with_ai(
                     messages=[{"role": "user", "content": final_text}],
@@ -262,16 +311,21 @@ class VoiceWsSession:
                     stream=False,
                 )
                 llm_text = (llm_text or "").strip()
+                logger.info(f"LLM non-stream complete: {len(llm_text)} chars")
 
-            await self.send_json({"type": "llm_final", "text": llm_text})
+            await self.send_json({"type": "llm_final", "text": llm_text, "ts": self.now_ts()})
         except Exception as e:
+            logger.exception(f"LLM error for user={user_id}: {e}")
             await self.send_json({"type": "error", "code": "LLM_ERROR", "message": str(e), "ts": self.now_ts()})
             return
 
         # TTS
+        logger.info(f"Starting TTS for user={user_id}, text_len={len(llm_text)}, voice={self.voice_name}")
         try:
             voice = normalize_voice(self.voice_name)
             audio_data = await text_to_speech_groq(llm_text, voice=voice, speed=1.0)
-            await self.send_json({"type": "tts_audio", "audio": audio_data, "text": llm_text, "voice": voice, "ts": self.now_ts()})
+            await self.send_json({"type": "tts_audio", "audio": audio_data, "text": llm_text[:200], "voice": voice, "ts": self.now_ts()})
+            logger.info(f"TTS complete: {len(audio_data)} chars of base64 audio")
         except Exception as e:
+            logger.exception(f"TTS error for user={user_id}: {e}")
             await self.send_json({"type": "error", "code": "TTS_ERROR", "message": str(e), "ts": self.now_ts()})

@@ -1047,10 +1047,13 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
 async def voice_stream_ws(websocket: WebSocket):
     """WebSocket para voz en streaming: STT parcial -> LLM -> TTS."""
     await websocket.accept()
+    logger.info("Voice WebSocket connection accepted")
 
     try:
         user_id = await _ws_auth_user_id(websocket)
-    except Exception:
+        logger.info(f"Voice WebSocket authenticated: user_id={user_id}")
+    except Exception as e:
+        logger.warning(f"Voice WebSocket auth failed: {e}")
         await _ws_send_json(
             websocket,
             {
@@ -1079,31 +1082,40 @@ async def voice_stream_ws(websocket: WebSocket):
     )
 
     # Loop
+    message_count = 0
+    binary_bytes_received = 0
     try:
         while True:
             msg = await websocket.receive()
+            message_count += 1
 
             if msg.get("type") == "websocket.disconnect":
+                logger.info(f"Voice WebSocket disconnect: user_id={user_id}, messages={message_count}, bytes={binary_bytes_received}")
                 break
 
             if "text" in msg and msg["text"] is not None:
                 try:
                     data = json.loads(msg["text"])
-                except Exception:
+                    mtype = data.get("type")
+                    logger.debug(f"Voice WS text message: type={mtype}, user_id={user_id}")
+                except Exception as e:
+                    logger.warning(f"Voice WS invalid JSON: {e}")
                     await _ws_send_json(
                         websocket,
                         {"type": "error", "code": "INVALID_JSON", "message": "invalid_json", "ts": _ws_now_iso()},
                     )
                     continue
 
-                mtype = data.get("type")
                 if mtype == "start":
+                    logger.info(f"Voice turn start: user_id={user_id}, format={data.get('format')}, vad={data.get('vad')}")
                     await session.start_turn(data, user_id=user_id)
 
                 elif mtype == "end":
+                    logger.info(f"Voice turn end: user_id={user_id}")
                     await session.end_turn(user_id=user_id)
 
                 else:
+                    logger.warning(f"Voice WS unknown message type: {mtype}")
                     await _ws_send_json(
                         websocket,
                         {"type": "error", "code": "UNKNOWN_MESSAGE", "message": str(mtype), "ts": _ws_now_iso()},
@@ -1112,15 +1124,24 @@ async def voice_stream_ws(websocket: WebSocket):
             if "bytes" in msg and msg["bytes"] is not None:
                 chunk = msg["bytes"]
                 if not isinstance(chunk, (bytes, bytearray)):
+                    logger.warning(f"Voice WS invalid chunk type: {type(chunk)}")
                     continue
+                
+                chunk_len = len(chunk)
+                binary_bytes_received += chunk_len
+                
+                if message_count % 50 == 1:  # Log cada ~50 chunks para no saturar
+                    logger.debug(f"Voice WS binary chunk: {chunk_len} bytes, total={binary_bytes_received}")
 
                 try:
                     await session.add_audio_chunk(bytes(chunk))
-                except ValueError:
+                except ValueError as e:
+                    logger.error(f"Voice WS audio too large: {e}")
                     await websocket.close(code=1009)
                     return
 
     except Exception as e:
+        logger.exception(f"Voice WebSocket error: user_id={user_id}, messages={message_count}")
         try:
             await _ws_send_json(
                 websocket,
