@@ -4,6 +4,7 @@ import asyncio
 import os
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
+import inspect
 
 import anyio
 from groq import Groq
@@ -108,6 +109,22 @@ def _ensure_system_prompt(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]
     return [{"role": "system", "content": GROQ_SYSTEM_PROMPT}] + messages
 
 
+def _filter_supported_kwargs(func: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        sig = inspect.signature(func)
+        allowed = set(sig.parameters.keys())
+    except Exception:
+        return {k: v for k, v in kwargs.items() if v is not None}
+
+    filtered: Dict[str, Any] = {}
+    for k, v in kwargs.items():
+        if v is None:
+            continue
+        if k in allowed:
+            filtered[k] = v
+    return filtered
+
+
 async def _groq_stream_async(
     *,
     model: str,
@@ -120,16 +137,18 @@ async def _groq_stream_async(
 
     def _run_streaming() -> None:
         try:
-            completion = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=1,
-                reasoning_effort=GROQ_LLM_REASONING_EFFORT if model == GROQ_LLM_REASONING_MODEL else None,
-                stream=True,
-                stop=None,
-            )
+            create_fn = client.chat.completions.create
+            kwargs = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "top_p": 1,
+                "reasoning_effort": GROQ_LLM_REASONING_EFFORT if model == GROQ_LLM_REASONING_MODEL else None,
+                "stream": True,
+                "stop": None,
+            }
+            completion = create_fn(**_filter_supported_kwargs(create_fn, kwargs))
             for chunk in completion:
                 try:
                     delta = chunk.choices[0].delta.content or ""
@@ -170,16 +189,18 @@ async def chat_with_ai(
         )
 
     client = _get_groq_client()
-    completion = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        top_p=1,
-        reasoning_effort=GROQ_LLM_REASONING_EFFORT if model == GROQ_LLM_REASONING_MODEL else None,
-        stream=False,
-        stop=None,
-    )
+    create_fn = client.chat.completions.create
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "top_p": 1,
+        "reasoning_effort": GROQ_LLM_REASONING_EFFORT if model == GROQ_LLM_REASONING_MODEL else None,
+        "stream": False,
+        "stop": None,
+    }
+    completion = create_fn(**_filter_supported_kwargs(create_fn, kwargs))
 
     try:
         content = completion.choices[0].message.content
