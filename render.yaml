@@ -28,3 +28,15 @@ services:
         sync: false
       - key: DATABASE_URL_SYNC
         sync: false
+      - key: USE_ELEVENLABS_API
+        value: "true"
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_MODEL
+        value: eleven_multilingual_v2
+      - key: ELEVENLABS_VOICE
+        value: Antoni
+      - key: ELEVENLABS_STABILITY
+        value: "0.5"
+      - key: ELEVENLABS_SIMILARITY_BOOST
+        value: "0.75"

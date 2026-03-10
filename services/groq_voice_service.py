@@ -9,6 +9,74 @@ from typing import Callable, List, Optional, Tuple
 import httpx
 
 
+# =========================
+# ElevenLabs TTS Configuration
+# =========================
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
+ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2").strip()
+ELEVENLABS_VOICE = os.getenv("ELEVENLABS_VOICE", "Antoni").strip()  # Buena para español
+ELEVENLABS_STABILITY = float(os.getenv("ELEVENLABS_STABILITY", "0.5"))
+ELEVENLABS_SIMILARITY_BOOST = float(os.getenv("ELEVENLABS_SIMILARITY_BOOST", "0.75"))
+USE_ELEVENLABS_API = os.getenv("USE_ELEVENLABS_API", "true").lower() in ("true", "1", "t")
+
+
+def _should_use_elevenlabs(text: str, language: Optional[str] = None) -> bool:
+    """Decide si usar ElevenLabs (español) o Groq TTS (inglés)."""
+    if not USE_ELEVENLABS_API or not ELEVENLABS_API_KEY:
+        return False
+    # Si el idioma es español o no especificado pero el texto parece español
+    if language and language.lower() in ("es", "spa", "spanish"):
+        return True
+    # Detección simple: presencia de caracteres típicos del español
+    spanish_markers = ["ñ", "á", "é", "í", "ó", "ú", "ü", "¿", "¡"]
+    text_lower = text.lower()
+    if any(marker in text_lower for marker in spanish_markers):
+        return True
+    return False
+
+
+async def text_to_speech_elevenlabs(
+    text: str,
+    *,
+    voice: Optional[str] = None,
+    stability: Optional[float] = None,
+    similarity_boost: Optional[float] = None,
+) -> str:
+    """Text-to-Speech usando ElevenLabs (mejor para español)."""
+    
+    if not ELEVENLABS_API_KEY:
+        raise RuntimeError("ELEVENLABS_API_KEY is not set")
+    
+    final_voice = (voice or ELEVENLABS_VOICE or "Antoni").strip()
+    final_stability = stability if stability is not None else ELEVENLABS_STABILITY
+    final_similarity = similarity_boost if similarity_boost is not None else ELEVENLABS_SIMILARITY_BOOST
+    
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{final_voice}"
+    
+    headers = {
+        "Accept": "audio/mpeg",
+        "Content-Type": "application/json",
+        "xi-api-key": ELEVENLABS_API_KEY,
+    }
+    
+    payload = {
+        "text": text,
+        "model_id": ELEVENLABS_MODEL,
+        "voice_settings": {
+            "stability": final_stability,
+            "similarity_boost": final_similarity,
+        }
+    }
+    
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        audio_bytes = resp.content
+    
+    b64 = base64.b64encode(audio_bytes).decode("ascii")
+    return f"data:audio/mpeg;base64,{b64}"
+
+
 def _get_groq_api_key() -> str:
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
@@ -150,9 +218,19 @@ async def text_to_speech_groq(
     *,
     voice: Optional[str] = None,
     speed: Optional[float] = None,
+    language: Optional[str] = None,
 ) -> str:
-    """Text-to-Speech using Groq (OpenAI-compatible endpoint). Returns a base64 data URI."""
-
+    """Text-to-Speech usando Groq o ElevenLabs según idioma."""
+    
+    # Si es español y tenemos ElevenLabs configurado, usarlo
+    if _should_use_elevenlabs(text, language):
+        try:
+            return await text_to_speech_elevenlabs(text, voice=voice)
+        except Exception:
+            # Fallback a Groq si ElevenLabs falla
+            pass
+    
+    # Usar Groq TTS (principalmente para inglés)
     api_key = _get_groq_api_key()
     base_url = _get_groq_base_url()
     model = _get_groq_tts_model()
