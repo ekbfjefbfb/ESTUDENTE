@@ -1053,13 +1053,14 @@ async def voice_stream_ws(websocket: WebSocket):
         user_id = await _ws_auth_user_id(websocket)
         logger.info(f"Voice WebSocket authenticated: user_id={user_id}")
     except Exception as e:
-        logger.warning(f"Voice WebSocket auth failed: {e}")
+        import traceback
+        logger.warning(f"Voice WebSocket auth failed: {e}\n{traceback.format_exc()}")
         await _ws_send_json(
             websocket,
             {
                 "type": "error",
                 "code": "UNAUTHORIZED",
-                "message": "invalid_or_missing_token",
+                "message": f"auth_failed: {str(e)}",
                 "ts": _ws_now_iso(),
             },
         )
@@ -1126,6 +1127,17 @@ async def voice_stream_ws(websocket: WebSocket):
                 if not isinstance(chunk, (bytes, bytearray)):
                     logger.warning(f"Voice WS invalid chunk type: {type(chunk)}")
                     continue
+                
+                # Auto-start session if audio arrives before explicit start
+                if not session.started:
+                    logger.info(f"Auto-starting voice session for user={user_id} (audio received before start message)")
+                    await session.start_turn({
+                        "format": "pcm16",
+                        "sample_rate": 16000,
+                        "language": "es",
+                        "mode": "voice_chat",
+                        "vad": True
+                    }, user_id=user_id)
                 
                 chunk_len = len(chunk)
                 binary_bytes_received += chunk_len
