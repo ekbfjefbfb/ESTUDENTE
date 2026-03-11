@@ -161,18 +161,24 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         except Exception:
             pass
 
-        response = await call_next(request)
         try:
-            REQUESTS_TOTAL.labels(
-                method=request.method,
-                endpoint=endpoint,
-                status_code=str(getattr(response, "status_code", "200")),
-                user_type=str(plan_name),
-            ).inc()
-        except Exception:
-            pass
-
-        return response
+            response = await call_next(request)
+            try:
+                REQUESTS_TOTAL.labels(
+                    method=request.method,
+                    endpoint=endpoint,
+                    status_code=str(getattr(response, "status_code", "200")),
+                    user_type=str(plan_name),
+                ).inc()
+            except Exception:
+                pass
+            return response
+        except Exception as e:
+            error_msg = str(e)
+            if "EndOfStream" in error_msg or "WouldBlock" in error_msg:
+                logger.warning({"event": "client_disconnected_during_rate_limit", "path": endpoint, "method": request.method})
+                raise
+            raise
 
     async def __del__(self):
         if self.redis:
