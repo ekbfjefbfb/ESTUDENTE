@@ -119,17 +119,34 @@ class PreValidationMiddleware(BaseHTTPMiddleware):
             return response
             
         except Exception as e:
+            # Capturar errores de stream cerrado (cliente desconectado)
+            error_msg = str(e)
+            if "EndOfStream" in error_msg or "WouldBlock" in error_msg:
+                logger.warning({
+                    "event": "client_disconnected_during_prevalidation",
+                    "path": request.url.path,
+                    "method": request.method,
+                    "duration": time.time() - start_time
+                })
+                # No podemos hacer mucho si el cliente se fue, pero evitamos el traceback ruidoso
+                if 'response' in locals():
+                    return response
+                raise
+
             logger.error({
                 "event": "prevalidation_middleware_error",
                 "path": request.url.path,
                 "method": request.method,
-                "error": str(e),
+                "error": error_msg,
                 "duration": time.time() - start_time
             })
             
-            # Continuar con el flujo normal si hay error en middleware
-            response = await call_next(request)
-            return response
+            # Continuar con el flujo normal si hay error en middleware para no bloquear al usuario
+            try:
+                response = await call_next(request)
+                return response
+            except Exception:
+                raise
     
     def _is_public_route(self, path: str) -> bool:
         """Verifica si la ruta es pública."""
