@@ -658,28 +658,36 @@ async def unified_chat_message(
         # Procesar acciones especiales (ej: agendar grabación)
         if structured.get("actions"):
             for action in structured["actions"]:
-                if action.get("type") == "schedule_class":
-                    logger.info(f"🤖 AI AGENDANDO CLASE AUTOMÁTICA: {action['data']}")
-                    # Aquí llamaríamos al servicio de agenda para persistir
+                action_type = action.get("type")
+                action_data = action.get("data", {})
+                
+                if action_type == "schedule_class":
+                    logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Agendando clase/evento - {action_data}")
                     try:
                         from models.models import AgendaItem
                         from database.db_enterprise import get_primary_session
                         db = await get_primary_session()
                         async with db:
-                            data = action["data"]
+                            # Mapear datos de la IA a campos de la DB
                             new_event = AgendaItem(
                                 user_id=user_id,
-                                title=data.get("title", "Clase agendada"),
+                                title=action_data.get("title", "Evento sin título"),
                                 item_type="event",
-                                start_time=datetime.fromisoformat(data["start_time"].replace("Z", "")) if data.get("start_time") else None,
-                                content=f"Grabación automática activada: {data.get('recording', False)}. Participantes: {', '.join(data.get('participants', []))}",
-                                status="pending"
+                                start_time=datetime.fromisoformat(action_data["start_time"].replace("Z", "")) if action_data.get("start_time") else datetime.utcnow(),
+                                content=f"Automatización: Grabación={action_data.get('recording', True)}, Recurrente={action_data.get('recurring', 'none')}. Participantes: {', '.join(action_data.get('participants', []))}",
+                                status="pending",
+                                priority="medium"
                             )
                             db.add(new_event)
                             await db.commit()
-                            logger.info("✅ Evento/Clase persistido en DB")
+                            logger.info(f"✅ Ejecución silenciosa exitosa: {action_type}")
                     except Exception as e:
-                        logger.error(f"Error persistiendo acción de IA: {e}")
+                        logger.error(f"❌ Fallo en ejecución silenciosa ({action_type}): {e}")
+
+                elif action_type == "generate_document":
+                    logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Preparando documento - {action_data}")
+                    # Aquí se dispararía la lógica de generación de PDF/APA7
+                    pass
 
         context_info = get_context_info(user_id)
         
