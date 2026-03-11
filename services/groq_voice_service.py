@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import os
 import wave
 from typing import Callable, List, Optional, Tuple
 
 import httpx
+
+logger = logging.getLogger("groq_voice_service")
 
 
 # =========================
@@ -222,6 +225,13 @@ async def text_to_speech_groq(
 ) -> str:
     """Text-to-Speech usando Groq o ElevenLabs según idioma."""
     
+    # Truncar texto si es muy largo (Groq TTS tiene límite ~4000 chars)
+    max_text_len = 3800
+    original_len = len(text)
+    if original_len > max_text_len:
+        text = text[:max_text_len] + "..."
+        logger.warning(f"TTS text truncated: {original_len} -> {max_text_len} chars")
+    
     # Si es español y tenemos ElevenLabs configurado, usarlo
     if _should_use_elevenlabs(text, language):
         try:
@@ -238,24 +248,50 @@ async def text_to_speech_groq(
     fmt = _get_tts_format()
     mime = _mime_for_audio_format(fmt)
     final_voice = normalize_voice(voice)
+    
+    # Groq TTS tiene voces específicas; si no es válida, usar una por defecto
+    valid_groq_voices = ["Aaliyah", "Ada", "Adelaide", "Afroditi", "Alain", "Aline", "Amelia", "Andrea", 
+                         "Arya", "August", "Bailey", "Bella", "Brandon", "Brian", "Callum", "Carly", 
+                         "Charlotte", "Chiara", "Chloe", "Cole", "Daphne", "Dev", "Drew", "Eden", 
+                         "Elise", "Emily", "Emma", "Elli", "Eric", "Evelyn", "Fabian", "Faye", 
+                         "Fritz", "Gabriel", "Gigi", "Glen", "Grace", "Harry", "Hope", "Ian", 
+                         "Ivy", "James", "Jeremy", "Jessie", "John", "Josephine", "Joshua", 
+                         "Julian", "Julie", "Justin", "Kevin", "Laila", "Larry", "Laura", 
+                         "Layla", "Leo", "Levi", "Lily", "Linda", "Lorenzo", "Mabel", "Mason", 
+                         "Matteo", "Michael", "Mila", "Natalie", "Nicholas", "Nicole", "Noah", 
+                         "Oliver", "Olivia", "Patrick", "Paul", "Pierre", "Raj", "Rebecca", 
+                         "Richard", "Robert", "Rohan", "Ross", "Saanvi", "Sally", "Sam", 
+                         "Sarah", "Sean", "Seraphina", "Siri", "Sophia", "Stefan", "Sylvia", 
+                         "Terry", "Thomas", "Tina", "Valentina", "Veronica", "Victor", "Whisper", "William"]
+    if final_voice not in valid_groq_voices:
+        logger.warning(f"Invalid Groq TTS voice '{final_voice}', using 'Aaliyah'")
+        final_voice = "Aaliyah"
 
     payload = {
         "model": model,
         "voice": final_voice,
         "input": text,
-        "format": fmt,
     }
-    if speed is not None:
+    # Groq TTS no usa 'format' ni 'speed' en todos los modelos
+    if speed is not None and model not in ["grok-tts"]:
         payload["speed"] = speed
+    if fmt and fmt != "mp3":
+        payload["response_format"] = fmt
 
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+    
+    logger.info(f"TTS request: model={model}, voice={final_voice}, text_len={len(text)}")
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(f"{base_url}/audio/speech", headers=headers, json=payload)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            error_body = resp.text[:500]
+            logger.error(f"TTS error {resp.status_code}: {error_body}")
+            logger.error(f"Payload was: model={model}, voice={final_voice}, text_preview={text[:100]}...")
+            resp.raise_for_status()
         audio_bytes = resp.content
 
     b64 = base64.b64encode(audio_bytes).decode("ascii")
