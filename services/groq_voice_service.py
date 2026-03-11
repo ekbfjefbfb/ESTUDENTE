@@ -141,7 +141,8 @@ def _get_groq_base_url() -> str:
 
 
 def _get_groq_stt_model() -> str:
-    return os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo").strip()
+    # Usamos whisper-large-v3 para mejor precisión con múltiples voces y ruido
+    return os.getenv("GROQ_STT_MODEL", "whisper-large-v3").strip()
 
 
 def _get_groq_tts_model() -> str:
@@ -287,12 +288,13 @@ async def text_to_speech_groq(
     # Si es español y tenemos ElevenLabs configurado, usarlo
     if _should_use_elevenlabs(text, language):
         try:
+            logger.info(f"Attempting TTS with ElevenLabs for text: {text[:50]}...")
             return await text_to_speech_elevenlabs(text, voice=voice)
-        except Exception:
-            # Fallback a Groq si ElevenLabs falla
-            pass
+        except Exception as e:
+            logger.error(f"ElevenLabs TTS failed, falling back to Groq: {e}")
+            # Fallback a Groq continúa abajo
     
-    # Usar Groq TTS (principalmente para inglés)
+    # Usar Groq TTS (principalmente para inglés o fallback)
     api_key = _get_groq_api_key()
     base_url = _get_groq_base_url()
     model = _get_groq_tts_model()
