@@ -17,8 +17,8 @@ from services.groq_ai_service import chat_with_ai, should_refresh_context, get_c
 from services.groq_voice_service import transcribe_audio_groq, text_to_speech_groq
 from utils.auth import get_current_user, verify_token
 
-_WS_MAX_AUDIO_BYTES = 10 * 1024 * 1024
-_WS_PARTIAL_INTERVAL_MS = 700
+_WS_MAX_AUDIO_BYTES = 30 * 1024 * 1024
+_WS_PARTIAL_INTERVAL_MS = 400
 _WS_TAIL_WINDOW_MS = 4500
 
 logger = logging.getLogger("unified_chat_router")

@@ -16,8 +16,8 @@ SendJson = Callable[[Dict[str, Any]], Awaitable[None]]
 
 @dataclass
 class VoiceWsConfig:
-    max_audio_bytes: int = 10 * 1024 * 1024
-    partial_interval_ms: int = 700
+    max_audio_bytes: int = 30 * 1024 * 1024  # 30MB
+    partial_interval_ms: int = 400
     tail_window_ms: int = 4500
 
 
@@ -112,11 +112,22 @@ class VoiceWsSession:
         if self.ending:
             return
 
-        if len(self.audio_buf) + len(chunk) > self.config.max_audio_bytes:
-            await self.send_json({"type": "error", "code": "AUDIO_TOO_LARGE", "message": "max_10mb", "ts": self.now_ts()})
-            raise ValueError("audio_too_large")
+        current_size = len(self.audio_buf)
+        chunk_size = len(chunk)
+        max_size = self.config.max_audio_bytes
+        
+        if current_size + chunk_size > max_size:
+            logger.error(f"Audio buffer overflow: current={current_size}, chunk={chunk_size}, max={max_size}")
+            await self.send_json({"type": "error", "code": "AUDIO_TOO_LARGE", "message": f"max_{max_size//1024//1024}mb_exceeded", "ts": self.now_ts()})
+            raise ValueError(f"audio_too_large: {current_size + chunk_size} > {max_size}")
 
         self.audio_buf.extend(chunk)
+        
+        # Log cada MB acumulado para debuggear
+        new_size = len(self.audio_buf)
+        if new_size // (1024*1024) > current_size // (1024*1024):
+            logger.info(f"Audio buffer: {new_size//1024}KB accumulated")
+        
         await self._maybe_vad_auto_end(chunk)
         await self._maybe_emit_partial()
 
@@ -253,7 +264,7 @@ class VoiceWsSession:
                 "ts": self.now_ts(),
             }
         )
-        logger.debug(f"STT partial sent: '{text[:50]}...' ({len(text)} chars)")
+        logger.debug(f"STT partial sent: '{text[:50]}...'")
 
     async def _emit_final_and_reply(self, *, user_id: str) -> None:
         if not self.audio_buf:
@@ -288,7 +299,7 @@ class VoiceWsSession:
             return
 
         # LLM
-        logger.info(f"Starting LLM processing for user={user_id}, text_len={len(final_text)}")
+        logger.info(f"Starting LLM for user={user_id}, text_len={len(final_text)}")
         try:
             if self.stream_llm:
                 gen = await self.chat_with_ai(
@@ -303,7 +314,7 @@ class VoiceWsSession:
                     llm_parts.append(delta)
                     await self.send_json({"type": "llm_partial", "delta": delta, "ts": self.now_ts()})
                 llm_text = "".join(llm_parts).strip()
-                logger.info(f"LLM streaming complete: {len(llm_text)} chars, {len(llm_parts)} deltas")
+                logger.info(f"LLM streaming complete: {len(llm_text)} chars")
             else:
                 llm_text = await self.chat_with_ai(
                     messages=[{"role": "user", "content": final_text}],
