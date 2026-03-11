@@ -18,6 +18,7 @@ BASE_TIMEOUT_MAP = {
     "/auth": 5.0,
     "/assistant": 30.0,
     "/vision": 30.0,
+    "/unified-chat": 60.0,
     "/documents": 45.0,
 }
 DEFAULT_TIMEOUT = 15.0
