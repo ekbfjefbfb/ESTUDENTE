@@ -27,6 +27,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 # =========================
 # Configuración de Base de Datos
 # =========================
+# NUEVA DATABASE_URL (proyecto NHost actualizado):
+# postgresql://postgres:sd19gqbdBMaKV13j@xnjvzbdjqvhkfoochym.db.us-east-1.nhost.run:5432/xnjvzbdjqvhkfoochym
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Fallback a SQLite para desarrollo local
