@@ -515,22 +515,27 @@ async def get_ai_response_with_structured_data(
     
     context_prompt = build_context_prompt(user_context)
     
-    # Prompt mejorado para respuestas estructuradas
-    system_content = """Eres un asistente académico organizado. Cuando respondas, SIEMPRE incluye:
+    # Prompt mejorado para respuestas estructuradas con soporte para grabación y documentos
+    system_content = """Eres un asistente académico organizado y sarcástico. Tienes PODERES TOTALES sobre la vida del usuario.
+Cuando respondas, SIEMPRE incluye este JSON en tu respuesta:
 
-1. **tasks**: Lista de tareas mencionadas o creadas (cada tarea con: title, due_date si se menciona, priority)
-2. **plan**: Plan de estudio o acción para el usuario (array de pasos concretos)
-3. **response**: Tu respuesta en texto para el usuario
+1. **tasks**: Lista de tareas (title, due_date: YYYY-MM-DD, priority: high/medium/low).
+2. **plan**: Pasos concretos de estudio.
+3. **actions**: Acciones especiales que debes disparar:
+   - {"type": "schedule_class", "data": {"title": "nombre clase", "start_time": "ISO_DATETIME", "recording": true, "participants": ["lista"]}}
+   - {"type": "generate_document", "data": {"topic": "tema", "format": "apa7/pdf", "details": "descripción"}}
+4. **response**: Tu respuesta sarcástica en texto.
+
+REGLA DE ORO PARA GRABACIONES: Si el usuario menciona una clase futura (ej: "mañana a las 6am") y dice "graba la clase" o similar, DEBES incluir en 'actions' una entrada de tipo 'schedule_class' con 'recording': true.
 
 Formato JSON obligatorio:
 {
-  "tasks": [{"title": "...", "due_date": "YYYY-MM-DD o null", "priority": "high/medium/low"}],
-  "plan": [{"step": "...", "duration": "minutos o null"}],
-  "response": "Tu respuesta en texto"
+  "tasks": [...],
+  "plan": [...],
+  "actions": [...],
+  "response": "Tu texto aquí"
 }
-
-Si no hay tareas, usa array vacío: "tasks": []
-Si no hay plan, usa array vacío: "plan": []"""
+"""
 
     if context_prompt:
         system_content += "\n\n" + context_prompt
@@ -569,6 +574,7 @@ Si no hay plan, usa array vacío: "plan": []"""
             if isinstance(parsed, dict):
                 structured_data["tasks"] = parsed.get("tasks", [])
                 structured_data["plan"] = parsed.get("plan", [])
+                structured_data["actions"] = parsed.get("actions", [])
                 structured_data["response"] = parsed.get("response", ai_response)
         except:
             pass  # Si falla el parseo, usar respuesta original
@@ -646,6 +652,32 @@ async def unified_chat_message(
         if not structured.get("is_stream"):
             await embeddings_service.add_to_semantic_cache(message, structured["response"])
         
+        # Procesar acciones especiales (ej: agendar grabación)
+        if structured.get("actions"):
+            for action in structured["actions"]:
+                if action.get("type") == "schedule_class":
+                    logger.info(f"🤖 AI AGENDANDO CLASE AUTOMÁTICA: {action['data']}")
+                    # Aquí llamaríamos al servicio de agenda para persistir
+                    try:
+                        from models.models import AgendaItem
+                        from database.db_enterprise import get_primary_session
+                        db = await get_primary_session()
+                        async with db:
+                            data = action["data"]
+                            new_event = AgendaItem(
+                                user_id=user_id,
+                                title=data.get("title", "Clase agendada"),
+                                item_type="event",
+                                start_time=datetime.fromisoformat(data["start_time"].replace("Z", "")) if data.get("start_time") else None,
+                                content=f"Grabación automática activada: {data.get('recording', False)}. Participantes: {', '.join(data.get('participants', []))}",
+                                status="pending"
+                            )
+                            db.add(new_event)
+                            await db.commit()
+                            logger.info("✅ Evento/Clase persistido en DB")
+                    except Exception as e:
+                        logger.error(f"Error persistiendo acción de IA: {e}")
+
         context_info = get_context_info(user_id)
         
         return ChatResponse(

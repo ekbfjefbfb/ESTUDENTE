@@ -222,6 +222,29 @@ async def _groq_stream_async(
             yield item
 
 
+async def _get_user_personal_context(user_id: str) -> str:
+    """Obtiene el nombre y perfil del usuario para personalizar el prompt."""
+    if not user_id:
+        return ""
+    try:
+        from database.db_enterprise import get_primary_session
+        from sqlalchemy import text
+        db = await get_primary_session()
+        async with db:
+            result = await db.execute(
+                text("SELECT username, full_name, bio FROM users WHERE id = :uid"),
+                {"uid": user_id}
+            )
+            row = result.first()
+            if row:
+                name = row.full_name or row.username or "estudiante"
+                bio = f" (Perfil: {row.bio})" if row.bio else ""
+                return f"USUARIO: {name}{bio}\n"
+    except Exception as e:
+        logger.warning(f"Error fetching user context: {e}")
+    return ""
+
+
 async def chat_with_ai(
     messages: List[Dict[str, Any]],
     user: Optional[str] = None,
@@ -231,6 +254,16 @@ async def chat_with_ai(
     friendly: bool = False,
     stream: bool = False,
 ) -> Any:
+    # Inyectar contexto personal si existe el user_id
+    if user:
+        personal_context = await _get_user_personal_context(user)
+        if personal_context:
+            # Insertar como mensaje de sistema adicional o prefijo en el system prompt
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] = personal_context + messages[0]["content"]
+            else:
+                messages.insert(0, {"role": "system", "content": personal_context})
+
     messages = _ensure_system_prompt(messages)
     model = _select_model(messages)
 
