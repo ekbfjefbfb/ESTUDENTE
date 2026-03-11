@@ -1,6 +1,6 @@
 """Add chat_sessions and private_ai_messages tables; add member profile columns
 
-Revision ID: add_study_groups_v2_chat_sessions
+Revision ID: study_groups_v2_chat
 Revises: add_study_groups_001
 Create Date: 2025-10-16 12:00:00.000000
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = 'add_study_groups_v2_chat_sessions'
+revision = 'study_groups_v2_chat'
 down_revision = 'add_study_groups_001'
 branch_labels = None
 depends_on = None
