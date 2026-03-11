@@ -144,6 +144,25 @@ class DatabaseEnterpriseManager:
         self.query_cache: Dict[str, Any] = {}
         self.initialized = False
     
+    async def _heartbeat_loop(self):
+        """Loop de heartbeat para evitar que la DB se duerma (Keep-Alive)"""
+        interval = int(os.getenv("DB_HEARTBEAT_INTERVAL", "300")) # 5 min por defecto
+        logger.info(f"💓 Iniciando Heartbeat Loop (intervalo: {interval}s)")
+        
+        while True:
+            try:
+                if self.initialized:
+                    # Usar el engine directamente para un ping rápido
+                    engine = self.engines.get(ConnectionType.PRIMARY)
+                    if engine:
+                        async with engine.begin() as conn:
+                            await conn.execute(text("SELECT 1"))
+                        logger.debug("💓 Heartbeat DB: Ping exitoso")
+            except Exception as e:
+                logger.warning(f"⚠️ Heartbeat DB: Falló el ping (la DB podría estar dormida): {e}")
+            
+            await asyncio.sleep(interval)
+
     async def initialize(self):
         """Inicializa todas las conexiones de base de datos con reintentos"""
         if self.initialized:
@@ -179,6 +198,9 @@ class DatabaseEnterpriseManager:
                 
                 self.initialized = True
                 logger.info("✅ Database Enterprise Manager inicializado")
+                
+                # Iniciar Heartbeat en background
+                asyncio.create_task(self._heartbeat_loop())
                 break
                 
             except Exception as e:
