@@ -1,6 +1,8 @@
 import os
 import logging
 import sqlalchemy as sa
+import socket
+from urllib.parse import urlparse
 
 from logging.config import fileConfig
 
@@ -81,6 +83,23 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _validate_db_dns() -> bool:
+    """Valida si el host de DATABASE_URL es resoluble"""
+    db_url = os.getenv("DATABASE_URL") or os.getenv("SQLALCHEMY_DATABASE_URL")
+    if not db_url:
+        return True
+    try:
+        if "sqlite" in db_url:
+            return True
+        parsed = urlparse(db_url)
+        host = parsed.hostname
+        if host:
+            socket.gethostbyname(host)
+            return True
+    except Exception as e:
+        logger.warning(f"⚠️ DNS validation failed for host: {e}")
+    return False
+
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode.
 
@@ -88,6 +107,12 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    if not _validate_db_dns():
+        db_url = os.getenv("DATABASE_URL") or os.getenv("SQLALCHEMY_DATABASE_URL")
+        logger.error(f"❌ DATABASE HOST NOT RESOLVABLE: {db_url}")
+        # En modo online, si no hay DNS, no podemos proceder
+        raise RuntimeError(f"Could not resolve database host. Check your DATABASE_URL.")
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

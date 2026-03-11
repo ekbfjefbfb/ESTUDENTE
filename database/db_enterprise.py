@@ -12,7 +12,9 @@ import os
 import time
 import logging
 import enum
+import socket
 from typing import Dict, Any, Optional, AsyncGenerator, List
+from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from collections import defaultdict
@@ -143,27 +145,67 @@ class DatabaseEnterpriseManager:
         self.initialized = False
     
     async def initialize(self):
-        """Inicializa todas las conexiones de base de datos"""
+        """Inicializa todas las conexiones de base de datos con reintentos"""
+        if self.initialized:
+            return
+
+        max_retries = 3
+        retry_delay = 2
+
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"🚀 Inicializando Database Enterprise Manager (intento {attempt + 1}/{max_retries})")
+                
+                # Validar DNS antes de intentar conectar
+                if not self._validate_dns(self.config.primary_url):
+                    if attempt < max_retries - 1:
+                        logger.warning(f"⚠️ DNS no resoluble para la DB principal, reintentando en {retry_delay}s...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    else:
+                        raise OperationalError(None, None, f"Could not translate host name for {self.config.primary_url}")
+
+                # Configurar engine principal
+                await self._setup_engine(ConnectionType.PRIMARY, self.config.primary_url)
+                
+                # Configurar engine readonly si está disponible
+                if self.config.readonly_url:
+                    await self._setup_engine(ConnectionType.READONLY, self.config.readonly_url)
+                
+                # Configurar engine analytics si está disponible
+                if self.config.analytics_url:
+                    await self._setup_engine(ConnectionType.ANALYTICS, self.config.analytics_url)
+                
+                self.initialized = True
+                logger.info("✅ Database Enterprise Manager inicializado")
+                break
+                
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️ Error inicializando Database Manager, reintentando: {e}")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    logger.error(f"❌ Error fatal inicializando Database Manager tras {max_retries} intentos: {e}")
+                    raise
+
+    def _validate_dns(self, url: str) -> bool:
+        """Verifica si el host de la URL es resoluble"""
         try:
-            logger.info("🚀 Inicializando Database Enterprise Manager")
+            parsed = urlparse(url)
+            host = parsed.hostname
+            if not host:
+                return True # Probablemente sqlite o URL malformada que fallará después
             
-            # Configurar engine principal
-            await self._setup_engine(ConnectionType.PRIMARY, self.config.primary_url)
-            
-            # Configurar engine readonly si está disponible
-            if self.config.readonly_url:
-                await self._setup_engine(ConnectionType.READONLY, self.config.readonly_url)
-            
-            # Configurar engine analytics si está disponible
-            if self.config.analytics_url:
-                await self._setup_engine(ConnectionType.ANALYTICS, self.config.analytics_url)
-            
-            self.initialized = True
-            logger.info("✅ Database Enterprise Manager inicializado")
-            
+            socket.gethostbyname(host)
+            return True
+        except socket.gaierror:
+            logger.error(f"❌ Error de DNS: No se pudo resolver el host '{host}'")
+            return False
         except Exception as e:
-            logger.error(f"❌ Error inicializando Database Manager: {e}")
-            raise
+            logger.error(f"⚠️ Error validando DNS: {e}")
+            return True # Continuar y dejar que SQLAlchemy maneje otros errores
     
     async def _setup_engine(self, connection_type: ConnectionType, database_url: str):
         """Configura engine para tipo de conexión específico"""
