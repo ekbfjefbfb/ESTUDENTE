@@ -158,8 +158,16 @@ class DatabaseEnterpriseManager:
                         async with engine.begin() as conn:
                             await conn.execute(text("SELECT 1"))
                         logger.debug("💓 Heartbeat DB: Ping exitoso")
+            except (OperationalError, DisconnectionError) as e:
+                logger.warning(f"⚠️ Heartbeat DB: Error de conexión (intentando reconectar): {e}")
+                # Forzar reinicialización si es un error de conexión persistente
+                self.initialized = False
+                try:
+                    await self.initialize()
+                except Exception as init_e:
+                    logger.error(f"❌ Falló reconexión en Heartbeat: {init_e}")
             except Exception as e:
-                logger.warning(f"⚠️ Heartbeat DB: Falló el ping (la DB podría estar dormida): {e}")
+                logger.warning(f"⚠️ Heartbeat DB: Error inesperado: {e}")
             
             await asyncio.sleep(interval)
 
@@ -274,7 +282,7 @@ class DatabaseEnterpriseManager:
         connection_type: ConnectionType = ConnectionType.PRIMARY,
         enable_circuit_breaker: bool = True
     ) -> AsyncGenerator[AsyncSession, None]:
-        """Obtiene sesión de base de datos con circuit breaker"""
+        """Obtiene sesión de base de datos con circuit breaker y reintentos"""
         
         if not self.initialized:
             await self.initialize()
@@ -286,53 +294,66 @@ class DatabaseEnterpriseManager:
         circuit_breaker = self.circuit_breakers[connection_type]
         
         start_time = time.time()
+        max_retries = 2
         
-        try:
-            if enable_circuit_breaker and self.config.enable_circuit_breaker:
-                session = await circuit_breaker.call(session_maker)
-            else:
-                session = session_maker()
-            
-            async with session:
-                # Configurar timeout por sesión
-                await session.execute(
-                    text(f"SET statement_timeout = '{self.config.query_timeout}s'")
+        for attempt in range(max_retries + 1):
+            session = None
+            try:
+                if enable_circuit_breaker and self.config.enable_circuit_breaker:
+                    session = await circuit_breaker.call(session_maker)
+                else:
+                    session = session_maker()
+                
+                async with session:
+                    # Configurar timeout por sesión
+                    await session.execute(
+                        text(f"SET statement_timeout = '{self.config.query_timeout}s'")
+                    )
+                    
+                    self.metrics.query_counter.inc(
+                        labels=[connection_type.value, 'session_start', 'success']
+                    )
+                    
+                    yield session
+                    return # Éxito, salir del loop de reintentos
+                    
+            except (OperationalError, DisconnectionError) as e:
+                if attempt < max_retries:
+                    wait_time = 0.5 * (attempt + 1)
+                    logger.warning(f"⚠️ Error de conexión en sesión {connection_type.value} (intento {attempt+1}): {e}. Reintentando en {wait_time}s...")
+                    if session:
+                        await session.close()
+                    await asyncio.sleep(wait_time)
+                    continue
+                
+                self.metrics.error_counter.inc(
+                    labels=['connection_error', connection_type.value]
                 )
+                logger.error(f"ConnectionError final en {connection_type.value} tras {max_retries} reintentos: {e}")
+                raise
                 
-                self.metrics.query_counter.inc(
-                    labels=[connection_type.value, 'session_start', 'success']
+            except IntegrityError as e:
+                if session:
+                    await session.rollback()
+                self.metrics.error_counter.inc(
+                    labels=['integrity_error', connection_type.value]
                 )
+                logger.error(f"IntegrityError en {connection_type.value}: {e}")
+                raise
                 
-                yield session
+            except Exception as e:
+                if session:
+                    await session.rollback()
                 
-        except IntegrityError as e:
-            await session.rollback()
-            self.metrics.error_counter.inc(
-                labels=['integrity_error', connection_type.value]
-            )
-            logger.error(f"IntegrityError en {connection_type.value}: {e}")
-            raise
-            
-        except (OperationalError, DisconnectionError) as e:
-            self.metrics.error_counter.inc(
-                labels=['connection_error', connection_type.value]
-            )
-            logger.error(f"ConnectionError en {connection_type.value}: {e}")
-            raise
-            
-        except Exception as e:
-            if 'session' in locals():
-                await session.rollback()
-            
-            self.metrics.error_counter.inc(
-                labels=['unknown_error', connection_type.value]
-            )
-            logger.error(f"Error en sesión {connection_type.value}: {e}")
-            raise
-            
-        finally:
-            duration = time.time() - start_time
-            self.metrics.query_duration.observe(duration)
+                self.metrics.error_counter.inc(
+                    labels=['unknown_error', connection_type.value]
+                )
+                logger.error(f"Error inesperado en sesión {connection_type.value}: {e}")
+                raise
+                
+            finally:
+                duration = time.time() - start_time
+                self.metrics.query_duration.observe(duration)
     
     async def execute_query(
         self,

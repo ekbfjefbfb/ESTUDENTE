@@ -124,7 +124,23 @@ def _tail_bytes_for_pcm16(*, buf: bytearray, sample_rate: int, tail_window_ms: i
 
 
 async def _ws_send_json(websocket: WebSocket, payload: Dict[str, Any]) -> None:
-    await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+    try:
+        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+    except Exception as e:
+        logger.error(f"Error sending WebSocket JSON: {e}")
+        raise
+
+async def _ws_heartbeat(websocket: WebSocket):
+    """Tarea en background para enviar pings y mantener la conexión activa."""
+    try:
+        while True:
+            await asyncio.sleep(30)  # Cada 30 segundos
+            await websocket.send_json({"type": "ping", "ts": _ws_now_iso()})
+            logger.debug("Sent WS heartbeat ping")
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning(f"WS heartbeat failed: {e}")
 
 # =========================
 # PERSISTENCIA DE PROGRESO
@@ -925,6 +941,9 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
         max_text_len = 8000
         logger.info(f"WebSocket connected successfully for user_id={user_id}, waiting for messages")
 
+        # Iniciar heartbeat task
+        heartbeat_task = asyncio.create_task(_ws_heartbeat(websocket))
+
         while True:
             try:
                 logger.debug(f"Waiting for message from user_id={user_id}")
@@ -932,8 +951,16 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             except WebSocketDisconnect:
                 logger.info(f"WebSocket disconnect user_id={user_id}")
                 break
+            except Exception as e:
+                logger.error(f"WebSocket receive error user_id={user_id}: {e}")
+                break
 
             logger.info(f"Received message from user_id={user_id}, len={len(data) if data else 0}")
+            
+            # Manejar pong del cliente si lo envía
+            if data == "pong" or (data.startswith("{") and '"type":"pong"' in data):
+                logger.debug(f"Received pong from {user_id}")
+                continue
             if data is not None and len(data) > max_text_len:
                 await _ws_send_json(
                     websocket,
@@ -1031,7 +1058,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 {
                     "type": "error",
                     "code": "WS_ERROR",
-                    "message": str(e),
+                    "message": "Error interno en el servidor de chat.",
                     "ts": _ws_now_iso(),
                 },
             )
@@ -1041,6 +1068,10 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             await websocket.close()
         except Exception:
             pass
+    finally:
+        if 'heartbeat_task' in locals():
+            heartbeat_task.cancel()
+            logger.debug(f"Heartbeat task cancelled for user_id={user_id}")
 
 
 @router.websocket("/voice/ws")
@@ -1085,13 +1116,25 @@ async def voice_stream_ws(websocket: WebSocket):
     # Loop
     message_count = 0
     binary_bytes_received = 0
+    
+    # Iniciar heartbeat task
+    heartbeat_task = asyncio.create_task(_ws_heartbeat(websocket))
+    
     try:
         while True:
-            msg = await websocket.receive()
+            try:
+                msg = await websocket.receive()
+            except WebSocketDisconnect:
+                logger.info(f"Voice WebSocket disconnect: user_id={user_id}")
+                break
+            except Exception as e:
+                logger.error(f"Voice WebSocket receive error user_id={user_id}: {e}")
+                break
+                
             message_count += 1
 
             if msg.get("type") == "websocket.disconnect":
-                logger.info(f"Voice WebSocket disconnect: user_id={user_id}, messages={message_count}, bytes={binary_bytes_received}")
+                logger.info(f"Voice WebSocket disconnect message: user_id={user_id}, messages={message_count}, bytes={binary_bytes_received}")
                 break
 
             if "text" in msg and msg["text"] is not None:
@@ -1157,7 +1200,7 @@ async def voice_stream_ws(websocket: WebSocket):
         try:
             await _ws_send_json(
                 websocket,
-                {"type": "error", "code": "WS_ERROR", "message": str(e), "ts": _ws_now_iso()},
+                {"type": "error", "code": "WS_ERROR", "message": "Error en la conexión de voz.", "ts": _ws_now_iso()},
             )
         except Exception:
             pass
@@ -1165,5 +1208,9 @@ async def voice_stream_ws(websocket: WebSocket):
             await websocket.close()
         except Exception:
             pass
+    finally:
+        if 'heartbeat_task' in locals():
+            heartbeat_task.cancel()
+            logger.debug(f"Voice heartbeat task cancelled for user_id={user_id}")
 
 __all__ = ["router"]

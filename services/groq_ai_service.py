@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import os
+import logging
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 import inspect
 
 import anyio
 from groq import Groq
+
+logger = logging.getLogger("groq_ai_service")
+
+# --- RESILIENCE CONFIG ---
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY = 1.0
+TIMEOUT_SECONDS = 30.0
 
 
 CONTEXT_THRESHOLD = 0.85
@@ -136,6 +144,39 @@ def _filter_supported_kwargs(func: Any, kwargs: Dict[str, Any]) -> Dict[str, Any
     return filtered
 
 
+async def _call_groq_with_retry(
+    func: Any,
+    kwargs: Dict[str, Any],
+) -> Any:
+    """Ejecuta una llamada a Groq con reintentos y backoff exponencial."""
+    last_exc = None
+    filtered_kwargs = _filter_supported_kwargs(func, kwargs)
+    
+    for attempt in range(MAX_RETRIES):
+        try:
+            # anyio.to_thread.run_sync para no bloquear el loop de asyncio si el SDK es síncrono
+            return await anyio.to_thread.run_sync(lambda: func(**filtered_kwargs))
+        except Exception as e:
+            last_exc = e
+            error_str = str(e).lower()
+            
+            # Si es error de autenticación o parámetros inválidos (400, 401), no reintentar
+            if "api_key" in error_str or "invalid_request_error" in error_str:
+                logger.error(f"Non-retryable Groq error: {e}")
+                raise
+                
+            if attempt < MAX_RETRIES - 1:
+                sleep_time = INITIAL_RETRY_DELAY * (2**attempt)
+                logger.warning(f"Groq call failed (attempt {attempt+1}/{MAX_RETRIES}): {e}. Retrying in {sleep_time}s...")
+                await asyncio.sleep(sleep_time)
+            else:
+                logger.error(f"Final attempt failed for Groq call: {e}")
+    
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Failed to complete Groq call after retries")
+
+
 async def _groq_stream_async(
     *,
     model: str,
@@ -158,7 +199,9 @@ async def _groq_stream_async(
                 "reasoning_effort": GROQ_LLM_REASONING_EFFORT if model == GROQ_LLM_REASONING_MODEL else None,
                 "stream": True,
                 "stop": None,
+                "timeout": TIMEOUT_SECONDS,
             }
+            # El streaming es más complejo de reintentar aquí, pero añadimos timeout
             completion = create_fn(**_filter_supported_kwargs(create_fn, kwargs))
             for chunk in completion:
                 try:
@@ -210,8 +253,14 @@ async def chat_with_ai(
         "reasoning_effort": GROQ_LLM_REASONING_EFFORT if model == GROQ_LLM_REASONING_MODEL else None,
         "stream": False,
         "stop": None,
+        "timeout": TIMEOUT_SECONDS,
     }
-    completion = create_fn(**_filter_supported_kwargs(create_fn, kwargs))
+    
+    try:
+        completion = await _call_groq_with_retry(create_fn, kwargs)
+    except Exception as e:
+        logger.error(f"Groq chat_with_ai failed: {e}")
+        raise RuntimeError(f"Error al contactar con la IA: {str(e)}") from e
 
     try:
         content = completion.choices[0].message.content

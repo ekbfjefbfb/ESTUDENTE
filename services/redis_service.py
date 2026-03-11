@@ -127,107 +127,56 @@ async def close_redis():
 
 async def get_redis() -> Redis:
     """
-    Obtiene la instancia Redis.
-    
-    Returns:
-        Redis: Instancia de Redis
-        
-    Raises:
-        RuntimeError: Si Redis no está inicializado
+    Obtiene la instancia Redis con fallback (fail-open) para resiliencia.
     """
+    global _redis_pool
     if _redis_pool is None:
-        # Auto-inicializar si no está disponible
-        success = await init_redis()
-        if not success:
-            raise RuntimeError("Redis no disponible y no se pudo inicializar")
+        try:
+            success = await init_redis()
+            if not success:
+                logger.warning("Redis initialization failed, operating in degraded mode (fail-open)")
+                return None
+        except Exception as e:
+            logger.error(f"Critical error initializing Redis: {e}")
+            return None
     
     return _redis_pool
 
-async def get_redis_client() -> Redis:
-    """Alias compatibilidad: retorna el cliente Redis (pool)."""
-    return await get_redis()
-
-async def ping_redis() -> bool:
-    """
-    Verifica si Redis está disponible.
-    
-    Returns:
-        bool: True si Redis responde
-    """
-    try:
-        redis_client = await get_redis()
-        await redis_client.ping()
-        return True
-    except Exception as e:
-        logger.warning({"event": "redis_ping_failed", "error": str(e)})
-        return False
-
-# =============================================
-# FUNCIONES DE CACHE
-# =============================================
-
 async def set_cache(key: str, value: Any, ttl: int = 3600) -> bool:
     """
-    Establece un valor en el cache.
-    
-    Args:
-        key: Clave del cache
-        value: Valor a almacenar
-        ttl: Tiempo de vida en segundos
-        
-    Returns:
-        bool: True si se estableció correctamente
+    Establece un valor en el cache (resiliente).
     """
     try:
         redis_client = await get_redis()
+        if redis_client is None:
+            return False
+            
         serialized_value = json.dumps(value) if not isinstance(value, str) else value
         await redis_client.setex(key, ttl, serialized_value)
-        
-        logger.debug({
-            "event": "cache_set",
-            "key": key,
-            "ttl": ttl
-        })
         return True
-        
     except Exception as e:
-        logger.error({
-            "event": "cache_set_failed",
-            "key": key,
-            "error": str(e)
-        })
+        logger.error({"event": "cache_set_failed", "key": key, "error": str(e)})
         return False
 
 async def get_cache(key: str, default: Any = None) -> Any:
     """
-    Obtiene un valor del cache.
-    
-    Args:
-        key: Clave del cache
-        default: Valor por defecto si no existe
-        
-    Returns:
-        Any: Valor del cache o default
+    Obtiene un valor del cache (resiliente).
     """
     try:
         redis_client = await get_redis()
+        if redis_client is None:
+            return default
+            
         value = await redis_client.get(key)
-        
         if value is None:
             return default
             
-        # Intentar deserializar JSON
         try:
             return json.loads(value)
         except (json.JSONDecodeError, TypeError):
             return value
-            
     except Exception as e:
-        logger.error({
-            "event": "cache_get_failed",
-            "key": key,
-            "error": str(e)
-        })
+        logger.error({"event": "cache_get_failed", "key": key, "error": str(e)})
         return default
 
 async def delete_cache(key: str) -> bool:

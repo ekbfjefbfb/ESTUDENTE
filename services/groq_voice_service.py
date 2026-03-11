@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import logging
 import os
 import wave
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import httpx
 
 logger = logging.getLogger("groq_voice_service")
+
+# --- RESILIENCE CONFIG ---
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY = 1.0  # seconds
+TIMEOUT_SECONDS = 30.0
 
 
 # =========================
@@ -36,6 +42,46 @@ def _should_use_elevenlabs(text: str, language: Optional[str] = None) -> bool:
     if any(marker in text_lower for marker in spanish_markers):
         return True
     return False
+
+
+async def _post_with_retry(
+    url: str,
+    headers: Dict[str, str],
+    json_data: Optional[Dict[str, Any]] = None,
+    files: Optional[Dict[str, Any]] = None,
+    data: Optional[Dict[str, Any]] = None,
+    timeout: float = TIMEOUT_SECONDS,
+) -> httpx.Response:
+    """Realiza una petición POST con reintentos y backoff exponencial."""
+    last_exc = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                if json_data is not None:
+                    resp = await client.post(url, headers=headers, json=json_data)
+                elif files is not None:
+                    resp = await client.post(url, headers=headers, data=data, files=files)
+                else:
+                    resp = await client.post(url, headers=headers, data=data)
+                
+                # Si es 429 (Rate Limit) o 5xx (Server Error), reintentar
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    logger.warning(f"Retryable error {resp.status_code} at {url} (attempt {attempt+1}/{MAX_RETRIES})")
+                    resp.raise_for_status()
+                
+                return resp
+        except (httpx.HTTPStatusError, httpx.RequestError) as e:
+            last_exc = e
+            if attempt < MAX_RETRIES - 1:
+                sleep_time = INITIAL_RETRY_DELAY * (2**attempt)
+                logger.info(f"Retrying in {sleep_time}s due to {type(e).__name__}...")
+                await asyncio.sleep(sleep_time)
+            else:
+                logger.error(f"Final attempt failed for {url}: {e}")
+    
+    if last_exc:
+        raise last_exc
+    raise RuntimeError(f"Failed to complete request to {url}")
 
 
 async def text_to_speech_elevenlabs(
@@ -71,10 +117,13 @@ async def text_to_speech_elevenlabs(
         }
     }
     
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, headers=headers, json=payload)
+    try:
+        resp = await _post_with_retry(url, headers=headers, json_data=payload)
         resp.raise_for_status()
         audio_bytes = resp.content
+    except Exception as e:
+        logger.error(f"ElevenLabs TTS failed after retries: {e}")
+        raise
     
     b64 = base64.b64encode(audio_bytes).decode("ascii")
     return f"data:audio/mpeg;base64,{b64}"
@@ -205,10 +254,13 @@ async def transcribe_audio_groq(
 
     files = {"file": (filename, send_bytes, content_type)}
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(f"{base_url}/audio/transcriptions", headers=headers, data=data, files=files)
+    try:
+        resp = await _post_with_retry(f"{base_url}/audio/transcriptions", headers=headers, data=data, files=files)
         resp.raise_for_status()
         payload = resp.json()
+    except Exception as e:
+        logger.error(f"Groq STT failed after retries: {e}")
+        raise
 
     text = payload.get("text")
     if not isinstance(text, str):
@@ -273,14 +325,17 @@ async def text_to_speech_groq(
     
     logger.info(f"TTS request: model={model}, voice={final_voice}, text_len={len(text)}")
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(f"{base_url}/audio/speech", headers=headers, json=payload)
+    try:
+        resp = await _post_with_retry(f"{base_url}/audio/speech", headers=headers, json_data=payload)
         if resp.status_code >= 400:
             error_body = resp.text[:500]
             logger.error(f"TTS error {resp.status_code}: {error_body}")
             logger.error(f"Payload was: model={model}, voice={final_voice}, text_preview={text[:100]}...")
             resp.raise_for_status()
         audio_bytes = resp.content
+    except Exception as e:
+        logger.error(f"Groq TTS failed after retries: {e}")
+        raise
 
     b64 = base64.b64encode(audio_bytes).decode("ascii")
     return f"data:{mime};base64,{b64}"
