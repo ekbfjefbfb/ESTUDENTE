@@ -179,6 +179,24 @@ async def get_cache(key: str, default: Any = None) -> Any:
         logger.error({"event": "cache_get_failed", "key": key, "error": str(e)})
         return default
 
+async def get_redis_client() -> Optional[Redis]:
+    """Alias compatibilidad: retorna el cliente Redis (pool)."""
+    return await get_redis()
+
+async def ping_redis() -> bool:
+    """
+    Verifica si Redis está disponible.
+    """
+    try:
+        redis_client = await get_redis()
+        if redis_client is None:
+            return False
+        await redis_client.ping()
+        return True
+    except Exception as e:
+        logger.warning({"event": "redis_ping_failed", "error": str(e)})
+        return False
+
 async def delete_cache(key: str) -> bool:
     """
     Elimina una clave del cache.
@@ -191,6 +209,8 @@ async def delete_cache(key: str) -> bool:
     """
     try:
         redis_client = await get_redis()
+        if redis_client is None:
+            return False
         result = await redis_client.delete(key)
         return bool(result)
         
@@ -439,6 +459,7 @@ __all__ = [
     "init_redis",
     "close_redis", 
     "get_redis",
+    "get_redis_client",
     "ping_redis",
     "_get_lock",
     "DistributedLock",
@@ -451,8 +472,7 @@ __all__ = [
     "delete_session",
     "get_redis_metrics",
     "redis_set",
-    "redis_get", 
-    "_get_lock"
+    "redis_get"
 ]
 
 # =============================================
