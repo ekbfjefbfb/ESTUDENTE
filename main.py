@@ -229,7 +229,18 @@ app.add_middleware(PreValidationMiddleware)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    # Handler global para excepciones no capturadas
+    # Capturar errores de desconexión del cliente (anyio)
+    exc_str = str(exc)
+    if "EndOfStream" in exc_str or "WouldBlock" in exc_str:
+        logger.warning({
+            "event": "client_disconnected_unexpectedly",
+            "path": request.url.path,
+            "method": request.method,
+            "request_id": request.headers.get("X-Request-ID", "unknown")
+        })
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    # Handler global para otras excepciones no capturadas
     logger.error(f"Unhandled exception on {request.url.path}: {exc}", exc_info=True)
     import traceback
     stack_trace = traceback.format_exc()
@@ -240,7 +251,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             "success": False,
             "error": "Internal server error",
             "message": str(exc),
-            "traceback": stack_trace,
+            "traceback": stack_trace if DEBUG else "Contact support",
             "request_id": request.headers.get("X-Request-ID", "unknown")
         }
     )
