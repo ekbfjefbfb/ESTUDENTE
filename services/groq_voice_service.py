@@ -249,23 +249,11 @@ async def text_to_speech_groq(
     mime = _mime_for_audio_format(fmt)
     final_voice = normalize_voice(voice)
     
-    # Groq TTS tiene voces específicas; si no es válida, usar una por defecto
-    valid_groq_voices = ["Aaliyah", "Ada", "Adelaide", "Afroditi", "Alain", "Aline", "Amelia", "Andrea", 
-                         "Arya", "August", "Bailey", "Bella", "Brandon", "Brian", "Callum", "Carly", 
-                         "Charlotte", "Chiara", "Chloe", "Cole", "Daphne", "Dev", "Drew", "Eden", 
-                         "Elise", "Emily", "Emma", "Elli", "Eric", "Evelyn", "Fabian", "Faye", 
-                         "Fritz", "Gabriel", "Gigi", "Glen", "Grace", "Harry", "Hope", "Ian", 
-                         "Ivy", "James", "Jeremy", "Jessie", "John", "Josephine", "Joshua", 
-                         "Julian", "Julie", "Justin", "Kevin", "Laila", "Larry", "Laura", 
-                         "Layla", "Leo", "Levi", "Lily", "Linda", "Lorenzo", "Mabel", "Mason", 
-                         "Matteo", "Michael", "Mila", "Natalie", "Nicholas", "Nicole", "Noah", 
-                         "Oliver", "Olivia", "Patrick", "Paul", "Pierre", "Raj", "Rebecca", 
-                         "Richard", "Robert", "Rohan", "Ross", "Saanvi", "Sally", "Sam", 
-                         "Sarah", "Sean", "Seraphina", "Siri", "Sophia", "Stefan", "Sylvia", 
-                         "Terry", "Thomas", "Tina", "Valentina", "Veronica", "Victor", "Whisper", "William"]
+    # Voces válidas de Groq (según el error 400 recibido)
+    valid_groq_voices = ["autumn", "diana", "hannah", "austin", "daniel", "troy"]
     if final_voice not in valid_groq_voices:
-        logger.warning(f"Invalid Groq TTS voice '{final_voice}', using 'Aaliyah'")
-        final_voice = "Aaliyah"
+        logger.warning(f"Invalid Groq TTS voice '{final_voice}', using 'hannah' (default)")
+        final_voice = "hannah"
 
     payload = {
         "model": model,

@@ -271,6 +271,7 @@ class VoiceWsSession:
             await self.send_json({"type": "stt_final", "text": "", "language": self.language, "duration_ms": 0, "ts": self.now_ts()})
             return
 
+        # 1. STT con reintento/captura de error
         try:
             final_text = (
                 await transcribe_audio_groq(
@@ -281,7 +282,8 @@ class VoiceWsSession:
                 )
             ).strip()
         except Exception as e:
-            await self.send_json({"type": "error", "code": "STT_ERROR", "message": str(e), "ts": self.now_ts()})
+            logger.error(f"STT final error for user={user_id}: {e}")
+            await self.send_json({"type": "error", "code": "STT_ERROR", "message": "No pude entender el audio, intenta de nuevo.", "ts": self.now_ts()})
             return
 
         await self.send_json(
@@ -295,10 +297,11 @@ class VoiceWsSession:
         )
         logger.info(f"STT final: '{final_text[:100]}...' ({len(final_text)} chars)")
 
-        if self.mode == "stt_only":
+        if self.mode == "stt_only" or not final_text:
             return
 
-        # LLM
+        # 2. LLM con captura de error
+        llm_text = ""
         logger.info(f"Starting LLM for user={user_id}, text_len={len(final_text)}")
         try:
             if self.stream_llm:
@@ -324,13 +327,17 @@ class VoiceWsSession:
                 llm_text = (llm_text or "").strip()
                 logger.info(f"LLM non-stream complete: {len(llm_text)} chars")
 
-            await self.send_json({"type": "llm_final", "text": llm_text, "ts": self.now_ts()})
+            if llm_text:
+                await self.send_json({"type": "llm_final", "text": llm_text, "ts": self.now_ts()})
+            else:
+                logger.warning(f"LLM returned empty text for user={user_id}")
+                return
         except Exception as e:
             logger.exception(f"LLM error for user={user_id}: {e}")
-            await self.send_json({"type": "error", "code": "LLM_ERROR", "message": str(e), "ts": self.now_ts()})
+            await self.send_json({"type": "error", "code": "LLM_ERROR", "message": "Error al procesar tu mensaje con la IA.", "ts": self.now_ts()})
             return
 
-        # TTS
+        # 3. TTS con captura de error
         logger.info(f"Starting TTS for user={user_id}, text_len={len(llm_text)}, voice={self.voice_name}")
         try:
             voice = normalize_voice(self.voice_name)
@@ -339,4 +346,5 @@ class VoiceWsSession:
             logger.info(f"TTS complete: {len(audio_data)} chars of base64 audio")
         except Exception as e:
             logger.exception(f"TTS error for user={user_id}: {e}")
-            await self.send_json({"type": "error", "code": "TTS_ERROR", "message": str(e), "ts": self.now_ts()})
+            # Si falla el TTS, al menos el usuario recibió el texto (llm_final)
+            await self.send_json({"type": "error", "code": "TTS_ERROR", "message": "No pude generar el audio de respuesta.", "ts": self.now_ts()})
