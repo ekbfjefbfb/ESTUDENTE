@@ -218,7 +218,7 @@ def _sanitize_structured_data(structured_data: Any) -> Dict[str, Any]:
     return {"tasks": tasks, "plan": plan, "response": response, "is_stream": is_stream}
 
 async def save_user_progress(user_id: str, message: str, structured_data: Dict[str, Any]):
-    """Guarda el progreso del usuario en memoria (en producción usar Redis/DB)"""
+    """Guarda el progreso del usuario en memoria y persiste en DB (en producción usar Redis/DB)"""
     structured_data = _sanitize_structured_data(structured_data)
     if user_id not in _user_progress:
         _user_progress[user_id] = {
@@ -232,10 +232,9 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
     progress = _user_progress[user_id]
     progress["last_interaction"] = datetime.utcnow().isoformat()
     
-    # Agregar nuevas tareas
+    # Agregar nuevas tareas a la memoria
     for task in structured_data.get("tasks", []):
         if task.get("due_date"):
-            # Determinar si es para hoy o esta semana
             try:
                 task_date = date.fromisoformat(task["due_date"])
                 today = date.today()
@@ -248,14 +247,16 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
             except Exception as e:
                 logger.error(f"Error parsing task date: {e}")
     
-    # Guardar plan y persistir tareas en DB
+    # Guardar plan en memoria
     if structured_data.get("plan"):
         progress["last_plan"] = structured_data["plan"]
         
+    # Persistir en Base de Datos
     try:
         from database.db_enterprise import get_primary_session
         from models.models import AgendaItem, AgendaItemType, AgendaItemStatus, AgendaSession
         from sqlalchemy import select, and_
+        
         db = await get_primary_session()
         async with db:
             # Asegurar que existe una sesión activa para este usuario para vincular las tareas
@@ -278,7 +279,7 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
                 db.add(active_session)
                 await db.flush()
 
-            # Persistir tareas
+            # Persistir tareas detectadas
             for task_data in structured_data.get("tasks", []):
                 title = (task_data.get("title") or "").strip()
                 if not title: continue
@@ -699,6 +700,7 @@ async def unified_chat_message(
         # Pareto 80/20: Intentar obtener respuesta del cache semántico
         from services.embeddings_service import embeddings_service
         cached_response = await embeddings_service.get_cached_response(message)
+        
         if cached_response and not stream:
             # Si hay cache hit, retornamos inmediatamente (latencia < 50ms)
             context_info = get_context_info(user_id)
@@ -711,103 +713,100 @@ async def unified_chat_message(
                     "usage_percent": round(context_info.get("usage", 0) * 100, 1),
                     "cache_hit": True
                 },
-                message_id=f"msg_{datetime.utcnow().timestamp()}",
-                actions=[
-                    {"type": "tasks", "data": structured["tasks"]},
-                    {"type": "plan", "data": structured["plan"]}
-                ]
+                message_id=f"msg_cached_{datetime.utcnow().timestamp()}"
             )
-    
-    # Guardar en cache semántico para futuras consultas similares
-    if not structured.get("is_stream"):
-        from services.embeddings_service import embeddings_service
-        await embeddings_service.add_to_semantic_cache(message, structured["response"])
-    
-    # Procesar acciones especiales (ej: agendar grabación)
-    if structured.get("actions"):
-        for action in structured["actions"]:
-            action_type = action.get("type")
-            action_data = action.get("data", {})
-            
-            if action_type == "schedule_class":
-                logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Agendando clase/evento - {action_data}")
-                try:
-                    from models.models import AgendaItem, AgendaItemType, AgendaItemStatus
-                    from database.db_enterprise import get_primary_session
-                    db = await get_primary_session()
-                    async with db:
-                        # Mapear datos de la IA a campos de la DB
-                        
-                        # Manejo seguro de fecha
-                        start_time_val = datetime.utcnow()
-                        if action_data.get("start_time"):
-                            try:
-                                # Limpiar Z y otros posibles formatos ISO
-                                date_str = action_data["start_time"].replace("Z", "").split(".")[0]
-                                start_time_val = datetime.fromisoformat(date_str)
-                            except (ValueError, TypeError) as e:
-                                logger.warning(f"Invalid start_time format for action: {action_data['start_time']}, error: {e}")
+        
+        # Obtener contexto del usuario
+        user_context = await get_user_context_for_chat(user_id)
+        
+        # Obtener respuesta estructurada (non-streaming para HTTP)
+        structured = await get_ai_response_with_structured_data(user_id, message, user_context)
+        structured = _sanitize_structured_data(structured)
+        
+        # Guardar progreso del usuario en background para no bloquear la respuesta
+        asyncio.create_task(save_user_progress(user_id, message, structured))
+        
+        # Guardar en cache semántico para futuras consultas similares
+        if not structured.get("is_stream"):
+            await embeddings_service.add_to_semantic_cache(message, structured["response"])
+        
+        # Procesar acciones especiales (ej: agendar grabación)
+        if structured.get("actions"):
+            for action in structured["actions"]:
+                action_type = action.get("type")
+                action_data = action.get("data", {})
+                
+                if action_type == "schedule_class":
+                    logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Agendando clase/evento - {action_data}")
+                    try:
+                        from models.models import AgendaItem, AgendaItemType, AgendaItemStatus
+                        from database.db_enterprise import get_primary_session
+                        db = await get_primary_session()
+                        async with db:
+                            # Mapear datos de la IA a campos de la DB
+                            start_time_val = datetime.utcnow()
+                            if action_data.get("start_time"):
+                                try:
+                                    date_str = action_data["start_time"].replace("Z", "").split(".")[0]
+                                    start_time_val = datetime.fromisoformat(date_str)
+                                except (ValueError, TypeError): pass
 
-                        new_event = AgendaItem(
+                            new_event = AgendaItem(
+                                user_id=user_id,
+                                session_id=str(uuid.uuid4()), # session_id es obligatorio en DB
+                                title=action_data.get("title", "Evento sin título"),
+                                item_type=AgendaItemType.EVENT,
+                                datetime_start=start_time_val,
+                                content=f"Automatización: Grabación={action_data.get('recording', True)}, Recurrente={action_data.get('recurring', 'none')}. Participantes: {', '.join(action_data.get('participants', []))}",
+                                status=AgendaItemStatus.PENDING,
+                                priority="medium"
+                            )
+                            db.add(new_event)
+                            await db.commit()
+                            logger.info(f"✅ Ejecución silenciosa exitosa: {action_type}")
+                    except Exception as e:
+                        logger.error(f"❌ Fallo en ejecución silenciosa ({action_type}): {e}")
+
+                elif action_type == "generate_document":
+                    logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Preparando documento - {action_data}")
+                    try:
+                        from services.document_service import create_document_from_user_message
+                        asyncio.create_task(create_document_from_user_message(
+                            user_message=action_data.get("content", message),
                             user_id=user_id,
-                            session_id=str(uuid.uuid4()), # session_id es obligatorio en DB
-                            title=action_data.get("title", "Evento sin título"),
-                            item_type=AgendaItemType.EVENT,
-                            datetime_start=start_time_val, # Usar campo correcto para eventos
-                            content=f"Automatización: Grabación={action_data.get('recording', True)}, Recurrente={action_data.get('recurring', 'none')}. Participantes: {', '.join(action_data.get('participants', []))}",
-                            status=AgendaItemStatus.PENDING,
-                            priority="medium"
-                        )
-                        db.add(new_event)
-                        await db.commit()
-                        logger.info(f"✅ Ejecución silenciosa exitosa: {action_type}")
-                except Exception as e:
-                    logger.error(f"❌ Fallo en ejecución silenciosa ({action_type}): {e}")
+                            doc_type=action_data.get("format", "pdf")
+                        ))
+                        logger.info(f"✅ Ejecución silenciosa iniciada: {action_type}")
+                    except Exception as e:
+                        logger.error(f"❌ Fallo al iniciar ejecución silenciosa ({action_type}): {e}")
 
-            elif action_type == "generate_document":
-                logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Preparando documento - {action_data}")
-                try:
-                    from services.document_service import create_document_from_user_message
-                    # Lanzar en segundo plano para no bloquear el chat
-                    asyncio.create_task(create_document_from_user_message(
-                        user_message=action_data.get("content", message),
-                        user_id=user_id,
-                        doc_type=action_data.get("format", "pdf")
-                    ))
-                    logger.info(f"✅ Ejecución silenciosa iniciada: {action_type}")
-                except Exception as e:
-                    logger.error(f"❌ Fallo al iniciar ejecución silenciosa ({action_type}): {e}")
-
-    context_info = get_context_info(user_id)
-    
-    return ChatResponse(
-        success=True,
-        response=structured["response"],
-        user_id=user_id,
-        timestamp=datetime.utcnow().isoformat(),
-        context={
-            "usage_percent": round(context_info.get("usage", 0) * 100, 1),
-            "needs_refresh": False,
-            "auto_refreshed": False,
-            "tasks_count": len(user_context.get("tasks_today", [])),
-            "upcoming_tasks_count": len(user_context.get("tasks_upcoming", []))
-        },
-        message_id=f"msg_{datetime.utcnow().timestamp()}",
-        actions=[
-            {"type": "tasks", "data": structured["tasks"]},
-            {"type": "plan", "data": structured["plan"]}
-        ]
-    )
+        context_info = get_context_info(user_id)
+        
+        return ChatResponse(
+            success=True,
+            response=structured["response"],
+            user_id=user_id,
+            timestamp=datetime.utcnow().isoformat(),
+            context={
+                "usage_percent": round(context_info.get("usage", 0) * 100, 1),
+                "needs_refresh": False,
+                "auto_refreshed": False,
+                "tasks_count": len(user_context.get("tasks_today", [])),
+                "upcoming_tasks_count": len(user_context.get("tasks_upcoming", []))
+            },
+            message_id=f"msg_{datetime.utcnow().timestamp()}",
+            actions=[
+                {"type": "tasks", "data": structured["tasks"]},
+                {"type": "plan", "data": structured["plan"]}
+            ]
+        )
         
     except RuntimeError as e:
         if "GROQ_API_KEY" in str(e):
             raise HTTPException(status_code=503, detail="llm_unavailable_missing_groq_api_key")
         raise
     except Exception as e:
-        logger.exception(
-            "unified_chat_message_json_failed",
-            extra={"user_id": str(user.get("user_id") if isinstance(user, dict) else ""), "error": str(e)},
-        )
+        logger.exception("unified_chat_message_failed", extra={"user_id": str(user_id), "error": str(e)})
         raise HTTPException(
             status_code=500,
             detail={
