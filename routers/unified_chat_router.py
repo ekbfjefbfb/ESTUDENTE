@@ -442,9 +442,9 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
             stmt_tasks_today = select(AgendaItem).where(
                 and_(
                     AgendaItem.user_id == user_id,
-                    AgendaItem.item_type == AgendaItemType.TASK,
+                    AgendaItem.item_type == AgendaItemType.TASK.value,
                     AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
-                    AgendaItem.status != AgendaItemStatus.DONE
+                    AgendaItem.status != AgendaItemStatus.DONE.value
                 )
             ).limit(10)
             result = await db.execute(stmt_tasks_today)
@@ -458,10 +458,10 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
             stmt_tasks_upcoming = select(AgendaItem).where(
                 and_(
                     AgendaItem.user_id == user_id,
-                    AgendaItem.item_type == AgendaItemType.TASK,
+                    AgendaItem.item_type == AgendaItemType.TASK.value,
                     AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
                     AgendaItem.due_date < datetime.combine(end_week, datetime.max.time()),
-                    AgendaItem.status != AgendaItemStatus.DONE
+                    AgendaItem.status != AgendaItemStatus.DONE.value
                 )
             ).order_by(AgendaItem.due_date).limit(10)
             result = await db.execute(stmt_tasks_upcoming)
@@ -475,7 +475,7 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
             stmt_points = select(AgendaItem).where(
                 and_(
                     AgendaItem.user_id == user_id,
-                    AgendaItem.item_type == AgendaItemType.KEY_POINT,
+                    AgendaItem.item_type == AgendaItemType.KEY_POINT.value,
                     AgendaItem.created_at >= datetime.combine(today - timedelta(days=7), datetime.min.time())
                 )
             ).limit(5)
@@ -719,8 +719,23 @@ async def unified_chat_message(
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
         
-        # Obtener respuesta estructurada (non-streaming para HTTP)
-        structured = await get_ai_response_with_structured_data(user_id, message, user_context)
+        # Crear un mock de WebSocket para capturar el streaming (HTTP fallback)
+        class MockWebSocket:
+            def __init__(self):
+                self.full_text = ""
+            async def send_text(self, text):
+                data = json.loads(text)
+                if data["type"] == "token":
+                    self.full_text += data["content"]
+            @property
+            def client_state(self):
+                from starlette.websockets import WebSocketState
+                return type('State', (), {'CONNECTED': WebSocketState.CONNECTED})
+                
+        mock_ws = MockWebSocket()
+        
+        # Usar la función de streaming existente
+        structured = await get_ai_response_with_streaming(user_id, message, user_context, mock_ws)
         structured = _sanitize_structured_data(structured)
         
         # Guardar progreso del usuario en background para no bloquear la respuesta
@@ -755,10 +770,10 @@ async def unified_chat_message(
                                 user_id=user_id,
                                 session_id=str(uuid.uuid4()), # session_id es obligatorio en DB
                                 title=action_data.get("title", "Evento sin título"),
-                                item_type=AgendaItemType.EVENT,
+                                item_type=AgendaItemType.EVENT.value,
                                 datetime_start=start_time_val,
                                 content=f"Automatización: Grabación={action_data.get('recording', True)}, Recurrente={action_data.get('recurring', 'none')}. Participantes: {', '.join(action_data.get('participants', []))}",
-                                status=AgendaItemStatus.PENDING,
+                                status=AgendaItemStatus.PENDING.value,
                                 priority="medium"
                             )
                             db.add(new_event)
@@ -873,7 +888,28 @@ async def voice_message_http(
     transcribed = await transcribe_audio_groq(audio_bytes, language=language, audio_format=audio_format)
 
     user_context = await get_user_context_for_chat(user_id)
-    structured = await get_ai_response_with_structured_data(user_id, transcribed, user_context)
+    
+    # Mock WebSocket para capturar respuesta
+    class MockWebSocket:
+        def __init__(self):
+            self.full_text = ""
+        async def send_text(self, text):
+            try:
+                data = json.loads(text)
+                if data["type"] == "token":
+                    self.full_text += data["content"]
+            except: pass
+        async def send_json(self, data):
+            if data.get("type") == "token":
+                self.full_text += data.get("content", "")
+        @property
+        def client_state(self):
+            from starlette.websockets import WebSocketState
+            return type('State', (), {'CONNECTED': WebSocketState.CONNECTED})
+            
+    mock_ws = MockWebSocket()
+    structured = await get_ai_response_with_streaming(user_id, transcribed, user_context, mock_ws)
+    
     response_text = structured.get("response") if isinstance(structured, dict) else str(structured)
 
     audio_uri = await text_to_speech_groq(response_text, voice=voice, language=language)
@@ -920,12 +956,32 @@ async def unified_chat_message_json(
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
         
-        # Obtener respuesta estructurada
-        structured = await get_ai_response_with_structured_data(user_id, request.message, user_context)
+        # Crear un mock de WebSocket para capturar el streaming (HTTP fallback)
+        class MockWebSocket:
+            def __init__(self):
+                self.full_text = ""
+            async def send_text(self, text):
+                try:
+                    data = json.loads(text)
+                    if data["type"] == "token":
+                        self.full_text += data["content"]
+                except: pass
+            async def send_json(self, data):
+                if data.get("type") == "token":
+                    self.full_text += data.get("content", "")
+            @property
+            def client_state(self):
+                from starlette.websockets import WebSocketState
+                return type('State', (), {'CONNECTED': WebSocketState.CONNECTED})
+                
+        mock_ws = MockWebSocket()
+        
+        # Usar la función de streaming existente
+        structured = await get_ai_response_with_streaming(user_id, request.message, user_context, mock_ws)
         structured = _sanitize_structured_data(structured)
         
         # Guardar progreso
-        await save_user_progress(user_id, request.message, structured)
+        asyncio.create_task(save_user_progress(user_id, request.message, structured))
         
         # Guardar en cache semántico para futuras consultas similares
         if not structured.get("is_stream"):
