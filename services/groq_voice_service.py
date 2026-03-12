@@ -179,9 +179,10 @@ def _get_default_voice() -> str:
 
 
 def _get_tts_format() -> str:
-    fmt = os.getenv("GROQ_TTS_RESPONSE_FORMAT", "mp3").strip().lower()
-    if fmt not in {"mp3", "wav", "opus"}:
-        return "mp3"
+    # Groq TTS solo acepta 'wav' según error 400
+    fmt = os.getenv("GROQ_TTS_RESPONSE_FORMAT", "wav").strip().lower()
+    if fmt not in {"wav"}:  # Solo wav es soportado por ahora
+        return "wav"
     return fmt
 
 

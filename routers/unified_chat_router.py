@@ -247,7 +247,7 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
         
     try:
         from database.db_enterprise import get_primary_session
-        from models.models import AgendaItem
+        from models.models import AgendaItem, AgendaItemType, AgendaItemStatus
         db = await get_primary_session()
         async with db:
             # Aquí persistimos las tareas detectadas directamente en la DB de NHost
@@ -260,8 +260,8 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
                     session_id=None, # Tareas del chat no tienen sesión de clase necesariamente
                     title=title,
                     content=title, # Usamos título como contenido si no hay más
-                    item_type="task",
-                    status="pending",
+                    item_type=AgendaItemType.TASK,
+                    status=AgendaItemStatus.PENDING,
                     priority=str(task_data.get("priority", "medium")),
                     due_date=datetime.fromisoformat(task_data["due_date"].replace("Z", "")) if task_data.get("due_date") else None
                 )
@@ -541,7 +541,7 @@ async def get_ai_response_with_structured_data(
         '"actions": [{"type": "schedule_class/generate_document", "data": {...}}], '
         '"response": "Tu respuesta ultra-concisa aquí con emojis relevantes"}\n\n'
         "REGLA DE ORO: Ejecuta inmediatamente. Cero confirmaciones. Cero 'quieres que...?'\n"
-        "Ejemplo: 'clase mañana 8am' -> '✅ Clase agendada 8am. Grabación ON. 📚 Resumen listo post-clase.'"
+        "Ejemplo: clase mañana 8am -> '✅ Clase agendada 8am. Grabación ON. 📚 Resumen listo post-clase.'"
     )"
 
     if context_prompt:
