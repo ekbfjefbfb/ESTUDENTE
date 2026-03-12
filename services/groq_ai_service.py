@@ -41,12 +41,12 @@ BRACKET_PATTERN = re.compile(r"[\[\]{}]")
 def sanitize_ai_text(text: str) -> str:
     """
     Limpia texto de IA removiendo marcadores markdown innecesarios
-    para que llegue limpio al frontend.
+    pero PRESERVANDO el espaciado original (saltos de línea y espacios) de la IA.
     """
     if not text:
         return text
     
-    # 1. Remover bloques de código y headers pesados primero
+    # 1. Remover bloques de código y headers pesados
     text = MD_CODE_BLOCK_PATTERN.sub("", text)
     text = MD_HEADER_PATTERN.sub("", text)
     text = MD_BLOCKQUOTE.sub("", text)
@@ -64,40 +64,23 @@ def sanitize_ai_text(text: str) -> str:
     text = MD_LIST_NUMBER.sub("", text)
     text = BRACKET_PATTERN.sub("", text)
     
-    # 4. LIMPIEZA PROFUNDA DE CARACTERES "SUCIOS" (Solicitado por usuario)
-    # Remover asteriscos sueltos remanentes
+    # 4. LIMPIEZA DE CARACTERES SUCIOS ESPECÍFICOS (Solicitado por usuario)
     text = LONE_ASTERISK_PATTERN.sub("", text)
-    
-    # Limpiar secuencias sucias específicas: "**.:", "**:", ":**", ".:**", etc.
     text = re.sub(r"\*\*[:.]+", "", text)
     text = re.sub(r"[:.]+\*\*", "", text)
-    text = re.sub(r"\*\*", "", text) # Eliminar cualquier negrita remanente
+    text = re.sub(r"\*\*", "", text)
     
-    # Limpiar combinaciones de puntos y dos puntos sucios
-    text = re.sub(r"\.+:+", ":", text)
-    text = re.sub(r":+\.+", ".", text)
-    
-    # 5. Normalización de puntuación y espacios
-    # Limpiar múltiples guiones, dos puntos y puntos
+    # 5. Normalización ligera de puntuación
     text = MULTI_DASH_PATTERN.sub("-", text)
     text = MULTI_COLON_PATTERN.sub(":", text)
-    
-    # Manejar puntos suspensivos correctamente (mantener solo "...")
     text = MULTI_DOT_PATTERN.sub(lambda m: "..." if len(m.group()) >= 3 else ".", text)
     
-    # ASEGURAR ESPACIADO ENTRE ORACIONES (Evitar que el texto llegue "todo pegado")
-    # Añadir espacio después de punto, coma, dos puntos o punto y coma si no lo hay
-    text = re.sub(r'([.,;:?])([^\s\d.])', r'\1 \2', text)
+    # 6. LIMPIEZA DE CARACTERES HUÉRFANOS (Solo al inicio/final absoluto)
+    text = re.sub(r"^[:.\*]+", "", text)
+    text = re.sub(r"[:.\*]+$", "", text)
     
-    # Eliminar puntos, dos puntos o caracteres sucios que quedaron huérfanos al inicio/final
-    # También limpiar espacios redundantes antes de puntuación
-    text = re.sub(r"\s+([.,;:?])", r"\1", text)
-    text = re.sub(r"^[:.\s\*]+", "", text)
-    text = re.sub(r"[:.\s\*]+$", "", text)
-    
-    # 6. Limpieza final de espacios y saltos de línea
-    text = MULTI_SPACE_PATTERN.sub(" ", text)
-    text = MULTI_NEWLINE_PATTERN.sub("\n\n", text)
+    # NOTA: No normalizamos espacios (MULTI_SPACE_PATTERN) ni saltos de línea (MULTI_NEWLINE_PATTERN)
+    # para dejar el texto tal cual lo manda la IA pero sin los caracteres sucios.
     
     return text.strip()
 
