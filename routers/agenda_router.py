@@ -1004,6 +1004,9 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                         user=user_id,
                         fast_reasoning=True,
                     )
+                    # Sanitizar respuesta
+                    from services.groq_ai_service import sanitize_ai_text
+                    answer = sanitize_ai_text(answer)
 
                     await websocket.send_text(
                         json.dumps({"event": "assistant_answer", "question": question, "answer": answer})
@@ -1149,6 +1152,9 @@ async def get_session_summary(
             fast_reasoning=False,
             max_tokens=2000
         )
+        # Sanitizar resumen
+        from services.groq_ai_service import sanitize_ai_text
+        summary = sanitize_ai_text(summary)
         
         return {
             "success": True,

@@ -5,6 +5,7 @@ import httpx
 import asyncio
 import random
 from services.gpt_service import chat_with_ai
+from services.groq_ai_service import sanitize_ai_text
 # from services.cache_service_enterprise import CacheService  # TODO: Integrar cache enterprise
 from aiolimiter import AsyncLimiter
 
@@ -47,6 +48,7 @@ async def summarize_chunks(chunks: list, user_id: str) -> str:
                 [{"role": "system", "content": f"Resume esta información de internet:\n{chunk}"}],
                 user=str(user_id)
             )
+            summary = sanitize_ai_text(summary)
             summaries.append(summary.strip())
         except Exception as e:
             logger.warning("Error resumiendo chunk", extra={"user_id": user_id, "error": str(e)})
@@ -57,9 +59,10 @@ async def summarize_chunks(chunks: list, user_id: str) -> str:
             [{"role": "system", "content": f"Combina y sintetiza estos resúmenes:\n{final_summary}"}],
             user=str(user_id)
         )
+        final_summary = sanitize_ai_text(final_summary)
     except Exception as e:
         logger.warning("Error generando resumen final", extra={"user_id": user_id, "error": str(e)})
-    return final_summary.strip()
+    return sanitize_ai_text(final_summary.strip())
 
 # ---------------- Función principal ----------------
 async def deep_search_web(query: str, user_id: str, num_results_per_page: int = 5, pages: int = 2) -> str:

@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from services.groq_ai_service import chat_with_ai
+from services.groq_ai_service import chat_with_ai, sanitize_ai_text
 from services.groq_voice_service import transcribe_audio_groq
 
 
@@ -38,6 +38,9 @@ class GroqClient:
 
         if not isinstance(content, str):
             raise RuntimeError("LLM returned non-text content")
+
+        # Sanitizar antes de parsear JSON
+        content = sanitize_ai_text(content)
 
         try:
             return json.loads(content)

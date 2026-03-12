@@ -1054,6 +1054,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                     user=user_id,
                     fast_reasoning=message_data.get("fast_reasoning", True),
                 )
+                # Sanitizar respuesta para frontend limpio
+                response = sanitize_ai_text(response)
             except Exception as e:
                 logger.exception(f"WebSocket LLM error user_id={user_id}: {e}")
                 await _ws_send_json(

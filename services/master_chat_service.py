@@ -335,6 +335,7 @@ class MasterChatServiceEnterprise:
                     user=user_id,
                     fast_reasoning=True
                 )
+                fallback = sanitize_ai_text(fallback)
                 
                 return {
                     "response": fallback,
@@ -625,6 +626,7 @@ class MasterChatServiceEnterprise:
                 user=user_id,
                 friendly=True
             )
+            result = sanitize_ai_text(result)
             logger.info("✅ Respuesta de chat generada")
             return result
         except Exception as e:
@@ -657,6 +659,7 @@ class MasterChatServiceEnterprise:
                 messages=[{"role": "user", "content": detection_prompt}],
                 model=AI_MODEL
             )
+            ai_response = sanitize_ai_text(ai_response)
             
             # Parsear respuesta de la IA
             intents = [intent.strip() for intent in ai_response.split(",")]
@@ -997,6 +1000,7 @@ class MasterChatServiceEnterprise:
                 messages=[{"role": "user", "content": prompt}],
                 fast_reasoning=True
             )
+            translation = sanitize_ai_text(translation)
             
             result = {
                 "original": text_to_translate,
@@ -1025,6 +1029,7 @@ class MasterChatServiceEnterprise:
                 messages=[{"role": "user", "content": prompt}],
                 fast_reasoning=True
             )
+            summary = sanitize_ai_text(summary)
             
             result = {
                 "original_length": len(text_to_summarize),
@@ -1050,6 +1055,7 @@ class MasterChatServiceEnterprise:
                 messages=[{"role": "user", "content": prompt}],
                 fast_reasoning=True
             )
+            code = sanitize_ai_text(code)
             
             result = {
                 "language": language,
@@ -1097,6 +1103,7 @@ Responde con una lista de diferencias clave."""
                 messages=[{"role": "user", "content": prompt}],
                 fast_reasoning=True
             )
+            comparison = sanitize_ai_text(comparison)
             
             result = {
                 "doc1_length": len(text1),
