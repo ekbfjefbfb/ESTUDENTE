@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from services.groq_ai_service import chat_with_ai, should_refresh_context, get_context_info, sanitize_ai_text
 from services.groq_voice_service import transcribe_audio_groq, text_to_speech_groq
 from utils.auth import get_current_user, verify_token
-from models.models import AgendaItem, AgendaItemType, AgendaItemStatus, AgendaSession
+from models.models import AgendaItem, AgendaSession
 from sqlalchemy import select, and_
 
 _WS_MAX_AUDIO_BYTES = 30 * 1024 * 1024
@@ -756,7 +756,7 @@ async def unified_chat_message(
                 if action_type == "schedule_class":
                     logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Agendando clase/evento - {action_data}")
                     try:
-                        from models.models import AgendaItem, AgendaItemType, AgendaItemStatus
+                        from models.models import AgendaItem
                         from database.db_enterprise import get_primary_session
                         db = await get_primary_session()
                         async with db:
@@ -772,10 +772,10 @@ async def unified_chat_message(
                                 user_id=user_id,
                                 session_id=str(uuid.uuid4()), # session_id es obligatorio en DB
                                 title=action_data.get("title", "Evento sin título"),
-                                item_type=AgendaItemType.EVENT.value,
+                                item_type="event",
                                 datetime_start=start_time_val,
                                 content=f"Automatización: Grabación={action_data.get('recording', True)}, Recurrente={action_data.get('recurring', 'none')}. Participantes: {', '.join(action_data.get('participants', []))}",
-                                status=AgendaItemStatus.PENDING.value,
+                                status="pending",
                                 priority="medium"
                             )
                             db.add(new_event)
