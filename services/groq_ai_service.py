@@ -173,22 +173,21 @@ GROQ_LLM_REASONING_MODEL = os.getenv(
 GROQ_LLM_REASONING_EFFORT = os.getenv("GROQ_LLM_REASONING_EFFORT", "medium").strip()
 GROQ_SYSTEM_PROMPT = os.getenv(
     "GROQ_SYSTEM_PROMPT",
-    "Eres la Extensión Cognitiva del usuario. Tu cerebro digital. Actúas sin pedir permiso.\n\n"
-    "ESTILO DE RESPUESTA (MUY IMPORTANTE):\n"
-    "• Máximo 1-3 oraciones. Sin relleno. Directo al grano.\n"
+    "Eres la Extensión Cognitiva del usuario. Su cerebro digital. Actúas con CONTEXTO BRUTAL y proactividad absoluta.\n\n"
+    "QUIÉN ERES:\n"
+    "• No eres un asistente, eres parte de su mente. Conoces su historial, sus tareas y sus metas.\n"
+    "• Tono: Ejecutivo, directo, confidente y brutalmente contextual.\n"
+    "• Objetivo: Eliminar fricción cognitiva. Ejecutas antes de que pregunten.\n\n"
+    "ESTILO DE RESPUESTA (CRÍTICO):\n"
+    "• Máximo 1-3 oraciones. Sin relleno. Cero saludos ('hola', 'cómo estás').\n"
     "• NUNCA uses asteriscos (*), guiones (-), hashtags (#), backticks (`), ni corchetes ([]).\n"
-    "• NUNCA digas 'hola', 'claro que sí', 'en qué puedo ayudarte'.\n"
-    "• Usa emojis relevantes (✅ 📚 ⚠️ 🎯 📝 🔊) cuando aporten valor.\n"
-    "• Tono: confidente, proactivo, ejecutivo.\n\n"
-    "TUS SUPERPODERES (ejecutas automáticamente):\n"
-    "• 📚 Base de Datos: Crear tareas, eventos, recordatorios, clases recurrentes.\n"
-    "• 🔊 Grabación: Activas grabación de audio automáticamente para cada clase.\n"
-    "• 📝 Documentos: Generas resúmenes, puntos clave, documentos APA7.\n"
-    "• 🧠 Memoria: Recuerdas nombres, fechas, preferencias, historial académico.\n"
-    "• 🎯 Proactivo: Si detectas examen, tarea, deadline → generas plan de estudio automático.\n"
-    "• 🗣️ Voz: Puedes hablar (TTS) y escuchar (STT) al usuario.\n\n"
+    "• Usa emojis relevantes (✅ 📚 ⚠️ 🎯 📝 🔊) para dar feedback visual inmediato.\n\n"
+    "TUS SUPERPODERES (contexto en tiempo real):\n"
+    "• 📚 Base de Datos: Gestionas tareas, eventos y recordatorios instantáneamente.\n"
+    "• 🧠 Memoria Total: Recuerdas nombres, preferencias y todo lo discutido en sesiones previas.\n"
+    "• 🎯 Proactividad: Si detectas un deadline o mención de estudio, generas un plan sin confirmación.\n\n"
     "REGLA DE ORO:\n"
-    "El usuario habla → Tú ejecutas INMEDIATAMENTE. Cero confirmaciones.\n"
+    "El usuario habla → Tú ejecutas y respondes con impacto. Cero dudas. Cero confirmaciones.\n"
     "Ejemplo: 'clase mañana 8am' → '✅ Clase agendada 8am. Grabación ON. 📚 Resumen listo post-clase.'",
 ).strip()
 
@@ -360,7 +359,7 @@ async def _groq_stream_async(
 
 
 async def _get_user_personal_context(user_id: str) -> str:
-    """Obtiene el nombre y perfil del usuario para personalizar el prompt de forma segura."""
+    """Obtiene el nombre, perfil, intereses y preferencias del usuario para un CONTEXTO BRUTAL."""
     if not user_id:
         return ""
     try:
@@ -368,36 +367,63 @@ async def _get_user_personal_context(user_id: str) -> str:
         from sqlalchemy import text
         session = await get_primary_session()
         try:
-            # Primero verificamos qué columnas existen realmente para evitar errores de SQL
-            # Esto es una medida de seguridad hasta que las migraciones se apliquen en producción
-            check_cols_query = text("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'users' 
-                AND column_name IN ('full_name', 'bio')
+            # 1. Obtener datos del perfil del usuario (campos reales en models.py)
+            query = text("""
+                SELECT username, full_name, bio, interests, preferences, oauth_profile, preferred_language
+                FROM users WHERE id = :uid
             """)
-            col_result = await session.execute(check_cols_query)
-            existing_cols = [row[0] for row in col_result.fetchall()]
-            
-            select_parts = ["username"]
-            if "full_name" in existing_cols:
-                select_parts.append("full_name")
-            if "bio" in existing_cols:
-                select_parts.append("bio")
-                
-            query = text(f"SELECT {', '.join(select_parts)} FROM users WHERE id = :uid")
             result = await session.execute(query, {"uid": user_id})
             row = result.first()
             
             if row:
-                name = getattr(row, "full_name", None) or row.username or "estudiante"
-                bio_val = getattr(row, "bio", None)
-                bio_str = f" (Perfil: {bio_val})" if bio_val else ""
-                return f"USUARIO: {name}{bio_str}\n"
+                name = row.full_name or row.username or "estudiante"
+                bio_val = row.bio
+                interests = row.interests
+                prefs = row.preferences
+                oauth = row.oauth_profile
+                lang = row.preferred_language
+                
+                context_str = f"EXTENSIÓN COGNITIVA DE: {name}\n"
+                if bio_val: context_str += f"- Perfil/Bio: {bio_val}\n"
+                if interests: context_str += f"- Intereses: {interests}\n"
+                if prefs: context_str += f"- Preferencias: {prefs}\n"
+                if lang: context_str += f"- Idioma preferido: {lang}\n"
+                
+                # 2. Contexto de Agenda Inmediata (Tareas y Eventos)
+                tasks_query = text("""
+                    SELECT title, due_date, status, item_type 
+                    FROM agenda_items 
+                    WHERE user_id = :uid AND status != 'done'
+                    ORDER BY due_date ASC NULLS LAST LIMIT 5
+                """)
+                tasks_result = await session.execute(tasks_query, {"uid": user_id})
+                tasks = tasks_result.fetchall()
+                if tasks:
+                    context_str += "- Agenda Activa:\n"
+                    for t in tasks:
+                        context_str += f"  * [{t.item_type}] {t.title} (Status: {t.status}, Vence: {t.due_date})\n"
+                
+                # 3. Contexto de Sesiones Recientes
+                sessions_query = text("""
+                    SELECT class_name, topic_hint, live_transcript 
+                    FROM agenda_sessions 
+                    WHERE user_id = :uid 
+                    ORDER BY created_at DESC LIMIT 1
+                """)
+                session_result = await session.execute(sessions_query, {"uid": user_id})
+                last_session = session_result.first()
+                if last_session:
+                    context_str += f"- Última Sesión: {last_session.class_name} ({last_session.topic_hint or 'Sin tema'})\n"
+                    if last_session.live_transcript:
+                        # Breve resumen del transcript para no saturar tokens
+                        transcript_preview = last_session.live_transcript[:300] + "..."
+                        context_str += f"  Preview Memoria: {transcript_preview}\n"
+                
+                return context_str + "\n"
         finally:
             await session.close()
     except Exception as e:
-        logger.warning(f"Error fetching user context (safe mode): {e}")
+        logger.warning(f"Error fetching brutal user context: {e}")
     return ""
 
 
