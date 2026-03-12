@@ -431,4 +431,5 @@ async def chat_with_ai(
     except Exception as e:
         raise RuntimeError("Unexpected Groq response") from e
 
-    return (content or "").strip()
+    # Sanitizar texto para frontend limpio
+    return sanitize_ai_text(content or "")
