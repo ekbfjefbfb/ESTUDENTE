@@ -13,7 +13,7 @@ import json_log_formatter
 from utils.safe_metrics import Counter, Histogram
 
 # Importar servicios empresariales optimizados
-from services.gpt_service import chat_with_ai
+from services.groq_ai_service import chat_with_ai, sanitize_ai_text
 from services.stability_service import StabilityService
 from services.image_edit_service import ImageEditService
 from services.voice_service import VoiceEngineEnterprise

@@ -259,7 +259,6 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
         db = await get_primary_session()
         async with db:
             # Asegurar que existe una sesión activa para este usuario para vincular las tareas
-            # El chat unificado necesita una sesión 'contenedor' para cumplir con la restricción NOT NULL de session_id
             stmt_session = select(AgendaSession).where(
                 and_(
                     AgendaSession.user_id == user_id,
@@ -277,21 +276,19 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
                     live_transcript="Sesión automática para tareas de chat"
                 )
                 db.add(active_session)
-                await db.flush() # Obtener ID sin commitear aún
+                await db.flush()
 
-            # Aquí persistimos las tareas detectadas directamente en la DB
+            # Persistir tareas
             for task_data in structured_data.get("tasks", []):
                 title = (task_data.get("title") or "").strip()
-                if not title:
-                    continue
+                if not title: continue
                 
                 due_date_val = None
                 if task_data.get("due_date"):
                     try:
                         date_str = task_data["due_date"].replace("Z", "").split("T")[0]
                         due_date_val = datetime.fromisoformat(date_str)
-                    except (ValueError, TypeError):
-                        pass
+                    except (ValueError, TypeError): pass
 
                 new_task = AgendaItem(
                     user_id=user_id,
@@ -307,7 +304,7 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
             await db.commit()
             logger.info(f"✅ Progress and tasks persisted for user {user_id}")
     except Exception as e:
-        logger.error(f"❌ Error persisting user progress to DB: {e}")
+        logger.error(f"❌ Error persisting user progress: {e}")
 
 
 @router.get("/progress")
@@ -742,8 +739,17 @@ async def unified_chat_message(
 
             elif action_type == "generate_document":
                 logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Preparando documento - {action_data}")
-                # Aquí se dispararía la lógica de generación de PDF/APA7
-                pass
+                try:
+                    from services.document_service import create_document_from_user_message
+                    # Lanzar en segundo plano para no bloquear el chat
+                    asyncio.create_task(create_document_from_user_message(
+                        user_message=action_data.get("content", message),
+                        user_id=user_id,
+                        doc_type=action_data.get("format", "pdf")
+                    ))
+                    logger.info(f"✅ Ejecución silenciosa iniciada: {action_type}")
+                except Exception as e:
+                    logger.error(f"❌ Fallo al iniciar ejecución silenciosa ({action_type}): {e}")
 
     context_info = get_context_info(user_id)
     
