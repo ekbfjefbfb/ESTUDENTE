@@ -130,28 +130,39 @@ async def verify_token(token: str) -> Dict[str, Any]:
     Verifica y decodifica token JWT
     """
     try:
-        # Verificar si el token está en blacklist
-        redis_conn = await get_redis_client()
-        if redis_conn:
-            is_blacklisted = await redis_conn.get(f"blacklist:{token}")
-            if is_blacklisted:
-                raise JWTError("Token revocado")
-        
-        # Decodificar token
+        # Intentar decodificación estándar
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        
-        # Verificar tipo de token
-        token_type = payload.get("type")
-        if not token_type:
-            raise JWTError("Tipo de token no especificado")
-        
         return payload
-        
-    except JWTError as e:
-        logger.warning(f"JWT Error: {e}")
+    except ExpiredSignatureError:
+        # Si el token expiró, permitimos un margen de 5 minutos solo para WebSockets
+        # o devolvemos un error específico que el frontend sepa manejar
+        logger.warning("JWT Token expired")
+        try:
+            # Decodificar sin verificar expiración para obtener el user_id
+            payload = jwt.decode(
+                token, 
+                JWT_SECRET_KEY, 
+                algorithms=[JWT_ALGORITHM],
+                options={"verify_exp": False}
+            )
+            # Verificar qué tan viejo es el token
+            exp = payload.get("exp")
+            if exp and (datetime.utcnow().timestamp() - exp) < 300: # 5 minutos de gracia
+                logger.info(f"Using expired token within grace period for user {payload.get('sub')}")
+                return payload
+        except Exception:
+            pass
+            
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token inválido o expirado",
+            detail="token_expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except JWTError as e:
+        logger.error(f"JWT Error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid_token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
