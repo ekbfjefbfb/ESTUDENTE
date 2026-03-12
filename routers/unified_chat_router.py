@@ -545,17 +545,21 @@ def build_context_prompt(user_context: Dict[str, Any]) -> str:
 # ENDPOINTS
 # =========================
 
-async def get_ai_response_with_structured_data(
+async def get_ai_response_with_streaming(
     user_id: str,
     message: str,
-    user_context: Dict[str, Any]
+    user_context: Dict[str, Any],
+    websocket: WebSocket
 ) -> Dict[str, Any]:
-    """Obtiene respuesta de IA con datos estructurados (tasks, plan)"""
-    from services.groq_ai_service import chat_with_ai
+    """
+    Streaming REAL: Envía tokens uno por uno al WebSocket
+    Al finalizar, parsea y retorna structured data
+    """
+    from services.groq_ai_service import chat_with_ai, sanitize_ai_text
     
     context_prompt = build_context_prompt(user_context)
     
-    # Prompt ultra-conciso para extensión cognitiva
+    # Prompt que fuerza JSON estructurado al final
     system_content = (
         "Eres la Extensión Cognitiva del usuario. Respuestas de 1-3 oraciones máximo.\n\n"
         "ESTILO:\n"
@@ -569,13 +573,14 @@ async def get_ai_response_with_structured_data(
         "• Activar grabaciones de audio automáticamente.\n"
         "• Generar documentos APA7, resúmenes, puntos clave.\n"
         "• Recordar TODO: nombres, fechas, preferencias, historial académico.\n\n"
-        "FORMATO DE RESPUESTA:\n"
-        'Siempre incluye este JSON estructurado:\n'
+        "FORMATO DE RESPUESTA (MUY IMPORTANTE):\n"
+        'Primero: tu respuesta en texto plano (1-3 oraciones).\n'
+        'Luego, al FINAL, incluye este JSON estructurado en una línea separada:\n'
         '{"tasks": [{"title": "...", "due_date": "YYYY-MM-DD", "priority": "high/medium/low"}], '
         '"plan": [{"step": "...", "duration": "..."}], '
         '"actions": [{"type": "schedule_class/generate_document", "data": {...}}], '
-        '"response": "Tu respuesta ultra-concisa aquí con emojis relevantes"}\n\n'
-        "REGLA DE ORO: Ejecuta inmediatamente. Cero confirmaciones. Cero 'quieres que...?'\n"
+        '"response": "tu respuesta aquí"}\n\n'
+        "REGLA DE ORO: Ejecuta inmediatamente. Cero confirmaciones.\n"
         "Ejemplo: clase mañana 8am -> '✅ Clase agendada 8am. Grabación ON. 📚 Resumen listo post-clase.'"
     )
 
@@ -587,39 +592,94 @@ async def get_ai_response_with_structured_data(
         {"role": "user", "content": message}
     ]
     
-    # Obtener respuesta de IA
-    ai_response = await chat_with_ai(
-        messages=messages,
-        user=user_id,
-        fast_reasoning=True
-    )
+    # Enviar mensaje de inicio de stream
+    await _ws_send_json(websocket, {
+        "type": "stream_start",
+        "message_id": f"stream_{datetime.utcnow().timestamp()}",
+        "ts": _ws_now_iso()
+    })
     
-    # Intentar parsear como JSON estructurado
+    # Acumulador de texto completo
+    full_text = ""
+    buffer = ""
+    
+    try:
+        # Obtener el stream de la IA
+        stream_generator = await chat_with_ai(
+            messages=messages,
+            user=user_id,
+            fast_reasoning=True,
+            stream=True  # ¡Streaming real!
+        )
+        
+        # Iterar sobre cada chunk del stream
+        async for chunk in stream_generator:
+            if chunk:
+                # Sanitizar el chunk
+                sanitized = sanitize_ai_text(chunk)
+                if sanitized:
+                    full_text += sanitized
+                    buffer += sanitized
+                    
+                    # Enviar tokens en grupos pequeños para eficiencia
+                    # pero lo suficientemente rápido para fluidez
+                    if len(buffer) >= 3 or "\n" in buffer:  # Enviar cada ~3 chars o en newline
+                        await _ws_send_json(websocket, {
+                            "type": "token",
+                            "content": buffer,
+                            "ts": _ws_now_iso()
+                        })
+                        buffer = ""
+        
+        # Enviar cualquier contenido restante en el buffer
+        if buffer:
+            await _ws_send_json(websocket, {
+                "type": "token",
+                "content": buffer,
+                "ts": _ws_now_iso()
+            })
+        
+        # Enviar señal de fin de stream
+        await _ws_send_json(websocket, {
+            "type": "stream_end",
+            "ts": _ws_now_iso()
+        })
+        
+    except Exception as e:
+        logger.error(f"Streaming error: {e}")
+        await _ws_send_json(websocket, {
+            "type": "error",
+            "code": "STREAM_ERROR",
+            "message": str(e),
+            "ts": _ws_now_iso()
+        })
+        raise
+    
+    # Parsear structured data del texto completo
     structured_data = {
         "tasks": [],
         "plan": [],
-        "response": ai_response,
+        "actions": [],
+        "response": full_text,
         "is_stream": False
     }
     
-    # Si ai_response es un generador (streaming), retornamos un objeto especial
-    if hasattr(ai_response, "__aiter__"):
-        return {"response": ai_response, "is_stream": True}
-    
-    # Buscar JSON en la respuesta
-    import re
-    json_match = re.search(r'\{[\s\S]*\}', ai_response)
-    if json_match:
-        try:
-            import json
+    # Buscar JSON en la respuesta completa
+    try:
+        # Buscar patrón JSON al final del texto
+        json_match = re.search(r'\{[\s\S]*"tasks"[\s\S]*"plan"[\s\S]*"response"[\s\S]*\}', full_text)
+        if json_match:
             parsed = json.loads(json_match.group())
             if isinstance(parsed, dict):
                 structured_data["tasks"] = parsed.get("tasks", [])
                 structured_data["plan"] = parsed.get("plan", [])
                 structured_data["actions"] = parsed.get("actions", [])
-                structured_data["response"] = parsed.get("response", ai_response)
-        except:
-            pass  # Si falla el parseo, usar respuesta original
+                # Usar el response del JSON si existe, sino usar el texto completo
+                structured_data["response"] = parsed.get("response", full_text)
+    except Exception as e:
+        logger.warning(f"Failed to parse structured data from stream: {e}")
+        # Si falla el parseo, usar respuesta completa como texto plano
+        structured_data["response"] = full_text
     
     return structured_data
 
@@ -651,45 +711,12 @@ async def unified_chat_message(
                     "usage_percent": round(context_info.get("usage", 0) * 100, 1),
                     "cache_hit": True
                 },
-                message_id=f"msg_cached_{datetime.utcnow().timestamp()}"
+                message_id=f"msg_{datetime.utcnow().timestamp()}",
+                actions=[
+                    {"type": "tasks", "data": structured["tasks"]},
+                    {"type": "plan", "data": structured["plan"]}
+                ]
             )
-        
-        # Obtener contexto del usuario
-        user_context = await get_user_context_for_chat(user_id)
-        
-    # DEBUG: Verificar que no usamos streaming
-    logger.info(f"Chat request: stream={stream}, user={user_id}")
-    
-    # Manejar streaming si es solicitado
-    if stream:
-        # TODO: Implementar streaming real con EventSource si el frontend lo soporta.
-        # Por ahora, simulamos respuesta completa sanitizada para estabilidad.
-        structured = await get_ai_response_with_structured_data(user_id, message, user_context)
-        return ChatResponse(
-            success=True,
-            response=structured["response"],
-            user_id=user_id,
-            timestamp=datetime.utcnow().isoformat(),
-            context={
-                "usage_percent": 0,
-                "needs_refresh": False,
-                "auto_refreshed": False,
-                "stream_mode": True,
-                "note": "Modo stream emulado para estabilidad"
-            },
-            message_id=f"msg_{datetime.utcnow().timestamp()}",
-            actions=[
-                {"type": "tasks", "data": structured["tasks"]},
-                {"type": "plan", "data": structured["plan"]}
-            ]
-        )
-
-    # Obtener respuesta estructurada (no stream)
-    structured = await get_ai_response_with_structured_data(user_id, message, user_context)
-    structured = _sanitize_structured_data(structured)
-    
-    # Guardar progreso del usuario
-    await save_user_progress(user_id, message, structured)
     
     # Guardar en cache semántico para futuras consultas similares
     if not structured.get("is_stream"):
@@ -1100,16 +1127,17 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             messages = [{"role": "user", "content": message_data.get("message", "")}]
             needs_refresh = should_refresh_context(user_id, messages)
 
+            # ========== STREAMING REAL ==========
+            # Enviar tokens uno por uno y al final parsear structured data
             try:
-                response = await chat_with_ai(
-                    messages=messages,
-                    user=user_id,
-                    fast_reasoning=message_data.get("fast_reasoning", True),
+                structured = await get_ai_response_with_streaming(
+                    user_id, 
+                    message_data.get("message", ""), 
+                    await get_user_context_for_chat(user_id),
+                    websocket
                 )
-                # Sanitizar respuesta para frontend limpio
-                response = sanitize_ai_text(response)
             except Exception as e:
-                logger.exception(f"WebSocket LLM error user_id={user_id}: {e}")
+                logger.exception(f"WebSocket streaming error user_id={user_id}: {e}")
                 await _ws_send_json(
                     websocket,
                     {
@@ -1121,19 +1149,32 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 )
                 continue
 
+            # Sanitizar respuesta final
+            final_response = sanitize_ai_text(structured.get("response", ""))
+            
+            # Enviar respuesta final completa con metadata
             await _ws_send_json(
                 websocket,
                 {
+                    "type": "complete",
                     "success": True,
-                    "response": response,
+                    "response": final_response,
                     "message_id": f"ws_{datetime.utcnow().timestamp()}",
                     "context": {
                         "needs_refresh": needs_refresh,
                         "auto_refreshed": needs_refresh,
                     },
+                    "structured": {
+                        "tasks": structured.get("tasks", []),
+                        "plan": structured.get("plan", []),
+                        "actions": structured.get("actions", [])
+                    },
                     "timestamp": datetime.utcnow().isoformat(),
                 },
             )
+            
+            # Guardar progreso en background (no bloquear)
+            asyncio.create_task(save_user_progress(user_id, message_data.get("message", ""), structured))
 
     except json.JSONDecodeError as e:
         logger.warning(f"WebSocket JSON decode error for user_id={user_id}: {e}")
