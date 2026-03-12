@@ -404,7 +404,7 @@ async def append_audio(
                         AgendaItem.session_id == session_id,
                         AgendaItem.user_id == user_id,
                         AgendaItem.source == "ai",
-                        AgendaItem.item_type.in_([AgendaItemType.SUMMARY, AgendaItemType.KEY_POINT, AgendaItemType.TASK]),
+                        AgendaItem.item_type.in_(["summary", "key_point", "task"]),
                     )
                 )
             )
@@ -418,8 +418,8 @@ async def append_audio(
                     AgendaItem(
                         session_id=session_id,
                         user_id=user_id,
-                        item_type=AgendaItemType.SUMMARY,
-                        status=AgendaItemStatus.SUGGESTED,
+                        item_type="summary",
+                        status="confirmed",
                         title=None,
                         content=main_text,
                         order_index=order,
@@ -439,8 +439,8 @@ async def append_audio(
                     AgendaItem(
                         session_id=session_id,
                         user_id=user_id,
-                        item_type=AgendaItemType.KEY_POINT,
-                        status=AgendaItemStatus.SUGGESTED,
+                        item_type="key_point",
+                        status="suggested",
                         title=None,
                         content=kp_text,
                         order_index=order,
@@ -477,8 +477,8 @@ async def append_audio(
                     AgendaItem(
                         session_id=session_id,
                         user_id=user_id,
-                        item_type=AgendaItemType.TASK,
-                        status=AgendaItemStatus.SUGGESTED,
+                        item_type="task",
+                        status="suggested",
                         title=None,
                         content=text_t,
                         due_date=due_date,
@@ -519,7 +519,7 @@ async def create_item(
         session_id=session_id,
         user_id=user_id,
         item_type=payload.item_type,
-        status=AgendaItemStatus.CONFIRMED,
+        status="confirmed",
         title=payload.title,
         content=payload.content,
         datetime_start=payload.datetime_start,
@@ -876,13 +876,7 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                                         AgendaItem.session_id == session_id,
                                         AgendaItem.user_id == user_id,
                                         AgendaItem.source == "ai",
-                                        AgendaItem.item_type.in_(
-                                            [
-                                                AgendaItemType.SUMMARY,
-                                                AgendaItemType.KEY_POINT,
-                                                AgendaItemType.TASK,
-                                            ]
-                                        ),
+                                        AgendaItem.item_type.in_(["summary", "key_point", "task"]),
                                     )
                                 )
                             )
@@ -896,8 +890,8 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                                     AgendaItem(
                                         session_id=session_id,
                                         user_id=user_id,
-                                        item_type=AgendaItemType.SUMMARY,
-                                        status=AgendaItemStatus.SUGGESTED,
+                                        item_type="summary",
+                                        status="suggested",
                                         title=None,
                                         content=main_text,
                                         order_index=order,
@@ -917,8 +911,8 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                                     AgendaItem(
                                         session_id=session_id,
                                         user_id=user_id,
-                                        item_type=AgendaItemType.KEY_POINT,
-                                        status=AgendaItemStatus.SUGGESTED,
+                                        item_type="key_point",
+                                        status="suggested",
                                         title=None,
                                         content=kp_text,
                                         order_index=order,
@@ -956,8 +950,8 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
                                     AgendaItem(
                                         session_id=session_id,
                                         user_id=user_id,
-                                        item_type=AgendaItemType.TASK,
-                                        status=AgendaItemStatus.SUGGESTED,
+                                        item_type="task",
+                                        status="suggested",
                                         title=None,
                                         content=text_t,
                                         due_date=due_date,
@@ -1039,10 +1033,10 @@ async def get_today_tasks(
     stmt = select(AgendaItem).where(
         and_(
             AgendaItem.user_id == user_id,
-            AgendaItem.item_type == AgendaItemType.TASK,
+            AgendaItem.item_type == "task",
             AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
             AgendaItem.due_date < datetime.combine(today, datetime.max.time()),
-            AgendaItem.status != AgendaItemStatus.DONE
+            AgendaItem.status != "done"
         )
     )
     result = await db.execute(stmt)
@@ -1083,10 +1077,10 @@ async def get_upcoming_tasks(
     stmt = select(AgendaItem).where(
         and_(
             AgendaItem.user_id == user_id,
-            AgendaItem.item_type == AgendaItemType.TASK,
+            AgendaItem.item_type == "task",
             AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
             AgendaItem.due_date < datetime.combine(end_date, datetime.max.time()),
-            AgendaItem.status != AgendaItemStatus.DONE
+            AgendaItem.status != "done"
         )
     ).order_by(AgendaItem.due_date).limit(limit)
     
@@ -1193,7 +1187,7 @@ async def get_day_summary(
     stmt_tasks = select(AgendaItem).where(
         and_(
             AgendaItem.user_id == user_id,
-            AgendaItem.item_type == AgendaItemType.TASK,
+            AgendaItem.item_type == "task",
             AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
             AgendaItem.due_date < datetime.combine(today, datetime.max.time())
         )
@@ -1205,7 +1199,7 @@ async def get_day_summary(
     stmt_points = select(AgendaItem).where(
         and_(
             AgendaItem.user_id == user_id,
-            AgendaItem.item_type == AgendaItemType.KEY_POINT,
+            AgendaItem.item_type == "key_point",
             AgendaItem.created_at >= datetime.combine(today, datetime.min.time()),
             AgendaItem.created_at < datetime.combine(today, datetime.max.time())
         )
@@ -1247,7 +1241,7 @@ async def get_day_summary(
         "stats": {
             "sessions_count": len(sessions),
             "tasks_count": len(tasks),
-            "tasks_done": sum(1 for t in tasks if t.status == AgendaItemStatus.DONE),
+            "tasks_done": sum(1 for t in tasks if t.status == "done"),
             "key_points_count": len(key_points)
         }
     }
