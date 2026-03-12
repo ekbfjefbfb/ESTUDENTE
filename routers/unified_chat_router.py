@@ -256,7 +256,7 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
     # Persistir en Base de Datos
     try:
         from database.db_enterprise import get_primary_session
-        from models.models import AgendaItem, AgendaItemType, AgendaItemStatus, AgendaSession
+        from models.models import AgendaItem, AgendaSession
         from sqlalchemy import select, and_
         
         db = await get_primary_session()
@@ -298,8 +298,8 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
                     session_id=active_session.id,
                     title=title,
                     content=title,
-                    item_type=AgendaItemType.TASK,
-                    status=AgendaItemStatus.PENDING,
+                    item_type="task",
+                    status="pending",
                     priority=str(task_data.get("priority", "medium")),
                     due_date=due_date_val
                 )
@@ -424,7 +424,7 @@ async def get_progress_stats(user=Depends(get_current_user)):
 async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
     """Obtiene contexto completo del usuario: tareas + sesiones recientes"""
     from sqlalchemy import and_, select
-    from models.models import AgendaItem, AgendaItemType, AgendaItemStatus, AgendaSession
+    from models.models import AgendaItem, AgendaSession
     
     context = {
         "tasks_today": [],
