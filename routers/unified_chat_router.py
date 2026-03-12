@@ -134,9 +134,15 @@ async def _ws_heartbeat(websocket: WebSocket):
     """Tarea en background para enviar pings y mantener la conexión activa."""
     try:
         while True:
-            await asyncio.sleep(30)  # Cada 30 segundos
-            await websocket.send_json({"type": "ping", "ts": _ws_now_iso()})
-            logger.debug("Sent WS heartbeat ping")
+            await asyncio.sleep(60)  # Cada 60 segundos (menos frecuente)
+            try:
+                # Verificar si la conexión sigue abierta antes de enviar
+                if websocket.client_state.CONNECTED:
+                    await websocket.send_json({"type": "ping", "ts": _ws_now_iso()})
+                    logger.debug("Sent WS heartbeat ping")
+            except Exception:
+                # Conexión probablemente cerrada, salir del loop
+                break
     except asyncio.CancelledError:
         pass
     except Exception as e:
