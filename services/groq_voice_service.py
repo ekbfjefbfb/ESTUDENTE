@@ -17,6 +17,50 @@ MAX_RETRIES = 3
 INITIAL_RETRY_DELAY = 1.0  # seconds
 TIMEOUT_SECONDS = 30.0
 
+# --- CIRCUIT BREAKER & RATE LIMITER ---
+class GroqSTTRateLimiter:
+    """Rate limiter para Groq STT - evita 429 errors"""
+    def __init__(self, max_requests_per_minute: int = 20):
+        self.max_requests = max_requests_per_minute
+        self.requests: List[float] = []
+        self.circuit_open = False
+        self.circuit_open_until: float = 0
+        self.lock = asyncio.Lock()
+    
+    async def acquire(self) -> bool:
+        """Intenta adquirir permiso para hacer request. Retorna False si debe esperar."""
+        async with self.lock:
+            now = asyncio.get_event_loop().time()
+            
+            # Circuit breaker abierto?
+            if self.circuit_open:
+                if now < self.circuit_open_until:
+                    return False
+                self.circuit_open = False
+                logger.info("Circuit breaker closed - resuming STT requests")
+            
+            # Limpiar requests antiguos (> 60 segundos)
+            self.requests = [t for t in self.requests if now - t < 60]
+            
+            # Check rate limit
+            if len(self.requests) >= self.max_requests:
+                wait_time = 60 - (now - self.requests[0])
+                logger.warning(f"STT rate limit reached. Waiting {wait_time:.1f}s")
+                return False
+            
+            self.requests.append(now)
+            return True
+    
+    def record_error(self, status_code: int):
+        """Registra error para circuit breaker"""
+        if status_code == 429:
+            self.circuit_open = True
+            self.circuit_open_until = asyncio.get_event_loop().time() + 30  # 30s cooldown
+            logger.warning("Circuit breaker OPEN - too many 429 errors")
+
+# Instancia global del rate limiter
+_stt_rate_limiter = GroqSTTRateLimiter(max_requests_per_minute=15)
+
 
 # =========================
 # ElevenLabs TTS Configuration
@@ -51,8 +95,23 @@ async def _post_with_retry(
     files: Optional[Dict[str, Any]] = None,
     data: Optional[Dict[str, Any]] = None,
     timeout: float = TIMEOUT_SECONDS,
+    is_stt: bool = False,  # True para STT - usa rate limiter
 ) -> httpx.Response:
-    """Realiza una petición POST con reintentos y backoff exponencial inteligente."""
+    """Realiza una petición POST con reintentos, backoff exponencial y circuit breaker."""
+    
+    # Rate limiting para STT
+    if is_stt:
+        acquired = await _stt_rate_limiter.acquire()
+        if not acquired:
+            # Esperar hasta que el circuit breaker se cierre
+            for _ in range(30):  # Max 30s espera
+                await asyncio.sleep(1)
+                acquired = await _stt_rate_limiter.acquire()
+                if acquired:
+                    break
+            if not acquired:
+                raise RuntimeError("STT rate limit: Circuit breaker still open after 30s")
+    
     last_exc = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -66,7 +125,10 @@ async def _post_with_retry(
                 
                 # Manejo específico de Rate Limit (429)
                 if resp.status_code == 429:
-                    # Intentar leer el tiempo de espera desde el header de Groq si existe
+                    # Registrar error en circuit breaker
+                    if is_stt:
+                        _stt_rate_limiter.record_error(429)
+                    
                     retry_after = resp.headers.get("retry-after")
                     try:
                         wait_time = float(retry_after) if retry_after else (INITIAL_RETRY_DELAY * (2**attempt))
@@ -89,7 +151,6 @@ async def _post_with_retry(
         except (httpx.HTTPStatusError, httpx.RequestError) as e:
             last_exc = e
             if attempt < MAX_RETRIES - 1:
-                # Si no es un 429 (ya manejado arriba), usamos backoff estándar
                 if not (isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429):
                     sleep_time = INITIAL_RETRY_DELAY * (2**attempt)
                     logger.info(f"Retrying in {sleep_time}s due to {type(e).__name__}...")
@@ -275,7 +336,13 @@ async def transcribe_audio_groq(
     files = {"file": (filename, send_bytes, content_type)}
 
     try:
-        resp = await _post_with_retry(f"{base_url}/audio/transcriptions", headers=headers, data=data, files=files)
+        resp = await _post_with_retry(
+            f"{base_url}/audio/transcriptions", 
+            headers=headers, 
+            data=data, 
+            files=files,
+            is_stt=True  # Activa rate limiting para STT
+        )
         resp.raise_for_status()
         payload = resp.json()
     except Exception as e:
