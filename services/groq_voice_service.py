@@ -52,7 +52,7 @@ async def _post_with_retry(
     data: Optional[Dict[str, Any]] = None,
     timeout: float = TIMEOUT_SECONDS,
 ) -> httpx.Response:
-    """Realiza una petición POST con reintentos y backoff exponencial."""
+    """Realiza una petición POST con reintentos y backoff exponencial inteligente."""
     last_exc = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -64,18 +64,36 @@ async def _post_with_retry(
                 else:
                     resp = await client.post(url, headers=headers, data=data)
                 
-                # Si es 429 (Rate Limit) o 5xx (Server Error), reintentar
-                if resp.status_code == 429 or resp.status_code >= 500:
-                    logger.warning(f"Retryable error {resp.status_code} at {url} (attempt {attempt+1}/{MAX_RETRIES})")
+                # Manejo específico de Rate Limit (429)
+                if resp.status_code == 429:
+                    # Intentar leer el tiempo de espera desde el header de Groq si existe
+                    retry_after = resp.headers.get("retry-after")
+                    try:
+                        wait_time = float(retry_after) if retry_after else (INITIAL_RETRY_DELAY * (2**attempt))
+                    except ValueError:
+                        wait_time = INITIAL_RETRY_DELAY * (2**attempt)
+                    
+                    logger.warning(f"Rate limit hit (429) at {url}. Waiting {wait_time}s (attempt {attempt+1}/{MAX_RETRIES})")
+                    if attempt < MAX_RETRIES - 1:
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        resp.raise_for_status()
+
+                # Otros errores reintentables (5xx)
+                if resp.status_code >= 500:
+                    logger.warning(f"Server error {resp.status_code} at {url} (attempt {attempt+1}/{MAX_RETRIES})")
                     resp.raise_for_status()
                 
                 return resp
         except (httpx.HTTPStatusError, httpx.RequestError) as e:
             last_exc = e
             if attempt < MAX_RETRIES - 1:
-                sleep_time = INITIAL_RETRY_DELAY * (2**attempt)
-                logger.info(f"Retrying in {sleep_time}s due to {type(e).__name__}...")
-                await asyncio.sleep(sleep_time)
+                # Si no es un 429 (ya manejado arriba), usamos backoff estándar
+                if not (isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429):
+                    sleep_time = INITIAL_RETRY_DELAY * (2**attempt)
+                    logger.info(f"Retrying in {sleep_time}s due to {type(e).__name__}...")
+                    await asyncio.sleep(sleep_time)
             else:
                 logger.error(f"Final attempt failed for {url}: {e}")
     

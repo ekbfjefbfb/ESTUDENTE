@@ -172,6 +172,7 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False, index=True)
     email = Column(String(100), unique=True, nullable=True, index=True)  # Nullable para registro con teléfono
     full_name = Column(String(100))
+    bio = Column(Text)
     hashed_password = Column(String(255), nullable=True)  # Nullable para OAuth/Phone
     
     # 📱 WhatsApp-style Authentication
@@ -1203,7 +1204,7 @@ class AgendaItem(Base):
     datetime_end = Column(DateTime(timezone=True), nullable=True)
     due_date = Column(DateTime(timezone=True), nullable=True)
 
-    priority = Column(Integer, nullable=True)
+    priority = Column(String(20), nullable=True)
     order_index = Column(Integer, default=0, nullable=False)
     important = Column(Boolean, default=False)
 

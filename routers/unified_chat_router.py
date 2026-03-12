@@ -254,11 +254,13 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
                     continue
                 new_task = AgendaItem(
                     user_id=user_id,
+                    session_id=None, # Tareas del chat no tienen sesión de clase necesariamente
                     title=title,
+                    content=title, # Usamos título como contenido si no hay más
                     item_type="task",
                     status="pending",
-                    priority=task_data.get("priority", "medium"),
-                    due_date=datetime.fromisoformat(task_data["due_date"]) if task_data.get("due_date") else None
+                    priority=str(task_data.get("priority", "medium")),
+                    due_date=datetime.fromisoformat(task_data["due_date"].replace("Z", "")) if task_data.get("due_date") else None
                 )
                 db.add(new_task)
             await db.commit()

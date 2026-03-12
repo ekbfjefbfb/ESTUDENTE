@@ -221,25 +221,44 @@ async def _groq_stream_async(
 
 
 async def _get_user_personal_context(user_id: str) -> str:
-    """Obtiene el nombre y perfil del usuario para personalizar el prompt."""
+    """Obtiene el nombre y perfil del usuario para personalizar el prompt de forma segura."""
     if not user_id:
         return ""
     try:
         from database.db_enterprise import get_primary_session
         from sqlalchemy import text
-        db = await get_primary_session()
-        async with db:
-            result = await db.execute(
-                text("SELECT username, full_name, bio FROM users WHERE id = :uid"),
-                {"uid": user_id}
-            )
+        session = await get_primary_session()
+        try:
+            # Primero verificamos qué columnas existen realmente para evitar errores de SQL
+            # Esto es una medida de seguridad hasta que las migraciones se apliquen en producción
+            check_cols_query = text("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'users' 
+                AND column_name IN ('full_name', 'bio')
+            """)
+            col_result = await session.execute(check_cols_query)
+            existing_cols = [row[0] for row in col_result.fetchall()]
+            
+            select_parts = ["username"]
+            if "full_name" in existing_cols:
+                select_parts.append("full_name")
+            if "bio" in existing_cols:
+                select_parts.append("bio")
+                
+            query = text(f"SELECT {', '.join(select_parts)} FROM users WHERE id = :uid")
+            result = await session.execute(query, {"uid": user_id})
             row = result.first()
+            
             if row:
-                name = row.full_name or row.username or "estudiante"
-                bio = f" (Perfil: {row.bio})" if row.bio else ""
-                return f"USUARIO: {name}{bio}\n"
+                name = getattr(row, "full_name", None) or row.username or "estudiante"
+                bio_val = getattr(row, "bio", None)
+                bio_str = f" (Perfil: {bio_val})" if bio_val else ""
+                return f"USUARIO: {name}{bio_str}\n"
+        finally:
+            await session.close()
     except Exception as e:
-        logger.warning(f"Error fetching user context: {e}")
+        logger.warning(f"Error fetching user context (safe mode): {e}")
     return ""
 
 
