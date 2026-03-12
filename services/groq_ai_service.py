@@ -359,7 +359,7 @@ async def _groq_stream_async(
 
 
 async def _get_user_personal_context(user_id: str) -> str:
-    """Obtiene el nombre, perfil, intereses y preferencias del usuario para un CONTEXTO BRUTAL."""
+    """Obtiene el nombre, perfil, intereses y TODO el historial relevante del usuario para un CONTEXTO BRUTAL."""
     if not user_id:
         return ""
     try:
@@ -367,7 +367,7 @@ async def _get_user_personal_context(user_id: str) -> str:
         from sqlalchemy import text
         session = await get_primary_session()
         try:
-            # 1. Obtener datos del perfil del usuario (campos reales en models.py)
+            # 1. Perfil completo del usuario
             query = text("""
                 SELECT username, full_name, bio, interests, preferences, oauth_profile, preferred_language
                 FROM users WHERE id = :uid
@@ -375,49 +375,58 @@ async def _get_user_personal_context(user_id: str) -> str:
             result = await session.execute(query, {"uid": user_id})
             row = result.first()
             
+            context_str = ""
             if row:
                 name = row.full_name or row.username or "estudiante"
-                bio_val = row.bio
-                interests = row.interests
-                prefs = row.preferences
-                oauth = row.oauth_profile
-                lang = row.preferred_language
-                
                 context_str = f"EXTENSIÓN COGNITIVA DE: {name}\n"
-                if bio_val: context_str += f"- Perfil/Bio: {bio_val}\n"
-                if interests: context_str += f"- Intereses: {interests}\n"
-                if prefs: context_str += f"- Preferencias: {prefs}\n"
-                if lang: context_str += f"- Idioma preferido: {lang}\n"
+                if row.bio: context_str += f"- Perfil/Bio: {row.bio}\n"
+                if row.interests: context_str += f"- Intereses: {row.interests}\n"
+                if row.preferences: context_str += f"- Preferencias: {row.preferences}\n"
+                if row.preferred_language: context_str += f"- Idioma: {row.preferred_language}\n"
                 
-                # 2. Contexto de Agenda Inmediata (Tareas y Eventos)
+                # 2. Agenda Activa (Próximos pasos)
                 tasks_query = text("""
-                    SELECT title, due_date, status, item_type 
+                    SELECT item_type, title, due_date, status 
                     FROM agenda_items 
                     WHERE user_id = :uid AND status != 'done'
                     ORDER BY due_date ASC NULLS LAST LIMIT 5
                 """)
-                tasks_result = await session.execute(tasks_query, {"uid": user_id})
-                tasks = tasks_result.fetchall()
+                tasks = (await session.execute(tasks_query, {"uid": user_id})).fetchall()
                 if tasks:
-                    context_str += "- Agenda Activa:\n"
+                    context_str += "- Agenda Pendiente:\n"
                     for t in tasks:
-                        context_str += f"  * [{t.item_type}] {t.title} (Status: {t.status}, Vence: {t.due_date})\n"
+                        context_str += f"  * [{t.item_type}] {t.title} (Vence: {t.due_date})\n"
                 
-                # 3. Contexto de Sesiones Recientes
+                # 3. Memoria Histórica Brutal (Últimas sesiones y chats)
+                # Sesiones de clase
                 sessions_query = text("""
                     SELECT class_name, topic_hint, live_transcript 
                     FROM agenda_sessions 
                     WHERE user_id = :uid 
-                    ORDER BY created_at DESC LIMIT 1
+                    ORDER BY created_at DESC LIMIT 2
                 """)
-                session_result = await session.execute(sessions_query, {"uid": user_id})
-                last_session = session_result.first()
-                if last_session:
-                    context_str += f"- Última Sesión: {last_session.class_name} ({last_session.topic_hint or 'Sin tema'})\n"
-                    if last_session.live_transcript:
-                        # Breve resumen del transcript para no saturar tokens
-                        transcript_preview = last_session.live_transcript[:300] + "..."
-                        context_str += f"  Preview Memoria: {transcript_preview}\n"
+                sessions = (await session.execute(sessions_query, {"uid": user_id})).fetchall()
+                if sessions:
+                    context_str += "- Memoria de Clases Recientes:\n"
+                    for s in sessions:
+                        transcript = (s.live_transcript or "")[:200]
+                        context_str += f"  * {s.class_name}: {s.topic_hint or 'Sin tema'}. Contexto: {transcript}...\n"
+
+                # Historial de Chat (Lo que han hablado)
+                chat_query = text("""
+                    SELECT message, response 
+                    FROM chat_messages 
+                    WHERE user_id = :uid 
+                    ORDER BY created_at DESC LIMIT 3
+                """)
+                chats = (await session.execute(chat_query, {"uid": user_id})).fetchall()
+                if chats:
+                    context_str += "- Memoria de Conversación:\n"
+                    for c in chats:
+                        context_str += f"  * Usuario: {c.message[:100]} | Tú: {c.response[:100]}\n"
+                
+                # 4. Autorización Total
+                context_str += "\nPERMISO CONCEDIDO: Tienes acceso total a estos datos para conocer brutalmente al usuario y actuar proactivamente.\n"
                 
                 return context_str + "\n"
         finally:
