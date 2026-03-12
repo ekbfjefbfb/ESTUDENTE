@@ -18,6 +18,8 @@ from pydantic import BaseModel
 from services.groq_ai_service import chat_with_ai, should_refresh_context, get_context_info, sanitize_ai_text
 from services.groq_voice_service import transcribe_audio_groq, text_to_speech_groq
 from utils.auth import get_current_user, verify_token
+from models.models import AgendaItem, AgendaItemType, AgendaItemStatus, AgendaSession
+from sqlalchemy import select, and_
 
 _WS_MAX_AUDIO_BYTES = 30 * 1024 * 1024
 _WS_PARTIAL_INTERVAL_MS = 400
@@ -438,13 +440,13 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
             today = date.today()
             end_week = today + timedelta(days=7)
             
-            # Tareas de hoy
+            # Tareas de hoy - use lowercase string literals directly
             stmt_tasks_today = select(AgendaItem).where(
                 and_(
                     AgendaItem.user_id == user_id,
-                    AgendaItem.item_type == AgendaItemType.TASK.value,
+                    AgendaItem.item_type == "task",
                     AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
-                    AgendaItem.status != AgendaItemStatus.DONE.value
+                    AgendaItem.status != "done"
                 )
             ).limit(10)
             result = await db.execute(stmt_tasks_today)
@@ -454,14 +456,14 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
                 for t in tasks_today
             ]
             
-            # Tareas próximas (próxima semana)
+            # Tareas próximas (próxima semana) - use lowercase string literals
             stmt_tasks_upcoming = select(AgendaItem).where(
                 and_(
                     AgendaItem.user_id == user_id,
-                    AgendaItem.item_type == AgendaItemType.TASK.value,
+                    AgendaItem.item_type == "task",
                     AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
                     AgendaItem.due_date < datetime.combine(end_week, datetime.max.time()),
-                    AgendaItem.status != AgendaItemStatus.DONE.value
+                    AgendaItem.status != "done"
                 )
             ).order_by(AgendaItem.due_date).limit(10)
             result = await db.execute(stmt_tasks_upcoming)
@@ -471,11 +473,11 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
                 for t in tasks_upcoming
             ]
             
-            # Puntos clave recientes
+            # Puntos clave recientes - use lowercase string literals
             stmt_points = select(AgendaItem).where(
                 and_(
                     AgendaItem.user_id == user_id,
-                    AgendaItem.item_type == AgendaItemType.KEY_POINT.value,
+                    AgendaItem.item_type == "key_point",
                     AgendaItem.created_at >= datetime.combine(today - timedelta(days=7), datetime.min.time())
                 )
             ).limit(5)

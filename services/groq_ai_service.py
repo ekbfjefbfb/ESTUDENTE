@@ -354,9 +354,9 @@ async def _get_user_personal_context(user_id: str) -> str:
         from sqlalchemy import text
         session = await get_primary_session()
         try:
-            # 1. Perfil completo del usuario
+            # 1. Perfil completo del usuario - only select columns that exist
             query = text("""
-                SELECT username, full_name, bio, interests, preferences, oauth_profile, preferred_language
+                SELECT username, full_name, bio, interests, preferred_language
                 FROM users WHERE id = :uid
             """)
             result = await session.execute(query, {"uid": user_id})
@@ -368,7 +368,6 @@ async def _get_user_personal_context(user_id: str) -> str:
                 context_str = f"EXTENSIÓN COGNITIVA DE: {name}\n"
                 if row.bio: context_str += f"- Perfil/Bio: {row.bio}\n"
                 if row.interests: context_str += f"- Intereses: {row.interests}\n"
-                if row.preferences: context_str += f"- Preferencias: {row.preferences}\n"
                 if row.preferred_language: context_str += f"- Idioma: {row.preferred_language}\n"
                 
                 # 2. Agenda Activa (Próximos pasos)
