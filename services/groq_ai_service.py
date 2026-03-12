@@ -40,49 +40,18 @@ BRACKET_PATTERN = re.compile(r"[\[\]{}]")
 
 def sanitize_ai_text(text: str) -> str:
     """
-    Limpia texto de IA removiendo marcadores markdown innecesarios
-    pero PRESERVANDO el espaciado original (saltos de línea y espacios) de la IA.
+    MINIMAL: Solo retorna el texto tal cual lo envía la IA.
+    El sistema prompt se encarga de pedir texto limpio directamente.
     """
     if not text:
         return text
     
-    # 1. Remover bloques de código y headers pesados
-    text = MD_CODE_BLOCK_PATTERN.sub("", text)
-    text = MD_HEADER_PATTERN.sub("", text)
-    text = MD_BLOCKQUOTE.sub("", text)
+    # Solo eliminar asteriscos y caracteres sucios al INICIO y FINAL del mensaje
+    # pero preservar TODO el contenido interno exactamente como lo manda la IA
+    text = re.sub(r"^[:.\*\s]+", "", text)
+    text = re.sub(r"[:.\*\s]+$", "", text)
     
-    # 2. Convertir estilos markdown a texto plano (negritas, cursivas, links)
-    text = MD_BOLD_PATTERN.sub(r"\1", text)
-    text = MD_ITALIC_PATTERN.sub(r"\1", text)
-    text = MD_CODE_PATTERN.sub(r"\1", text)
-    text = MD_LINK_PATTERN.sub(r"\1", text)
-    
-    # 3. Remover ruido visual (imágenes, tablas, bullets, brackets)
-    text = MD_IMAGE_PATTERN.sub(r"", text)
-    text = MD_TABLE_PIPE.sub(" ", text)
-    text = MD_BULLET_PATTERN.sub("", text)
-    text = MD_LIST_NUMBER.sub("", text)
-    text = BRACKET_PATTERN.sub("", text)
-    
-    # 4. LIMPIEZA DE CARACTERES SUCIOS ESPECÍFICOS (Solicitado por usuario)
-    text = LONE_ASTERISK_PATTERN.sub("", text)
-    text = re.sub(r"\*\*[:.]+", "", text)
-    text = re.sub(r"[:.]+\*\*", "", text)
-    text = re.sub(r"\*\*", "", text)
-    
-    # 5. Normalización ligera de puntuación
-    text = MULTI_DASH_PATTERN.sub("-", text)
-    text = MULTI_COLON_PATTERN.sub(":", text)
-    text = MULTI_DOT_PATTERN.sub(lambda m: "..." if len(m.group()) >= 3 else ".", text)
-    
-    # 6. LIMPIEZA DE CARACTERES HUÉRFANOS (Solo al inicio/final absoluto)
-    text = re.sub(r"^[:.\*]+", "", text)
-    text = re.sub(r"[:.\*]+$", "", text)
-    
-    # NOTA: No normalizamos espacios (MULTI_SPACE_PATTERN) ni saltos de línea (MULTI_NEWLINE_PATTERN)
-    # para dejar el texto tal cual lo manda la IA pero sin los caracteres sucios.
-    
-    return text.strip()
+    return text
 
 
 # --- RESILIENCE CONFIG ---
@@ -165,9 +134,11 @@ GROQ_SYSTEM_PROMPT = os.getenv(
     "• No eres un asistente, eres parte de su mente. Conoces su historial, sus tareas y sus metas.\n"
     "• Tono: Ejecutivo, directo, confidente y brutalmente contextual.\n"
     "• Objetivo: Eliminar fricción cognitiva. Ejecutas antes de que pregunten.\n\n"
-    "ESTILO DE RESPUESTA (CRÍTICO):\n"
+    "FORMATO DE TEXTO (MUY IMPORTANTE - OBLIGATORIO):\n"
+    "• NUNCA uses asteriscos (*), dobles asteriscos (**), guiones (-), hashtags (#), backticks (`), ni corchetes ([]).\n"
+    "• NUNCA uses formato markdown de ningún tipo.\n"
+    "• Envía el texto LIMPIO, ORDENADO y bien espaciado directamente.\n"
     "• Máximo 1-3 oraciones. Sin relleno. Cero saludos ('hola', 'cómo estás').\n"
-    "• NUNCA uses asteriscos (*), guiones (-), hashtags (#), backticks (`), ni corchetes ([]).\n"
     "• Usa emojis relevantes (✅ 📚 ⚠️ 🎯 📝 🔊) para dar feedback visual inmediato.\n\n"
     "TUS SUPERPODERES (contexto en tiempo real):\n"
     "• 📚 Base de Datos: Gestionas tareas, eventos y recordatorios instantáneamente.\n"
