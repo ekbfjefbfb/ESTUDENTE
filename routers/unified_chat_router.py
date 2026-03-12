@@ -548,7 +548,7 @@ async def get_ai_response_with_structured_data(
         '"response": "Tu respuesta ultra-concisa aquí con emojis relevantes"}\n\n'
         "REGLA DE ORO: Ejecuta inmediatamente. Cero confirmaciones. Cero 'quieres que...?'\n"
         "Ejemplo: clase mañana 8am -> '✅ Clase agendada 8am. Grabación ON. 📚 Resumen listo post-clase.'"
-    )"
+    )
 
     if context_prompt:
         system_content += "\n\n" + context_prompt
