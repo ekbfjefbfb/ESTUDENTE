@@ -402,8 +402,16 @@ async def text_to_speech_groq(
     # Voces válidas de Groq (según el error 400 recibido)
     valid_groq_voices = ["autumn", "diana", "hannah", "austin", "daniel", "troy"]
     if final_voice not in valid_groq_voices:
-        logger.warning(f"Invalid Groq TTS voice '{final_voice}', using 'hannah' (default)")
-        final_voice = "hannah"
+        # Mapear voces comunes a voces soportadas por Groq
+        voice_map = {
+            "male_1": "austin",
+            "male_2": "daniel",
+            "female_1": "hannah",
+            "female_2": "autumn",
+            "default": "hannah"
+        }
+        final_voice = voice_map.get(final_voice, "hannah")
+        logger.warning(f"Voice mapping: {final_voice} used instead of requested")
 
     payload = {
         "model": model,

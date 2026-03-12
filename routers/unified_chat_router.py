@@ -5,13 +5,15 @@ Diseñado para integración óptima con frontend
 """
 
 import asyncio
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Depends, HTTPException, Request
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel
 import json
 import logging
+import re
+import uuid
 from datetime import datetime, date, timedelta
-from datetime import date as _date
+from typing import List, Optional, Dict, Any
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from services.groq_ai_service import chat_with_ai, should_refresh_context, get_context_info, sanitize_ai_text
 from services.groq_voice_service import transcribe_audio_groq, text_to_speech_groq
@@ -181,7 +183,7 @@ def _sanitize_structured_data(structured_data: Any) -> Dict[str, Any]:
                 s = due_date.strip()
                 if s:
                     try:
-                        _date.fromisoformat(s)
+                        date.fromisoformat(s)
                         due_date_out = s
                     except Exception:
                         due_date_out = None
@@ -235,7 +237,6 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
         if task.get("due_date"):
             # Determinar si es para hoy o esta semana
             try:
-                from datetime import date
                 task_date = date.fromisoformat(task["due_date"])
                 today = date.today()
                 if task_date == today:
@@ -247,29 +248,60 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
             except Exception as e:
                 logger.error(f"Error parsing task date: {e}")
     
-    # Guardar plan
+    # Guardar plan y persistir tareas en DB
     if structured_data.get("plan"):
         progress["last_plan"] = structured_data["plan"]
         
     try:
         from database.db_enterprise import get_primary_session
-        from models.models import AgendaItem, AgendaItemType, AgendaItemStatus
+        from models.models import AgendaItem, AgendaItemType, AgendaItemStatus, AgendaSession
+        from sqlalchemy import select, and_
         db = await get_primary_session()
         async with db:
-            # Aquí persistimos las tareas detectadas directamente en la DB de NHost
+            # Asegurar que existe una sesión activa para este usuario para vincular las tareas
+            # El chat unificado necesita una sesión 'contenedor' para cumplir con la restricción NOT NULL de session_id
+            stmt_session = select(AgendaSession).where(
+                and_(
+                    AgendaSession.user_id == user_id,
+                    AgendaSession.class_name == "Chat Asistente"
+                )
+            ).order_by(AgendaSession.created_at.desc()).limit(1)
+            result_session = await db.execute(stmt_session)
+            active_session = result_session.scalar_one_or_none()
+
+            if not active_session:
+                active_session = AgendaSession(
+                    user_id=user_id,
+                    class_name="Chat Asistente",
+                    status="active",
+                    live_transcript="Sesión automática para tareas de chat"
+                )
+                db.add(active_session)
+                await db.flush() # Obtener ID sin commitear aún
+
+            # Aquí persistimos las tareas detectadas directamente en la DB
             for task_data in structured_data.get("tasks", []):
                 title = (task_data.get("title") or "").strip()
                 if not title:
                     continue
+                
+                due_date_val = None
+                if task_data.get("due_date"):
+                    try:
+                        date_str = task_data["due_date"].replace("Z", "").split("T")[0]
+                        due_date_val = datetime.fromisoformat(date_str)
+                    except (ValueError, TypeError):
+                        pass
+
                 new_task = AgendaItem(
                     user_id=user_id,
-                    session_id=None, # Tareas del chat no tienen sesión de clase necesariamente
+                    session_id=active_session.id,
                     title=title,
-                    content=title, # Usamos título como contenido si no hay más
+                    content=title,
                     item_type=AgendaItemType.TASK,
                     status=AgendaItemStatus.PENDING,
                     priority=str(task_data.get("priority", "medium")),
-                    due_date=datetime.fromisoformat(task_data["due_date"].replace("Z", "")) if task_data.get("due_date") else None
+                    due_date=due_date_val
                 )
                 db.add(new_task)
             await db.commit()
@@ -476,7 +508,7 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
                 for s in sessions
             ]
     except Exception as e:
-        pass  # Si falla, retornamos contexto vacío
+        logger.error(f"Error fetching user context: {e}", exc_info=True)
     
     return context
 
@@ -628,90 +660,25 @@ async def unified_chat_message(
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
         
-        # DEBUG: Verificar que no usamos streaming
-        logger.info(f"Chat request: stream={stream}, user={user_id}")
-        
-        if stream:
-            # Streaming temporalmente deshabilitado - usar modo normal
-            # TODO: Re-activar streaming cuando se corrija el manejo de async generators
-            structured = await get_ai_response_with_structured_data(user_id, message, user_context)
-            return ChatResponse(
-                success=True,
-                response=structured["response"],
-                user_id=user_id,
-                timestamp=datetime.utcnow().isoformat(),
-                context={
-                    "usage_percent": 0,
-                    "needs_refresh": False,
-                    "auto_refreshed": False,
-                    "stream_mode": False,
-                    "note": "Streaming temporalmente deshabilitado"
-                },
-                message_id=f"msg_{datetime.utcnow().timestamp()}",
-                actions=[
-                    {"type": "tasks", "data": structured["tasks"]},
-                    {"type": "plan", "data": structured["plan"]}
-                ]
-            )
-
-        # Obtener respuesta estructurada (no stream)
+    # DEBUG: Verificar que no usamos streaming
+    logger.info(f"Chat request: stream={stream}, user={user_id}")
+    
+    # Manejar streaming si es solicitado
+    if stream:
+        # TODO: Implementar streaming real con EventSource si el frontend lo soporta.
+        # Por ahora, simulamos respuesta completa sanitizada para estabilidad.
         structured = await get_ai_response_with_structured_data(user_id, message, user_context)
-        structured = _sanitize_structured_data(structured)
-        
-        # Guardar progreso del usuario
-        await save_user_progress(user_id, message, structured)
-        
-        # Guardar en cache semántico para futuras consultas similares
-        if not structured.get("is_stream"):
-            await embeddings_service.add_to_semantic_cache(message, structured["response"])
-        
-        # Procesar acciones especiales (ej: agendar grabación)
-        if structured.get("actions"):
-            for action in structured["actions"]:
-                action_type = action.get("type")
-                action_data = action.get("data", {})
-                
-                if action_type == "schedule_class":
-                    logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Agendando clase/evento - {action_data}")
-                    try:
-                        from models.models import AgendaItem
-                        from database.db_enterprise import get_primary_session
-                        db = await get_primary_session()
-                        async with db:
-                            # Mapear datos de la IA a campos de la DB
-                            new_event = AgendaItem(
-                                user_id=user_id,
-                                title=action_data.get("title", "Evento sin título"),
-                                item_type="event",
-                                start_time=datetime.fromisoformat(action_data["start_time"].replace("Z", "")) if action_data.get("start_time") else datetime.utcnow(),
-                                content=f"Automatización: Grabación={action_data.get('recording', True)}, Recurrente={action_data.get('recurring', 'none')}. Participantes: {', '.join(action_data.get('participants', []))}",
-                                status="pending",
-                                priority="medium"
-                            )
-                            db.add(new_event)
-                            await db.commit()
-                            logger.info(f"✅ Ejecución silenciosa exitosa: {action_type}")
-                    except Exception as e:
-                        logger.error(f"❌ Fallo en ejecución silenciosa ({action_type}): {e}")
-
-                elif action_type == "generate_document":
-                    logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Preparando documento - {action_data}")
-                    # Aquí se dispararía la lógica de generación de PDF/APA7
-                    pass
-
-        context_info = get_context_info(user_id)
-        
         return ChatResponse(
             success=True,
             response=structured["response"],
             user_id=user_id,
             timestamp=datetime.utcnow().isoformat(),
             context={
-                "usage_percent": round(context_info.get("usage", 0) * 100, 1),
+                "usage_percent": 0,
                 "needs_refresh": False,
                 "auto_refreshed": False,
-                "tasks_count": len(user_context.get("tasks_today", [])),
-                "upcoming_tasks_count": len(user_context.get("tasks_upcoming", []))
+                "stream_mode": True,
+                "note": "Modo stream emulado para estabilidad"
             },
             message_id=f"msg_{datetime.utcnow().timestamp()}",
             actions=[
@@ -719,6 +686,85 @@ async def unified_chat_message(
                 {"type": "plan", "data": structured["plan"]}
             ]
         )
+
+    # Obtener respuesta estructurada (no stream)
+    structured = await get_ai_response_with_structured_data(user_id, message, user_context)
+    structured = _sanitize_structured_data(structured)
+    
+    # Guardar progreso del usuario
+    await save_user_progress(user_id, message, structured)
+    
+    # Guardar en cache semántico para futuras consultas similares
+    if not structured.get("is_stream"):
+        from services.embeddings_service import embeddings_service
+        await embeddings_service.add_to_semantic_cache(message, structured["response"])
+    
+    # Procesar acciones especiales (ej: agendar grabación)
+    if structured.get("actions"):
+        for action in structured["actions"]:
+            action_type = action.get("type")
+            action_data = action.get("data", {})
+            
+            if action_type == "schedule_class":
+                logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Agendando clase/evento - {action_data}")
+                try:
+                    from models.models import AgendaItem, AgendaItemType, AgendaItemStatus
+                    from database.db_enterprise import get_primary_session
+                    db = await get_primary_session()
+                    async with db:
+                        # Mapear datos de la IA a campos de la DB
+                        
+                        # Manejo seguro de fecha
+                        start_time_val = datetime.utcnow()
+                        if action_data.get("start_time"):
+                            try:
+                                # Limpiar Z y otros posibles formatos ISO
+                                date_str = action_data["start_time"].replace("Z", "").split(".")[0]
+                                start_time_val = datetime.fromisoformat(date_str)
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"Invalid start_time format for action: {action_data['start_time']}, error: {e}")
+
+                        new_event = AgendaItem(
+                            user_id=user_id,
+                            session_id=str(uuid.uuid4()), # session_id es obligatorio en DB
+                            title=action_data.get("title", "Evento sin título"),
+                            item_type=AgendaItemType.EVENT,
+                            datetime_start=start_time_val, # Usar campo correcto para eventos
+                            content=f"Automatización: Grabación={action_data.get('recording', True)}, Recurrente={action_data.get('recurring', 'none')}. Participantes: {', '.join(action_data.get('participants', []))}",
+                            status=AgendaItemStatus.PENDING,
+                            priority="medium"
+                        )
+                        db.add(new_event)
+                        await db.commit()
+                        logger.info(f"✅ Ejecución silenciosa exitosa: {action_type}")
+                except Exception as e:
+                    logger.error(f"❌ Fallo en ejecución silenciosa ({action_type}): {e}")
+
+            elif action_type == "generate_document":
+                logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Preparando documento - {action_data}")
+                # Aquí se dispararía la lógica de generación de PDF/APA7
+                pass
+
+    context_info = get_context_info(user_id)
+    
+    return ChatResponse(
+        success=True,
+        response=structured["response"],
+        user_id=user_id,
+        timestamp=datetime.utcnow().isoformat(),
+        context={
+            "usage_percent": round(context_info.get("usage", 0) * 100, 1),
+            "needs_refresh": False,
+            "auto_refreshed": False,
+            "tasks_count": len(user_context.get("tasks_today", [])),
+            "upcoming_tasks_count": len(user_context.get("tasks_upcoming", []))
+        },
+        message_id=f"msg_{datetime.utcnow().timestamp()}",
+        actions=[
+            {"type": "tasks", "data": structured["tasks"]},
+            {"type": "plan", "data": structured["plan"]}
+        ]
+    )
         
     except RuntimeError as e:
         if "GROQ_API_KEY" in str(e):

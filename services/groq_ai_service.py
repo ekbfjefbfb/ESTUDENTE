@@ -462,7 +462,17 @@ async def chat_with_ai(
         completion = await _call_groq_with_retry(create_fn, kwargs)
     except Exception as e:
         logger.error(f"Groq chat_with_ai failed: {e}")
-        raise RuntimeError(f"Error al contactar con la IA: {str(e)}") from e
+        # Intentar un último reintento con el modelo FAST si el reasoning falló
+        if model == GROQ_LLM_REASONING_MODEL:
+            logger.info("Retrying with FAST model after reasoning model failure...")
+            try:
+                kwargs["model"] = GROQ_LLM_FAST_MODEL
+                kwargs["reasoning_effort"] = None
+                completion = await _call_groq_with_retry(create_fn, kwargs)
+            except Exception as retry_e:
+                raise RuntimeError(f"Error al contactar con la IA (fallback incluido): {str(retry_e)}") from retry_e
+        else:
+            raise RuntimeError(f"Error al contactar con la IA: {str(e)}") from e
 
     try:
         content = completion.choices[0].message.content
