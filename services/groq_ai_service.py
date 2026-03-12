@@ -85,6 +85,10 @@ def sanitize_ai_text(text: str) -> str:
     # Manejar puntos suspensivos correctamente (mantener solo "...")
     text = MULTI_DOT_PATTERN.sub(lambda m: "..." if len(m.group()) >= 3 else ".", text)
     
+    # ASEGURAR ESPACIADO ENTRE ORACIONES (Evitar que el texto llegue "todo pegado")
+    # Añadir espacio después de punto, coma, dos puntos o punto y coma si no lo hay
+    text = re.sub(r'([.,;:?])([^\s\d.])', r'\1 \2', text)
+    
     # Eliminar puntos, dos puntos o caracteres sucios que quedaron huérfanos al inicio/final
     # También limpiar espacios redundantes antes de puntuación
     text = re.sub(r"\s+([.,;:?])", r"\1", text)
