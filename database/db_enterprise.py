@@ -516,8 +516,7 @@ async def get_primary_session():
         await db_manager.initialize()
     
     session_maker = db_manager.session_makers.get(ConnectionType.PRIMARY)
-    session = session_maker()
-    return session
+    return session_maker()
 
 
 async def get_readonly_session():

@@ -46,62 +46,56 @@ def sanitize_ai_text(text: str) -> str:
     if not text:
         return text
     
-    # Remover bloques de código completos
+    # 1. Remover bloques de código y headers pesados primero
     text = MD_CODE_BLOCK_PATTERN.sub("", text)
-    
-    # Remover headers markdown (# ## ###)
     text = MD_HEADER_PATTERN.sub("", text)
-    
-    # Remover blockquotes (>
     text = MD_BLOCKQUOTE.sub("", text)
     
-    # Convertir negritas markdown a texto plano
+    # 2. Convertir estilos markdown a texto plano (negritas, cursivas, links)
     text = MD_BOLD_PATTERN.sub(r"\1", text)
-    
-    # Convertir cursivas a texto plano
     text = MD_ITALIC_PATTERN.sub(r"\1", text)
-    
-    # Convertir código inline a texto plano
     text = MD_CODE_PATTERN.sub(r"\1", text)
-    
-    # Convertir links [texto](url) → solo texto
     text = MD_LINK_PATTERN.sub(r"\1", text)
     
-    # Remover imágenes markdown
+    # 3. Remover ruido visual (imágenes, tablas, bullets, brackets)
     text = MD_IMAGE_PATTERN.sub(r"", text)
-    
-    # Remover pipes de tablas
     text = MD_TABLE_PIPE.sub(" ", text)
-    
-    # Remover bullets y listas numeradas al inicio de línea
     text = MD_BULLET_PATTERN.sub("", text)
     text = MD_LIST_NUMBER.sub("", text)
-    
-    # Remover asteriscos sueltos que no son parte de palabras
-    text = LONE_ASTERISK_PATTERN.sub("", text)
-    
-    # Remover brackets sueltos
     text = BRACKET_PATTERN.sub("", text)
     
-    # Limpiar múltiples guiones
-    text = MULTI_DASH_PATTERN.sub("-", text)
+    # 4. LIMPIEZA PROFUNDA DE CARACTERES "SUCIOS" (Solicitado por usuario)
+    # Remover asteriscos sueltos remanentes
+    text = LONE_ASTERISK_PATTERN.sub("", text)
     
-    # Limpiar múltiples dos puntos
+    # Limpiar secuencias sucias específicas: "**.:", "**:", ":**", ".:**", etc.
+    text = re.sub(r"\*\*[:.]+", "", text)
+    text = re.sub(r"[:.]+\*\*", "", text)
+    text = re.sub(r"\*\*", "", text) # Eliminar cualquier negrita remanente
+    
+    # Limpiar combinaciones de puntos y dos puntos sucios
+    text = re.sub(r"\.+:+", ":", text)
+    text = re.sub(r":+\.+", ".", text)
+    
+    # 5. Normalización de puntuación y espacios
+    # Limpiar múltiples guiones, dos puntos y puntos
+    text = MULTI_DASH_PATTERN.sub("-", text)
     text = MULTI_COLON_PATTERN.sub(":", text)
     
-    # Limpiar múltiples puntos (excepto "...")
-    text = MULTI_DOT_PATTERN.sub(lambda m: "..." if len(m.group()) == 3 else ".", text)
+    # Manejar puntos suspensivos correctamente (mantener solo "...")
+    text = MULTI_DOT_PATTERN.sub(lambda m: "..." if len(m.group()) >= 3 else ".", text)
     
-    # Limpiar múltiples espacios
+    # Eliminar puntos, dos puntos o caracteres sucios que quedaron huérfanos al inicio/final
+    # También limpiar espacios redundantes antes de puntuación
+    text = re.sub(r"\s+([.,;:?])", r"\1", text)
+    text = re.sub(r"^[:.\s\*]+", "", text)
+    text = re.sub(r"[:.\s\*]+$", "", text)
+    
+    # 6. Limpieza final de espacios y saltos de línea
     text = MULTI_SPACE_PATTERN.sub(" ", text)
-    
-    # Limpiar múltiples newlines (más de 2 → 2)
     text = MULTI_NEWLINE_PATTERN.sub("\n\n", text)
     
-    # Limpiar espacios al inicio y final
-    text = text.strip()
-    
-    return text
+    return text.strip()
 
 
 # --- RESILIENCE CONFIG ---
