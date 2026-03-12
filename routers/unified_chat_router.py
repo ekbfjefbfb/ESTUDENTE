@@ -213,9 +213,8 @@ def _sanitize_structured_data(structured_data: Any) -> Dict[str, Any]:
         response = str(response_raw)
     response = response[:6000]
     
-    # Sanitizar el texto para remover caracteres de markdown innecesarios
-    response = sanitize_ai_text(response)
-
+    # NO SANITIZAR - La IA responde libremente
+    
     is_stream = bool(structured_data.get("is_stream", False))
     return {"tasks": tasks, "plan": plan, "response": response, "is_stream": is_stream}
 
@@ -618,11 +617,10 @@ async def get_ai_response_with_streaming(
         # Iterar sobre cada chunk del stream
         async for chunk in stream_generator:
             if chunk:
-                # Sanitizar el chunk
-                sanitized = sanitize_ai_text(chunk)
-                if sanitized:
-                    full_text += sanitized
-                    buffer += sanitized
+                # Pasar texto DIRECTO sin sanitizar
+                if chunk:
+                    full_text += chunk
+                    buffer += chunk
                     
                     # Enviar tokens en grupos pequeños para eficiencia
                     # pero lo suficientemente rápido para fluidez
@@ -1206,8 +1204,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 )
                 continue
 
-            # Sanitizar respuesta final
-            final_response = sanitize_ai_text(structured.get("response", ""))
+            # Respuesta final directa sin sanitizar
+            final_response = structured.get("response", "")
             
             # Enviar respuesta final completa con metadata
             await _ws_send_json(

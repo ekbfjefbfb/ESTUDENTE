@@ -40,18 +40,10 @@ BRACKET_PATTERN = re.compile(r"[\[\]{}]")
 
 def sanitize_ai_text(text: str) -> str:
     """
-    MINIMAL: Solo retorna el texto tal cual lo envía la IA.
-    El sistema prompt se encarga de pedir texto limpio directamente.
+    NO SANITIZAR: La IA debe responder libremente con formato natural.
+    Retorna el texto exacto como lo envía la IA.
     """
-    if not text:
-        return text
-    
-    # Solo eliminar asteriscos y caracteres sucios al INICIO y FINAL del mensaje
-    # pero preservar TODO el contenido interno exactamente como lo manda la IA
-    text = re.sub(r"^[:.\*\s]+", "", text)
-    text = re.sub(r"[:.\*\s]+$", "", text)
-    
-    return text
+    return text if text else ""
 
 
 # --- RESILIENCE CONFIG ---
@@ -369,18 +361,19 @@ async def _get_user_personal_context(user_id: str) -> str:
                         transcript = (s.live_transcript or "")[:200]
                         context_str += f"  * {s.class_name}: {s.topic_hint or 'Sin tema'}. Contexto: {transcript}...\n"
 
-                # Historial de Chat (Lo que han hablado)
-                chat_query = text("""
-                    SELECT message, response 
-                    FROM chat_messages 
-                    WHERE user_id = :uid 
-                    ORDER BY created_at DESC LIMIT 3
-                """)
-                chats = (await session.execute(chat_query, {"uid": user_id})).fetchall()
-                if chats:
-                    context_str += "- Memoria de Conversación:\n"
-                    for c in chats:
-                        context_str += f"  * Usuario: {c.message[:100]} | Tú: {c.response[:100]}\n"
+                # Historial de Chat (Lo que han hablado) - Tabla no existe aún
+                # TODO: Crear tabla chat_messages o usar caché alternativo
+                # chat_query = text("""
+                #     SELECT message, response 
+                #     FROM chat_messages 
+                #     WHERE user_id = :uid 
+                #     ORDER BY created_at DESC LIMIT 3
+                # """)
+                # chats = (await session.execute(chat_query, {"uid": user_id})).fetchall()
+                # if chats:
+                #     context_str += "- Memoria de Conversación:\n"
+                #     for c in chats:
+                #         context_str += f"  * Usuario: {c.message[:100]} | Tú: {c.response[:100]}\n"
                 
                 # 4. Autorización Total
                 context_str += "\nPERMISO CONCEDIDO: Tienes acceso total a estos datos para conocer brutalmente al usuario y actuar proactivamente.\n"
