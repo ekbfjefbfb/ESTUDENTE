@@ -105,9 +105,40 @@ def sanitize_ai_text(text: str) -> str:
 
 
 # --- RESILIENCE CONFIG ---
-MAX_RETRIES = 3
+MAX_RETRIES = 4  # Aumentado para mayor resiliencia
 INITIAL_RETRY_DELAY = 1.0
-TIMEOUT_SECONDS = 30.0
+TIMEOUT_SECONDS = 45.0  # Aumentado para evitar errores en cold start
+COLD_START_TIMEOUT = 60.0  # Timeout especial para la primera petición
+
+_last_api_call_time: Optional[datetime] = None
+_api_warmed_up: bool = False
+
+async def ensure_api_warmup():
+    """Realiza un ping ligero a Groq si ha pasado mucho tiempo desde la última llamada."""
+    global _api_warmed_up, _last_api_call_time
+    now = datetime.utcnow()
+    
+    # Si ya se calentó hace menos de 5 minutos, no hacer nada
+    if _api_warmed_up and _last_api_call_time and (now - _last_api_call_time).total_seconds() < 300:
+        return
+
+    logger.info("Warming up Groq API (Cold Start prevention)...")
+    try:
+        client = _get_groq_client()
+        # Petición mínima para despertar el modelo
+        await anyio.to_thread.run_sync(
+            lambda: client.chat.completions.create(
+                model=GROQ_LLM_FAST_MODEL,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+                timeout=COLD_START_TIMEOUT
+            )
+        )
+        _api_warmed_up = True
+        _last_api_call_time = now
+        logger.info("Groq API warmed up successfully.")
+    except Exception as e:
+        logger.warning(f"API warmup failed (non-critical): {e}")
 
 
 CONTEXT_THRESHOLD = 0.85
@@ -385,6 +416,13 @@ async def chat_with_ai(
     friendly: bool = False,
     stream: bool = False,
 ) -> Any:
+    # Asegurar calentamiento de API antes de la primera llamada real
+    await ensure_api_warmup()
+    
+    # Actualizar tiempo de última llamada
+    global _last_api_call_time
+    _last_api_call_time = datetime.utcnow()
+
     # Inyectar contexto personal si existe el user_id
     if user:
         personal_context = await _get_user_personal_context(user)

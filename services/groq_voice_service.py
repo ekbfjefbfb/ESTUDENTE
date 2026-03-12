@@ -74,17 +74,27 @@ USE_ELEVENLABS_API = os.getenv("USE_ELEVENLABS_API", "true").lower() in ("true",
 
 
 def _should_use_elevenlabs(text: str, language: Optional[str] = None) -> bool:
-    """Decide si usar ElevenLabs (español) o Groq TTS (inglés)."""
+    """Decide si usar ElevenLabs (prioridad para español) o Groq TTS."""
     if not USE_ELEVENLABS_API or not ELEVENLABS_API_KEY:
         return False
-    # Si el idioma es español o no especificado pero el texto parece español
-    if language and language.lower() in ("es", "spa", "spanish"):
+    
+    # Si el idioma es español explícitamente, siempre usar ElevenLabs
+    if language and language.lower() in ("es", "spa", "spanish", "es-es", "es-mx"):
         return True
-    # Detección simple: presencia de caracteres típicos del español
-    spanish_markers = ["ñ", "á", "é", "í", "ó", "ú", "ü", "¿", "¡"]
+    
+    # Detección más agresiva de español para asegurar ElevenLabs
+    spanish_markers = ["ñ", "á", "é", "í", "ó", "ú", "ü", "¿", "¡", "hola", "qué", "estás", "estudiante"]
     text_lower = text.lower()
+    
+    # Si contiene cualquier marcador o es suficientemente largo (más de 10 chars) 
+    # y no parece ser puramente código/inglés técnico, preferir ElevenLabs
     if any(marker in text_lower for marker in spanish_markers):
         return True
+        
+    # Por defecto, si no hay marcadores claros pero es texto narrativo largo, preferir ElevenLabs
+    if len(text_lower) > 20 and not text_lower.startswith("{"):
+        return True
+
     return False
 
 
