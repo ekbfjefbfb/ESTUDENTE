@@ -18,15 +18,24 @@ logger = logging.getLogger("groq_ai_service")
 # Text sanitization for clean frontend output
 # =========================
 
-MD_BULLET_PATTERN = re.compile(r"^\s*[-*]\s+", re.MULTILINE)
+MD_BULLET_PATTERN = re.compile(r"^\s*[-*+•]\s+", re.MULTILINE)
 MD_BOLD_PATTERN = re.compile(r"\*\*(.*?)\*\*")
 MD_ITALIC_PATTERN = re.compile(r"(?<!\*)\*(?!\*)(.*?)\*(?!\*)")
 MD_CODE_PATTERN = re.compile(r"`([^`]+)`")
 MD_CODE_BLOCK_PATTERN = re.compile(r"```[\s\S]*?```")
+MD_HEADER_PATTERN = re.compile(r"^#{1,6}\s*", re.MULTILINE)
+MD_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+MD_IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
+MD_TABLE_PIPE = re.compile(r"\|\s*")
+MD_BLOCKQUOTE = re.compile(r"^>\s*", re.MULTILINE)
+MD_LIST_NUMBER = re.compile(r"^\s*\d+\.\s+", re.MULTILINE)
 MULTI_DASH_PATTERN = re.compile(r"-{2,}")
 MULTI_COLON_PATTERN = re.compile(r":{2,}")
 MULTI_DOT_PATTERN = re.compile(r"\.{2,}")
 MULTI_SPACE_PATTERN = re.compile(r"\s{2,}")
+MULTI_NEWLINE_PATTERN = re.compile(r"\n{3,}")
+LONE_ASTERISK_PATTERN = re.compile(r"(?<!\w)\*(?!\w)")
+BRACKET_PATTERN = re.compile(r"[\[\]{}]")
 
 
 def sanitize_ai_text(text: str) -> str:
@@ -37,10 +46,16 @@ def sanitize_ai_text(text: str) -> str:
     if not text:
         return text
     
-    # Remover bloques de código completos (el frontend no los renderiza bien en chat)
+    # Remover bloques de código completos
     text = MD_CODE_BLOCK_PATTERN.sub("", text)
     
-    # Convertir negritas markdown a texto plano (quitar asteriscos pero mantener contenido)
+    # Remover headers markdown (# ## ###)
+    text = MD_HEADER_PATTERN.sub("", text)
+    
+    # Remover blockquotes (>
+    text = MD_BLOCKQUOTE.sub("", text)
+    
+    # Convertir negritas markdown a texto plano
     text = MD_BOLD_PATTERN.sub(r"\1", text)
     
     # Convertir cursivas a texto plano
@@ -49,34 +64,44 @@ def sanitize_ai_text(text: str) -> str:
     # Convertir código inline a texto plano
     text = MD_CODE_PATTERN.sub(r"\1", text)
     
+    # Convertir links [texto](url) → solo texto
+    text = MD_LINK_PATTERN.sub(r"\1", text)
+    
+    # Remover imágenes markdown
+    text = MD_IMAGE_PATTERN.sub(r"", text)
+    
+    # Remover pipes de tablas
+    text = MD_TABLE_PIPE.sub(" ", text)
+    
+    # Remover bullets y listas numeradas al inicio de línea
+    text = MD_BULLET_PATTERN.sub("", text)
+    text = MD_LIST_NUMBER.sub("", text)
+    
+    # Remover asteriscos sueltos que no son parte de palabras
+    text = LONE_ASTERISK_PATTERN.sub("", text)
+    
+    # Remover brackets sueltos
+    text = BRACKET_PATTERN.sub("", text)
+    
     # Limpiar múltiples guiones
     text = MULTI_DASH_PATTERN.sub("-", text)
     
     # Limpiar múltiples dos puntos
     text = MULTI_COLON_PATTERN.sub(":", text)
     
-    # Limpiar múltiples puntos (excepto "..." que es válido)
+    # Limpiar múltiples puntos (excepto "...")
     text = MULTI_DOT_PATTERN.sub(lambda m: "..." if len(m.group()) == 3 else ".", text)
     
     # Limpiar múltiples espacios
     text = MULTI_SPACE_PATTERN.sub(" ", text)
     
-    # Limpiar espacios al inicio y final de cada línea
-    lines = [line.strip() for line in text.split("\n")]
+    # Limpiar múltiples newlines (más de 2 → 2)
+    text = MULTI_NEWLINE_PATTERN.sub("\n\n", text)
     
-    # Unir líneas vacías múltiples (más de 2 líneas vacías = 2 líneas vacías)
-    cleaned_lines = []
-    empty_count = 0
-    for line in lines:
-        if line == "":
-            empty_count += 1
-            if empty_count <= 1:
-                cleaned_lines.append(line)
-        else:
-            empty_count = 0
-            cleaned_lines.append(line)
+    # Limpiar espacios al inicio y final
+    text = text.strip()
     
-    return "\n".join(cleaned_lines).strip()
+    return text
 
 
 # --- RESILIENCE CONFIG ---
@@ -123,21 +148,23 @@ GROQ_LLM_REASONING_MODEL = os.getenv(
 GROQ_LLM_REASONING_EFFORT = os.getenv("GROQ_LLM_REASONING_EFFORT", "medium").strip()
 GROQ_SYSTEM_PROMPT = os.getenv(
     "GROQ_SYSTEM_PROMPT",
-    "Eres la Extensión Cognitiva del usuario. No saludes innecesariamente. Sé franca, directa, breve.\n\n"
-    "ESTILO:\n"
-    "• Respuestas ultra-concisa: 1-3 oraciones máximo. Sin relleno.\n"
-    "• Usa emojis relevantes (📚 ✅ ⚠️ 🎯) cuando aporten valor.\n"
-    "• Nunca digas 'hola' o 'en qué puedo ayudarte' sin razón.\n"
-    "• Tono: confidente, proactivo, sin disculpas ni permisos.\n\n"
-    "PODERES SOBRE LA BD:\n"
-    "• Crear tareas, eventos, recordatorios automáticamente.\n"
-    "• Agendar clases recurrentes (fines de semana, horarios fijos).\n"
-    "• Iniciar grabaciones de audio automáticamente.\n"
-    "• Generar documentos, resúmenes, puntos clave.\n"
-    "• Recordar TODO: nombres, fechas, preferencias, historial.\n\n"
+    "Eres la Extensión Cognitiva del usuario. Tu cerebro digital. Actúas sin pedir permiso.\n\n"
+    "ESTILO DE RESPUESTA (MUY IMPORTANTE):\n"
+    "• Máximo 1-3 oraciones. Sin relleno. Directo al grano.\n"
+    "• NUNCA uses asteriscos (*), guiones (-), hashtags (#), backticks (`), ni corchetes ([]).\n"
+    "• NUNCA digas 'hola', 'claro que sí', 'en qué puedo ayudarte'.\n"
+    "• Usa emojis relevantes (✅ 📚 ⚠️ 🎯 📝 🔊) cuando aporten valor.\n"
+    "• Tono: confidente, proactivo, ejecutivo.\n\n"
+    "TUS SUPERPODERES (ejecutas automáticamente):\n"
+    "• 📚 Base de Datos: Crear tareas, eventos, recordatorios, clases recurrentes.\n"
+    "• 🔊 Grabación: Activas grabación de audio automáticamente para cada clase.\n"
+    "• 📝 Documentos: Generas resúmenes, puntos clave, documentos APA7.\n"
+    "• 🧠 Memoria: Recuerdas nombres, fechas, preferencias, historial académico.\n"
+    "• 🎯 Proactivo: Si detectas examen, tarea, deadline → generas plan de estudio automático.\n"
+    "• 🗣️ Voz: Puedes hablar (TTS) y escuchar (STT) al usuario.\n\n"
     "REGLA DE ORO:\n"
-    "Ejecuta inmediatamente. Cero confirmaciones. El usuario habla, tú actúas.\n"
-    "Ejemplo: 'clase mañana 8am' → '✅ Clase agendada 8am. Grabación activada. 📚 Resumen listo cuando termines.'",
+    "El usuario habla → Tú ejecutas INMEDIATAMENTE. Cero confirmaciones.\n"
+    "Ejemplo: 'clase mañana 8am' → '✅ Clase agendada 8am. Grabación ON. 📚 Resumen listo post-clase.'",
 ).strip()
 
 
