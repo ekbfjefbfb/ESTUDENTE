@@ -10,7 +10,74 @@ import inspect
 import anyio
 from groq import Groq
 
+import re
+
 logger = logging.getLogger("groq_ai_service")
+
+# =========================
+# Text sanitization for clean frontend output
+# =========================
+
+MD_BULLET_PATTERN = re.compile(r"^\s*[-*]\s+", re.MULTILINE)
+MD_BOLD_PATTERN = re.compile(r"\*\*(.*?)\*\*")
+MD_ITALIC_PATTERN = re.compile(r"(?<!\*)\*(?!\*)(.*?)\*(?!\*)")
+MD_CODE_PATTERN = re.compile(r"`([^`]+)`")
+MD_CODE_BLOCK_PATTERN = re.compile(r"```[\s\S]*?```")
+MULTI_DASH_PATTERN = re.compile(r"-{2,}")
+MULTI_COLON_PATTERN = re.compile(r":{2,}")
+MULTI_DOT_PATTERN = re.compile(r"\.{2,}")
+MULTI_SPACE_PATTERN = re.compile(r"\s{2,}")
+
+
+def sanitize_ai_text(text: str) -> str:
+    """
+    Limpia texto de IA removiendo marcadores markdown innecesarios
+    para que llegue limpio al frontend.
+    """
+    if not text:
+        return text
+    
+    # Remover bloques de código completos (el frontend no los renderiza bien en chat)
+    text = MD_CODE_BLOCK_PATTERN.sub("", text)
+    
+    # Convertir negritas markdown a texto plano (quitar asteriscos pero mantener contenido)
+    text = MD_BOLD_PATTERN.sub(r"\1", text)
+    
+    # Convertir cursivas a texto plano
+    text = MD_ITALIC_PATTERN.sub(r"\1", text)
+    
+    # Convertir código inline a texto plano
+    text = MD_CODE_PATTERN.sub(r"\1", text)
+    
+    # Limpiar múltiples guiones
+    text = MULTI_DASH_PATTERN.sub("-", text)
+    
+    # Limpiar múltiples dos puntos
+    text = MULTI_COLON_PATTERN.sub(":", text)
+    
+    # Limpiar múltiples puntos (excepto "..." que es válido)
+    text = MULTI_DOT_PATTERN.sub(lambda m: "..." if len(m.group()) == 3 else ".", text)
+    
+    # Limpiar múltiples espacios
+    text = MULTI_SPACE_PATTERN.sub(" ", text)
+    
+    # Limpiar espacios al inicio y final de cada línea
+    lines = [line.strip() for line in text.split("\n")]
+    
+    # Unir líneas vacías múltiples (más de 2 líneas vacías = 2 líneas vacías)
+    cleaned_lines = []
+    empty_count = 0
+    for line in lines:
+        if line == "":
+            empty_count += 1
+            if empty_count <= 1:
+                cleaned_lines.append(line)
+        else:
+            empty_count = 0
+            cleaned_lines.append(line)
+    
+    return "\n".join(cleaned_lines).strip()
+
 
 # --- RESILIENCE CONFIG ---
 MAX_RETRIES = 3
@@ -213,11 +280,31 @@ async def _groq_stream_async(
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(anyio.to_thread.run_sync, _run_streaming)
+        buffer = ""
         while True:
             item = await queue.get()
             if item is None:
+                # Sanitizar y enviar cualquier contenido restante en el buffer
+                if buffer:
+                    yield sanitize_ai_text(buffer)
                 break
-            yield item
+            
+            # Acumulamos en buffer para poder sanitizar por palabras completas
+            buffer += item
+            
+            # Si hay espacio o newline, sanitizamos lo que tengamos
+            if " " in buffer or "\n" in buffer or len(buffer) > 50:
+                # Encontrar el último espacio para cortar por palabra completa
+                last_space = buffer.rfind(" ")
+                last_newline = buffer.rfind("\n")
+                split_pos = max(last_space, last_newline)
+                
+                if split_pos > 0:
+                    to_send = buffer[:split_pos]
+                    buffer = buffer[split_pos:]
+                    sanitized = sanitize_ai_text(to_send)
+                    if sanitized:
+                        yield sanitized
 
 
 async def _get_user_personal_context(user_id: str) -> str:

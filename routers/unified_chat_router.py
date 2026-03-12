@@ -13,7 +13,7 @@ import logging
 from datetime import datetime, date, timedelta
 from datetime import date as _date
 
-from services.groq_ai_service import chat_with_ai, should_refresh_context, get_context_info
+from services.groq_ai_service import chat_with_ai, should_refresh_context, get_context_info, sanitize_ai_text
 from services.groq_voice_service import transcribe_audio_groq, text_to_speech_groq
 from utils.auth import get_current_user, verify_token
 
@@ -202,6 +202,9 @@ def _sanitize_structured_data(structured_data: Any) -> Dict[str, Any]:
     elif response_raw is not None:
         response = str(response_raw)
     response = response[:6000]
+    
+    # Sanitizar el texto para remover caracteres de markdown innecesarios
+    response = sanitize_ai_text(response)
 
     is_stream = bool(structured_data.get("is_stream", False))
     return {"tasks": tasks, "plan": plan, "response": response, "is_stream": is_stream}
