@@ -262,6 +262,7 @@ async def _groq_stream_async(
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
+                "max_completion_tokens": max_tokens,
                 "top_p": 1,
                 "reasoning_effort": GROQ_LLM_REASONING_EFFORT if model == GROQ_LLM_REASONING_MODEL else None,
                 "stream": True,
@@ -460,4 +461,5 @@ async def chat_with_ai(
         raise RuntimeError("Unexpected Groq response") from e
 
     # Sanitizar texto para frontend limpio
+    return sanitize_ai_text(content or "")
     return sanitize_ai_text(content or "")

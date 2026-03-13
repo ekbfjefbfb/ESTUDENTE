@@ -721,25 +721,11 @@ async def unified_chat_message(
         
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
-        
-        # Crear un mock de WebSocket para capturar el streaming (HTTP fallback)
-        class MockWebSocket:
-            def __init__(self):
-                self.full_text = ""
-            async def send_text(self, text):
-                data = json.loads(text)
-                if data["type"] == "token":
-                    self.full_text += data["content"]
-            @property
-            def client_state(self):
-                from starlette.websockets import WebSocketState
-                return type('State', (), {'CONNECTED': WebSocketState.CONNECTED})
-                
-        mock_ws = MockWebSocket()
-        
-        # Usar la función de streaming existente
-        structured = await get_ai_response_with_streaming(user_id, message, user_context, mock_ws)
-        structured = _sanitize_structured_data(structured)
+
+        # HTTP: usar modo no-streaming (más estable que emular WS con MockWebSocket)
+        messages = [{"role": "user", "content": message}]
+        ai_text = await chat_with_ai(messages=messages, user=user_id, fast_reasoning=True, stream=False)
+        structured = _sanitize_structured_data({"response": ai_text, "tasks": [], "plan": [], "actions": [], "is_stream": False})
         
         # Guardar progreso del usuario en background para no bloquear la respuesta
         asyncio.create_task(save_user_progress(user_id, message, structured))
@@ -958,30 +944,11 @@ async def unified_chat_message_json(
         
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
-        
-        # Crear un mock de WebSocket para capturar el streaming (HTTP fallback)
-        class MockWebSocket:
-            def __init__(self):
-                self.full_text = ""
-            async def send_text(self, text):
-                try:
-                    data = json.loads(text)
-                    if data["type"] == "token":
-                        self.full_text += data["content"]
-                except: pass
-            async def send_json(self, data):
-                if data.get("type") == "token":
-                    self.full_text += data.get("content", "")
-            @property
-            def client_state(self):
-                from starlette.websockets import WebSocketState
-                return type('State', (), {'CONNECTED': WebSocketState.CONNECTED})
-                
-        mock_ws = MockWebSocket()
-        
-        # Usar la función de streaming existente
-        structured = await get_ai_response_with_streaming(user_id, request.message, user_context, mock_ws)
-        structured = _sanitize_structured_data(structured)
+
+        # HTTP JSON: usar modo no-streaming (más estable que emular WS con MockWebSocket)
+        messages = [{"role": "user", "content": request.message}]
+        ai_text = await chat_with_ai(messages=messages, user=user_id, fast_reasoning=True, stream=False)
+        structured = _sanitize_structured_data({"response": ai_text, "tasks": [], "plan": [], "actions": [], "is_stream": False})
         
         # Guardar progreso
         asyncio.create_task(save_user_progress(user_id, request.message, structured))
