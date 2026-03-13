@@ -101,6 +101,8 @@ async def oauth_login(
     db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     logger.info(f'{{"event": "oauth_login_attempt", "provider": "{data.provider}", "ip": "{request.client.host}"}}')
+    if os.getenv("ENVIRONMENT", "production").lower() == "production":
+        raise HTTPException(status_code=503, detail="oauth_disabled_in_production")
     try:
         provider = sanitize_input(data.provider)
         id_token = sanitize_input(data.id_token)
