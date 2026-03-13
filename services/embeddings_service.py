@@ -37,6 +37,8 @@ class EmbeddingsService:
     def __init__(self, use_openai: bool = True, model: str = "text-embedding-3-small"):
         self.use_openai = use_openai and OPENAI_AVAILABLE
         self.model = model
+
+        self._logged_no_provider: bool = False
         
         # Cache en memoria para embeddings
         self.embeddings_cache: Dict[str, np.ndarray] = {}
@@ -106,7 +108,9 @@ class EmbeddingsService:
             
             else:
                 # Sin proveedor de embeddings: deshabilitado (evitar comportamiento no determinista en producción)
-                logger.warning("No hay proveedor de embeddings disponible, embeddings deshabilitados")
+                if not self._logged_no_provider:
+                    logger.warning("No hay proveedor de embeddings disponible, embeddings deshabilitados")
+                    self._logged_no_provider = True
                 return np.zeros(384)
                 
         except Exception as e:
