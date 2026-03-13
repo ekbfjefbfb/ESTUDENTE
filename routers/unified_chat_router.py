@@ -141,7 +141,9 @@ async def _ws_heartbeat(websocket: WebSocket):
             await asyncio.sleep(60)  # Cada 60 segundos (menos frecuente)
             try:
                 # Verificar si la conexión sigue abierta antes de enviar
-                if websocket.client_state.CONNECTED:
+                from starlette.websockets import WebSocketState
+
+                if websocket.client_state == WebSocketState.CONNECTED:
                     await websocket.send_json({"type": "ping", "ts": _ws_now_iso()})
                     logger.debug("Sent WS heartbeat ping")
             except Exception:
