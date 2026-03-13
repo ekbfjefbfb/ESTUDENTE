@@ -298,7 +298,7 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
                     title=title,
                     content=title,
                     item_type="task",
-                    status="pending",
+                    status="confirmed",
                     priority=str(task_data.get("priority", "medium")),
                     due_date=due_date_val
                 )
@@ -774,7 +774,7 @@ async def unified_chat_message(
                                 item_type="event",
                                 datetime_start=start_time_val,
                                 content=f"Automatización: Grabación={action_data.get('recording', True)}, Recurrente={action_data.get('recurring', 'none')}. Participantes: {', '.join(action_data.get('participants', []))}",
-                                status="pending",
+                                status="confirmed",
                                 priority="medium"
                             )
                             db.add(new_event)
