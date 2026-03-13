@@ -1049,7 +1049,7 @@ async def get_today_tasks(
                 "title": item.title,
                 "content": item.content,
                 "due_date": item.due_date.isoformat() if item.due_date else None,
-                "status": item.status.value,
+                "status": str(item.status) if item.status else None,
                 "session_id": item.session_id
             }
             for item in items
@@ -1095,7 +1095,7 @@ async def get_upcoming_tasks(
                 "title": item.title,
                 "content": item.content,
                 "due_date": item.due_date.isoformat() if item.due_date else None,
-                "status": item.status.value,
+                "status": str(item.status) if item.status else None,
                 "session_id": item.session_id,
                 "days_until_due": (item.due_date.date() - today).days if item.due_date else None
             }
@@ -1213,7 +1213,7 @@ async def get_day_summary(
                 "id": s.id,
                 "class_name": s.class_name,
                 "topic": s.topic,
-                "status": s.status.value,
+                "status": str(s.status) if s.status else None,
                 "has_transcript": bool(s.live_transcript)
             }
             for s in sessions
@@ -1224,7 +1224,7 @@ async def get_day_summary(
                 "title": t.title,
                 "content": t.content,
                 "due_date": t.due_date.isoformat() if t.due_date else None,
-                "status": t.status.value
+                "status": str(t.status) if t.status else None
             }
             for t in tasks
         ],
