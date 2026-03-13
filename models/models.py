@@ -1194,8 +1194,8 @@ class AgendaItem(Base):
     session_id = Column(String(36), ForeignKey("agenda_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    item_type = Column(Enum(AgendaItemType), nullable=False, index=True)
-    status = Column(Enum(AgendaItemStatus), default=AgendaItemStatus.SUGGESTED, nullable=False)
+    item_type = Column(String(32), nullable=False, index=True)
+    status = Column(String(32), default="suggested", nullable=False)
 
     title = Column(String(400), nullable=True)
     content = Column(Text, nullable=False)
