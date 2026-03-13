@@ -141,7 +141,7 @@ async def lifespan(app: FastAPI):
     
     # Cerrar conexiones
     try:
-        from database.db_enterprise import close_db
+        from database.database import close_db
         await close_db()
         logger.info("✅ Database connections closed")
     except Exception as e:
