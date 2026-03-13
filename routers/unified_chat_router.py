@@ -421,6 +421,7 @@ async def get_progress_stats(user=Depends(get_current_user)):
 # =========================
 
 async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
+    # REDEPLOY 2026-03-12: Fixed enum values - using lowercase 'task' and 'done'
     """Obtiene contexto completo del usuario: tareas + sesiones recientes"""
     from sqlalchemy import and_, select
     from models.models import AgendaItem, AgendaSession
