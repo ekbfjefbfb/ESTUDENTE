@@ -40,10 +40,13 @@ BRACKET_PATTERN = re.compile(r"[\[\]{}]")
 
 def sanitize_ai_text(text: str) -> str:
     """
-    NO SANITIZAR: La IA debe responder libremente con formato natural.
-    Retorna el texto exacto como lo envía la IA.
+    Limpieza mínima solicitada por frontend.
+    Quita solo estos caracteres: '.', '*', ':'
+    No modifica espacios.
     """
-    return text if text else ""
+    if not text:
+        return ""
+    return text.translate({ord("."): None, ord("*"): None, ord(":"): None})
 
 
 # --- RESILIENCE CONFIG ---
@@ -119,6 +122,7 @@ GROQ_LLM_REASONING_MODEL = os.getenv(
     "openai/gpt-oss-120b",
 ).strip()
 GROQ_LLM_REASONING_EFFORT = os.getenv("GROQ_LLM_REASONING_EFFORT", "medium").strip()
+GROQ_MAX_COMPLETION_TOKENS = int(os.getenv("GROQ_MAX_COMPLETION_TOKENS", "1024"))
 GROQ_SYSTEM_PROMPT = os.getenv(
     "GROQ_SYSTEM_PROMPT",
     "Eres la Extensión Cognitiva del usuario. Su cerebro digital. Actúas con CONTEXTO BRUTAL y proactividad absoluta.\n\n"
@@ -130,9 +134,13 @@ GROQ_SYSTEM_PROMPT = os.getenv(
     "• NUNCA uses asteriscos (*), dobles asteriscos (**), guiones (-), hashtags (#), backticks (`), ni corchetes ([]).\n"
     "• NUNCA uses formato markdown de ningún tipo.\n"
     "• Envía el texto LIMPIO, ORDENADO y bien espaciado directamente.\n"
-    "• Máximo 1-3 oraciones. Sin relleno.\n"
+    "• Responde tan corto o tan largo como sea necesario para que llegue COMPLETO y útil (sin recortes).\n"
     "• Saludos: puedes decir 'hola' SOLO si el usuario saluda primero o si es la primera respuesta de la conversación; si no, evita saludos.\n"
     "• Usa emojis relevantes (✅ 📚 ⚠️ 🎯 📝 🔊) para dar feedback visual inmediato.\n\n"
+    "HONESTIDAD (OBLIGATORIO):\n"
+    "• Si no sabes algo, dilo explícitamente.\n"
+    "• No inventes datos del usuario.\n"
+    "• Solo personaliza usando datos reales disponibles (perfil, agenda, sesiones recientes) o lo que el usuario diga.\n\n"
     "TUS SUPERPODERES (contexto en tiempo real):\n"
     "• 📚 Base de Datos: Gestionas tareas, eventos y recordatorios instantáneamente.\n"
     "• 🧠 Memoria Total: Recuerdas nombres, preferencias y todo lo discutido en sesiones previas.\n"
@@ -392,7 +400,7 @@ async def chat_with_ai(
     messages: List[Dict[str, Any]],
     user: Optional[str] = None,
     temperature: float = 0.2,
-    max_tokens: int = 150,  # Ultra-conciso por defecto
+    max_tokens: int = int(os.environ.get("GROQ_MAX_COMPLETION_TOKENS", 1024)),
     fast_reasoning: bool = True,
     friendly: bool = False,
     stream: bool = False,
