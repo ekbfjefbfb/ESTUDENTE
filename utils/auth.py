@@ -9,7 +9,7 @@ from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, text
-from jose import JWTError, jwt
+from jose import JWTError, jwt, ExpiredSignatureError
 import redis.asyncio as redis
 
 # Usar get_async_db desde database.db_enterprise
