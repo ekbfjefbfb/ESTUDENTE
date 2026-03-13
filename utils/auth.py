@@ -125,7 +125,7 @@ async def create_refresh_token(data: Dict[str, Any]) -> str:
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
     return encoded_jwt
 
-async def verify_token(token: str) -> Dict[str, Any]:
+async def verify_token(token: str, *, allow_expired_grace: bool = False) -> Dict[str, Any]:
     """
     Verifica y decodifica token JWT
     """
@@ -134,9 +134,16 @@ async def verify_token(token: str) -> Dict[str, Any]:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         return payload
     except ExpiredSignatureError:
-        # Si el token expiró, permitimos un margen de 5 minutos solo para WebSockets
-        # o devolvemos un error específico que el frontend sepa manejar
         logger.warning("JWT Token expired")
+
+        if not allow_expired_grace:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="token_expired",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Si el token expiró, permitimos un margen de 5 minutos solo para WebSockets
         try:
             # Decodificar sin verificar expiración para obtener el user_id
             payload = jwt.decode(

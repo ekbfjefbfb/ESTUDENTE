@@ -753,7 +753,7 @@ async def live_session_ws(websocket: WebSocket, session_id: str):
         return
 
     try:
-        payload = await verify_token(token)
+        payload = await verify_token(token, allow_expired_grace=True)
         user_id = str(payload.get("sub") or "")
         if not user_id:
             await websocket.close(code=1008)

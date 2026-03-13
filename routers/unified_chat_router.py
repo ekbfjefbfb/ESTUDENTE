@@ -100,7 +100,7 @@ async def _ws_auth_user_id(websocket: WebSocket) -> str:
     token = websocket.query_params.get("token")
     if not token:
         raise HTTPException(status_code=401, detail="missing_token")
-    payload = await verify_token(token)
+    payload = await verify_token(token, allow_expired_grace=True)
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="invalid_token")
