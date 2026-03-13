@@ -502,7 +502,7 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
                 {
                     "id": s.id,
                     "class_name": s.class_name,
-                    "topic": s.topic,
+                    "topic": getattr(s, "topic", None) or getattr(s, "topic_hint", None),
                     "transcript_preview": (s.live_transcript or "")[:500]
                 }
                 for s in sessions

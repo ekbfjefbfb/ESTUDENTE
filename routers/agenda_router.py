@@ -1212,7 +1212,7 @@ async def get_day_summary(
             {
                 "id": s.id,
                 "class_name": s.class_name,
-                "topic": s.topic,
+                "topic": getattr(s, "topic", None) or getattr(s, "topic_hint", None),
                 "status": str(s.status) if s.status else None,
                 "has_transcript": bool(s.live_transcript)
             }

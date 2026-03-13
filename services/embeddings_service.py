@@ -55,6 +55,8 @@ class EmbeddingsService:
                 logger.info("✅ Modelo local cargado")
             except Exception as e:
                 logger.error(f"Error cargando modelo local: {e}")
+
+        self.enabled = bool(self.use_openai or self.local_model)
         
         logger.info(f"EmbeddingsService inicializado (OpenAI: {self.use_openai})")
     
@@ -103,9 +105,9 @@ class EmbeddingsService:
                 return embedding
             
             else:
-                # Fallback: embedding aleatorio (solo para testing)
-                logger.warning("No hay modelo disponible, usando embedding mock")
-                return np.random.rand(384)
+                # Sin proveedor de embeddings: deshabilitado (evitar comportamiento no determinista en producción)
+                logger.warning("No hay proveedor de embeddings disponible, embeddings deshabilitados")
+                return np.zeros(384)
                 
         except Exception as e:
             logger.error(f"Error generando embedding: {e}")
