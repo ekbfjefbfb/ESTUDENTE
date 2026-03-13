@@ -17,8 +17,6 @@ from database.db_enterprise import get_db_session, get_primary_session
 from models.models import (
     AgendaChunk,
     AgendaItem,
-    AgendaItemStatus,
-    AgendaItemType,
     AgendaSession,
 )
 from utils.auth import get_current_user, verify_token
@@ -82,7 +80,7 @@ class AgendaSessionDto(BaseModel):
 class UpdateAgendaItemRequest(BaseModel):
     title: Optional[str] = Field(None, max_length=400)
     content: Optional[str] = Field(None, max_length=20000)
-    status: Optional[AgendaItemStatus] = None
+    status: Optional[str] = None  # Cambiado de AgendaItemStatus a str
     important: Optional[bool] = None
     priority: Optional[int] = None
     order_index: Optional[int] = None
@@ -92,7 +90,7 @@ class UpdateAgendaItemRequest(BaseModel):
 
 
 class CreateAgendaItemRequest(BaseModel):
-    item_type: AgendaItemType
+    item_type: str  # Cambiado de AgendaItemType a str
     content: str = Field(..., min_length=1, max_length=20000)
     title: Optional[str] = Field(None, max_length=400)
     datetime_start: Optional[datetime] = None
@@ -518,7 +516,7 @@ async def create_item(
     item = AgendaItem(
         session_id=session_id,
         user_id=user_id,
-        item_type=payload.item_type,
+        item_type=str(payload.item_type).lower(),  # Forzar lowercase
         status="confirmed",
         title=payload.title,
         content=payload.content,
