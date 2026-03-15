@@ -614,29 +614,43 @@ async def get_ai_response_with_streaming(
             messages=messages,
             user=user_id,
             fast_reasoning=True,
-            stream=True  # ¡Streaming real!
+            stream=True  # Streaming real
         )
         
         # Iterar sobre cada chunk del stream
+        json_started = False
         async for chunk in stream_generator:
             if chunk:
-                # Pasar texto DIRECTO sin sanitizar
-                if chunk:
-                    full_text += chunk
-                    buffer += chunk
+                full_text += chunk
+                
+                # Detectar inicio del JSON
+                if not json_started:
+                    if '{"tasks"' in full_text or (buffer + chunk).count('{') > 0:
+                        # Verificar si estamos empezando el JSON
+                        if '{"tasks"' in (buffer + chunk) or (buffer + chunk).endswith('{'):
+                            # Enviar lo que queda en buffer antes del JSON
+                            if buffer and not buffer.lstrip().startswith('{'):
+                                await _ws_send_json(websocket, {
+                                    "type": "token",
+                                    "content": buffer,
+                                    "ts": _ws_now_iso()
+                                })
+                            json_started = True
+                            continue
                     
-                    # Enviar tokens en grupos pequeños para eficiencia
-                    # pero lo suficientemente rápido para fluidez
-                    if len(buffer) >= 3 or "\n" in buffer:  # Enviar cada ~3 chars o en newline
-                        await _ws_send_json(websocket, {
-                            "type": "token",
-                            "content": buffer,
-                            "ts": _ws_now_iso()
-                        })
-                        buffer = ""
+                    if not json_started:
+                        buffer += chunk
+                        # Enviar tokens en grupos pequeños para eficiencia
+                        if len(buffer) >= 3 or "\n" in buffer:
+                            await _ws_send_json(websocket, {
+                                "type": "token",
+                                "content": buffer,
+                                "ts": _ws_now_iso()
+                            })
+                            buffer = ""
         
-        # Enviar cualquier contenido restante en el buffer
-        if buffer:
+        # Enviar cualquier contenido restante en el buffer (solo si no empezó JSON)
+        if buffer and not json_started:
             await _ws_send_json(websocket, {
                 "type": "token",
                 "content": buffer,
