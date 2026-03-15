@@ -669,21 +669,46 @@ async def get_ai_response_with_streaming(
     }
     
     # Buscar JSON en la respuesta completa
+    json_text = None
+    clean_response = full_text
     try:
-        # Buscar patrón JSON al final del texto
-        json_match = re.search(r'\{[\s\S]*"tasks"[\s\S]*"plan"[\s\S]*"response"[\s\S]*\}', full_text)
-        if json_match:
-            parsed = json.loads(json_match.group())
-            if isinstance(parsed, dict):
-                structured_data["tasks"] = parsed.get("tasks", [])
-                structured_data["plan"] = parsed.get("plan", [])
-                structured_data["actions"] = parsed.get("actions", [])
-                # Usar el response del JSON si existe, sino usar el texto completo
-                structured_data["response"] = parsed.get("response", full_text)
+        # Buscar patrón JSON al final del texto (desde la última llave)
+        # El JSON empieza con { y termina con }
+        json_start = full_text.rfind('{"tasks"')
+        if json_start == -1:
+            json_start = full_text.rfind('{')
+        
+        if json_start != -1:
+            json_candidate = full_text[json_start:]
+            # Verificar que termina con }
+            if json_candidate.rstrip().endswith('}'):
+                parsed = json.loads(json_candidate)
+                if isinstance(parsed, dict) and "tasks" in parsed:
+                    structured_data["tasks"] = parsed.get("tasks", [])
+                    structured_data["plan"] = parsed.get("plan", [])
+                    structured_data["actions"] = parsed.get("actions", [])
+                    # Usar el response del JSON o todo el texto antes del JSON
+                    clean_response = full_text[:json_start].strip()
+                    if parsed.get("response") and not clean_response:
+                        clean_response = parsed.get("response")
+                    structured_data["response"] = clean_response
+                    json_text = json_candidate
     except Exception as e:
-        logger.warning(f"Failed to parse structured data from stream: {e}")
+        logger.debug(f"No JSON found in response or parse failed: {e}")
         # Si falla el parseo, usar respuesta completa como texto plano
-        structured_data["response"] = full_text
+        clean_response = full_text
+    
+    # Si se encontró JSON, enviar corrección al frontend (sobrescribir el JSON mostrado)
+    if json_text and websocket and hasattr(websocket, 'send_json'):
+        try:
+            # Enviar un update que limpia el JSON del display
+            await _ws_send_json(websocket, {
+                "type": "final_response",
+                "response": clean_response,
+                "ts": _ws_now_iso()
+            })
+        except Exception:
+            pass  # Si falla, la respuesta ya está en full_text
     
     return structured_data
 
