@@ -350,7 +350,7 @@ async def complete_task(task_id: str, user=Depends(get_current_user)):
         # Buscar y mover a completadas
         for task_list in ["today_tasks", "week_tasks"]:
             for i, task in enumerate(progress.get(task_list, [])):
-                if task.get("id") == task_id or task.get("title"):
+                if task.get("id") == task_id:
                     progress["completed_tasks"].append({
                         **task,
                         "completed_at": datetime.utcnow().isoformat()
@@ -757,7 +757,7 @@ async def unified_chat_message(
 
                             new_event = AgendaItem(
                                 user_id=user_id,
-                                session_id=str(uuid.uuid4()), # session_id es obligatorio en DB
+                                session_id=active_session.id,  # Usar la sesión real creada arriba
                                 title=action_data.get("title", "Evento sin título"),
                                 item_type="event",
                                 datetime_start=start_time_val,

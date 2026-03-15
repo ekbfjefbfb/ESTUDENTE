@@ -424,8 +424,9 @@ async def text_to_speech_groq(
             "female_2": "autumn",
             "default": "hannah"
         }
-        final_voice = voice_map.get(final_voice, "hannah")
-        logger.warning(f"Voice mapping: {final_voice} used instead of requested")
+        mapped_voice = voice_map.get(final_voice, "hannah")
+        logger.warning(f"Voice mapping: {mapped_voice} used instead of {final_voice}")
+        final_voice = mapped_voice
 
     payload = {
         "model": model,

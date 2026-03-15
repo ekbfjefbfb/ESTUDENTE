@@ -137,7 +137,9 @@ async def register_route(
     data: RegisterSchema,
     request: Request,
 ) -> dict:
-    logger.info(f'{{"event": "register_attempt", "ip": "{request.client.host}", "email_preview": "{data.email[:3]}...{data.email[-6:]}"}}')
+    # Safe slicing para evitar IndexError con emails cortos
+    email_preview = data.email[:3] + "..." + data.email[-6:] if len(data.email) > 9 else data.email[:3] + "..."
+    logger.info(f'{{"event": "register_attempt", "ip": "{request.client.host}", "email_preview": "{email_preview}"}}')
     try:
         email = sanitize_input(data.email)
         password = data.password
