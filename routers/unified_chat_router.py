@@ -138,7 +138,7 @@ async def _ws_heartbeat(websocket: WebSocket):
     """Tarea en background para enviar pings y mantener la conexión activa."""
     try:
         while True:
-            await asyncio.sleep(60)  # Cada 60 segundos (menos frecuente)
+            await asyncio.sleep(20)  # Cada 20 segundos (más frecuente para evitar timeout)
             try:
                 # Verificar si la conexión sigue abierta antes de enviar
                 from starlette.websockets import WebSocketState

@@ -19,44 +19,58 @@ TIMEOUT_SECONDS = 30.0
 
 # --- CIRCUIT BREAKER & RATE LIMITER ---
 class GroqSTTRateLimiter:
-    """Rate limiter para Groq STT - evita 429 errors"""
+    """Rate limiter para Groq STT - evita 429 errors con backoff adaptativo"""
     def __init__(self, max_requests_per_minute: int = 20):
         self.max_requests = max_requests_per_minute
         self.requests: List[float] = []
         self.circuit_open = False
         self.circuit_open_until: float = 0
         self.lock = asyncio.Lock()
-    
+        self.consecutive_429s = 0
+        self.last_429_time: float = 0
+
     async def acquire(self) -> bool:
         """Intenta adquirir permiso para hacer request. Retorna False si debe esperar."""
         async with self.lock:
             now = asyncio.get_event_loop().time()
-            
+
             # Circuit breaker abierto?
             if self.circuit_open:
-                if now < self.circuit_open_until:
+                if now >= self.circuit_open_until:
+                    self.circuit_open = False
+                    self.consecutive_429s = 0
+                    logger.info("Circuit breaker closed - resuming STT requests")
+                else:
                     return False
-                self.circuit_open = False
-                logger.info("Circuit breaker closed - resuming STT requests")
-            
+
             # Limpiar requests antiguos (> 60 segundos)
             self.requests = [t for t in self.requests if now - t < 60]
-            
-            # Check rate limit
+
+            # Check rate limit con margen de seguridad
             if len(self.requests) >= self.max_requests:
                 wait_time = 60 - (now - self.requests[0])
-                logger.warning(f"STT rate limit reached. Waiting {wait_time:.1f}s")
-                return False
-            
+                if wait_time > 0:
+                    logger.warning(f"STT rate limit reached. Waiting {wait_time:.1f}s")
+                    return False
+
             self.requests.append(now)
             return True
-    
+
     def record_error(self, status_code: int):
-        """Registra error para circuit breaker"""
+        """Registra error para circuit breaker con lógica mejorada"""
+        now = asyncio.get_event_loop().time()
         if status_code == 429:
-            self.circuit_open = True
-            self.circuit_open_until = asyncio.get_event_loop().time() + 30  # 30s cooldown
-            logger.warning("Circuit breaker OPEN - too many 429 errors")
+            self.consecutive_429s += 1
+            self.last_429_time = now
+            # Circuit breaker se abre después de 3 errores 429 consecutivos
+            if self.consecutive_429s >= 3:
+                cooldown = min(30 + (self.consecutive_429s - 3) * 10, 120)  # Max 2 min
+                self.circuit_open = True
+                self.circuit_open_until = now + cooldown
+                logger.warning(f"Circuit breaker OPEN - {self.consecutive_429s} consecutive 429s, cooldown {cooldown}s")
+        else:
+            # Reset contador si hay otro tipo de error
+            self.consecutive_429s = 0
 
 # Instancia global del rate limiter
 _stt_rate_limiter = GroqSTTRateLimiter(max_requests_per_minute=15)

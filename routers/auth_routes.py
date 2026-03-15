@@ -137,7 +137,7 @@ async def register_route(
     data: RegisterSchema,
     request: Request,
 ) -> dict:
-    logger.info(f'{{"event": "register_attempt", "ip": "{request.client.host}"}}')
+    logger.info(f'{{"event": "register_attempt", "ip": "{request.client.host}", "email_preview": "{data.email[:3]}...{data.email[-6:]}"}}')
     try:
         email = sanitize_input(data.email)
         password = data.password
@@ -147,8 +147,12 @@ async def register_route(
         logger.info(f'{{"event": "register_success", "ip": "{request.client.host}"}}')
         return result
     except Exception as e:
-        logger.error(f'{{"event": "register_error", "error": "{str(e)}"}}', exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e) or "Error al registrar")
+        error_str = str(e)
+        logger.error(f'{{"event": "register_error", "error": "{error_str}", "ip": "{request.client.host}"}}')
+        # Log más detallado para debuggear 422
+        import traceback
+        logger.error(f'Register traceback: {traceback.format_exc()}')
+        raise HTTPException(status_code=400, detail=error_str or "Error al registrar")
 
 
 @router.post("/login")
