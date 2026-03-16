@@ -1124,59 +1124,83 @@ class DeviceToken(Base):
 # =============================================
 
 
-class AgendaItemType(str, enum.Enum):
+class RecordingSessionType(str, enum.Enum):
+    MANUAL = "manual"
+    SCHEDULED_AUTO = "scheduled_auto"
+    AGENDA_LIVE = "agenda_live"
+
+class RecordingSessionStatus(str, enum.Enum):
+    RECORDING = "recording"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    ERROR = "error"
+    CANCELLED = "cancelled"
+
+class SessionItemType(str, enum.Enum):
     TASK = "task"
     EVENT = "event"
     KEY_POINT = "key_point"
     SUMMARY = "summary"
     REMINDER = "reminder"
 
-
-class AgendaItemStatus(str, enum.Enum):
+class SessionItemStatus(str, enum.Enum):
     SUGGESTED = "suggested"
     CONFIRMED = "confirmed"
     DONE = "done"
     CANCELED = "canceled"
 
-
-class AgendaSession(Base):
-    __tablename__ = "agenda_sessions"
+class RecordingSession(Base):
+    """🎙️ Modelo Unificado de Sesión de Grabación"""
+    __tablename__ = "recording_sessions"
 
     id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    class_name = Column(String(200), nullable=False)
+    
+    session_type = Column(String(32), default=RecordingSessionType.MANUAL, nullable=False)
+    status = Column(String(32), default=RecordingSessionStatus.RECORDING, nullable=False, index=True)
+    
+    title = Column(String(200), nullable=False)
     teacher_name = Column(String(200), nullable=True)
-    teacher_email = Column(String(200), nullable=True)
-    topic_hint = Column(String(300), nullable=True)
-
-    session_datetime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    timezone = Column(String(64), nullable=True)
-
-    status = Column(String(32), default="recording", nullable=False)
-
-    live_transcript = Column(Text, default="", nullable=False)
-    extracted_state = Column(JSON, default=dict)
-
+    
+    # Relación opcional con programación
+    scheduled_id = Column(String(36), ForeignKey("scheduled_recordings.id", ondelete="SET NULL"), nullable=True)
+    
+    # Transcripción acumulada
+    transcript = Column(Text, default="", nullable=False)
+    language = Column(String(10), default="es", nullable=True)
+    
+    # Resumen y Estado de IA
+    summary = Column(Text, nullable=True)
+    extracted_state = Column(JSON, default=dict) # Para compatibilidad con AgendaSession
+    
+    # Timestamps y Duración
+    started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    # Relaciones
     user = relationship("User")
-    chunks = relationship("AgendaChunk", back_populates="session", cascade="all, delete-orphan")
-    items = relationship("AgendaItem", back_populates="session", cascade="all, delete-orphan")
+    chunks = relationship("TranscriptChunk", back_populates="session", cascade="all, delete-orphan")
+    items = relationship("SessionItem", back_populates="session", cascade="all, delete-orphan")
+    scheduled = relationship("ScheduledRecording", back_populates="recording_session", foreign_keys=[scheduled_id])
 
-
-class AgendaChunk(Base):
-    __tablename__ = "agenda_chunks"
+class TranscriptChunk(Base):
+    """📝 Modelo Unificado de Chunk de Transcripción"""
+    __tablename__ = "transcript_chunks"
 
     id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
-    session_id = Column(String(36), ForeignKey("agenda_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id = Column(String(36), ForeignKey("recording_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
     text = Column(Text, nullable=False)
-    t_start_ms = Column(Integer, nullable=True)
-    t_end_ms = Column(Integer, nullable=True)
-
+    timestamp_seconds = Column(Integer, nullable=True)
+    t_start_ms = Column(Integer, nullable=True) # Para compatibilidad con AgendaChunk
+    t_end_ms = Column(Integer, nullable=True)   # Para compatibilidad con AgendaChunk
+    
+    # Análisis de relevancia
     relevance_label = Column(String(16), nullable=True)
     relevance_reason = Column(Text, nullable=True)
     relevance_signals = Column(JSON, default=list)
@@ -1184,18 +1208,18 @@ class AgendaChunk(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    session = relationship("AgendaSession", back_populates="chunks")
+    session = relationship("RecordingSession", back_populates="chunks")
 
-
-class AgendaItem(Base):
-    __tablename__ = "agenda_items"
+class SessionItem(Base):
+    """🎯 Modelo Unificado de Item Extraído (Tarea, Resumen, etc)"""
+    __tablename__ = "session_items"
 
     id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
-    session_id = Column(String(36), ForeignKey("agenda_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id = Column(String(36), ForeignKey("recording_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
     item_type = Column(String(32), nullable=False, index=True)
-    status = Column(String(32), default="suggested", nullable=False)
+    status = Column(String(32), default=SessionItemStatus.SUGGESTED, nullable=False)
 
     title = Column(String(400), nullable=True)
     content = Column(Text, nullable=False)
@@ -1210,78 +1234,12 @@ class AgendaItem(Base):
 
     source = Column(String(16), default="ai", nullable=False)
     confidence = Column(Float, nullable=True)
-
     item_metadata = Column(JSON, default=dict)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    session = relationship("AgendaSession", back_populates="items")
-
-
-# =============================================
-# SISTEMA DE GRABACIÓN DE CLASES EFICIENTE
-# Streaming STT + Resumen único al final
-# =============================================
-
-class ClassRecording(Base):
-    """🎙️ Grabación de clase con transcripción en tiempo real y resumen al final"""
-    __tablename__ = "class_recordings"
-
-    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    class_name = Column(String(200), nullable=False)
-    teacher_name = Column(String(200), nullable=True)
-
-    status = Column(String(32), default="recording", nullable=False, index=True)  # recording, processing, completed, error
-
-    # Transcripción acumulada (se actualiza en tiempo real)
-    transcript = Column(Text, default="", nullable=False)
-    transcript_chunks_count = Column(Integer, default=0, nullable=False)
-
-    # Resumen generado al final por IA
-    summary = Column(Text, nullable=True)
-    summary_generated_at = Column(DateTime(timezone=True), nullable=True)
-
-    # Duración calculada
-    started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    ended_at = Column(DateTime(timezone=True), nullable=True)
-    duration_seconds = Column(Integer, nullable=True)
-
-    # Metadata
-    language = Column(String(10), default="es", nullable=True)
-    error_message = Column(Text, nullable=True)
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    # Relaciones
-    user = relationship("User")
-    chunks = relationship("ClassTranscriptChunk", back_populates="recording", cascade="all, delete-orphan")
-
-
-class ClassTranscriptChunk(Base):
-    """📝 Chunk individual de transcripción de clase"""
-    __tablename__ = "class_transcript_chunks"
-
-    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
-    recording_id = Column(String(36), ForeignKey("class_recordings.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    # Texto transcrito de este chunk
-    text = Column(Text, nullable=False)
-
-    # Timestamp desde el inicio de la grabación (segundos)
-    timestamp_seconds = Column(Integer, nullable=False)
-
-    # Duración del audio de este chunk (segundos)
-    duration_seconds = Column(Integer, nullable=True)
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Relaciones
-    recording = relationship("ClassRecording", back_populates="chunks")
+    session = relationship("RecordingSession", back_populates="items")
 
 
 # =============================================
@@ -1318,7 +1276,7 @@ class ScheduledRecording(Base):
     location_name = Column(String(200), nullable=True)  # "Edificio A", "Aula 302"
 
     # Relación con grabación real (se llena cuando se ejecuta)
-    recording_id = Column(String(36), ForeignKey("class_recordings.id", ondelete="SET NULL"), nullable=True)
+    recording_session_id = Column(String(36), ForeignKey("recording_sessions.id", ondelete="SET NULL"), nullable=True)
 
     # Metadata de AI
     extracted_from_message = Column(Text, nullable=True)  # Mensaje original
@@ -1336,7 +1294,7 @@ class ScheduledRecording(Base):
 
     # Relaciones
     user = relationship("User")
-    recording = relationship("ClassRecording", foreign_keys=[recording_id])
+    recording_session = relationship("RecordingSession", foreign_keys=[recording_session_id], back_populates="scheduled")
 
 
 class UserContext(Base):

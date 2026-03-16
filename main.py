@@ -51,6 +51,7 @@ from routers import (
     agenda_router,
     class_recording_router,
     scheduled_recording_router,
+    recording_session_router,
 )
 
 # Middlewares
@@ -389,6 +390,9 @@ app.include_router(class_recording_router.router, tags=["Class Recordings"])
 
 # 🤖 Agenda inteligente automatizada (programación vía chat + auto-ejecución)
 app.include_router(scheduled_recording_router.router, tags=["Scheduled Recordings"])
+
+# 🎙️ Unificado: Sesiones de Grabación (Manual, Auto, Agenda)
+app.include_router(recording_session_router.router, tags=["Recording Sessions"])
 
 # =============================================
 # STARTUP MESSAGE

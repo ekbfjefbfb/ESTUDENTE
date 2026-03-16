@@ -216,6 +216,7 @@ EJEMPLOS:
         async with get_primary_session() as session:
             session.add(scheduled)
             await session.commit()
+            await session.refresh(scheduled)
 
         logger.info(f"✅ ScheduledRecording creada: {scheduled.id} - {scheduled.class_name} @ {scheduled.scheduled_at}")
         return scheduled
