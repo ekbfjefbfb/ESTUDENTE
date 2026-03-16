@@ -1285,6 +1285,130 @@ class ClassTranscriptChunk(Base):
 
 
 # =============================================
+# 🤖 AGENDA INTELIGENTE AUTOMATIZADA
+# Programación automática de grabaciones vía chat
+# =============================================
+
+class ScheduledRecording(Base):
+    """🗓️ Grabación programada por usuario vía chat, se ejecuta automáticamente"""
+    __tablename__ = "scheduled_recordings"
+
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    class_name = Column(String(200), nullable=False)
+    teacher_name = Column(String(200), nullable=True)
+
+    # Cuándo debe ejecutarse
+    scheduled_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    timezone = Column(String(50), default="America/Mexico_City", nullable=False)
+
+    # Estado del scheduling
+    status = Column(String(32), default="pending", nullable=False, index=True)
+    # pending → listo para ejecutar
+    # recording → en progreso
+    # completed → terminó OK
+    # missed → no se pudo iniciar (usuario no disponible)
+    # cancelled → usuario canceló
+
+    # Ubicación (opcional, para verificar que usuario está en lugar correcto)
+    location_lat = Column(Float, nullable=True)
+    location_lng = Column(Float, nullable=True)
+    location_radius_meters = Column(Integer, default=100)  # Radio permitido
+    location_name = Column(String(200), nullable=True)  # "Edificio A", "Aula 302"
+
+    # Relación con grabación real (se llena cuando se ejecuta)
+    recording_id = Column(String(36), ForeignKey("class_recordings.id", ondelete="SET NULL"), nullable=True)
+
+    # Metadata de AI
+    extracted_from_message = Column(Text, nullable=True)  # Mensaje original
+    ai_confidence = Column(Float, default=0.0)  # 0.0-1.0
+    ai_reasoning = Column(Text, nullable=True)  # Por qué AI decidió esto
+
+    # Notificaciones
+    notification_sent_5min = Column(Boolean, default=False)  # Notificación "en 5 min"
+    notification_sent_1min = Column(Boolean, default=False)   # Notificación "ahora"
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    executed_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relaciones
+    user = relationship("User")
+    recording = relationship("ClassRecording", foreign_keys=[recording_id])
+
+
+class UserContext(Base):
+    """📍 Contexto en tiempo real del usuario para decisiones inteligentes"""
+    __tablename__ = "user_context"
+
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+
+    # Ubicación actual
+    current_location_lat = Column(Float, nullable=True)
+    current_location_lng = Column(Float, nullable=True)
+    location_updated_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Dispositivo
+    device_id = Column(String(100), nullable=True)  # Identificador único del celular
+    device_battery_level = Column(Integer, nullable=True)  # 0-100
+    device_platform = Column(String(20), nullable=True)  # ios, android
+    last_device_ping = Column(DateTime(timezone=True), nullable=True)
+
+    # Estado
+    timezone = Column(String(50), default="America/Mexico_City")
+    is_recording = Column(Boolean, default=False)
+    current_recording_id = Column(String(36), nullable=True)
+
+    # Preferencias de automatización
+    auto_recording_enabled = Column(Boolean, default=True)  # Puede desactivar
+    preferred_notification_time = Column(Integer, default=5)  # Minutos antes
+
+    # Límites para proteger al usuario
+    daily_auto_recordings_count = Column(Integer, default=0)  # Reset diario
+    daily_auto_recordings_date = Column(Date, nullable=True)  # Fecha del reset
+
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User")
+
+
+class UserDocumentIndex(Base):
+    """📄 Índice de documentos del teléfono del usuario (metadatos solo)"""
+    __tablename__ = "user_document_index"
+
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    device_id = Column(String(100), nullable=False, index=True)
+
+    # Metadatos del archivo
+    filename = Column(String(500), nullable=False)
+    file_path = Column(String(1000), nullable=False)  # Ruta local en teléfono
+    file_size = Column(Integer, nullable=False)
+    mime_type = Column(String(100), nullable=False)
+    created_on_device = Column(DateTime(timezone=True), nullable=True)
+    modified_on_device = Column(DateTime(timezone=True), nullable=True)
+
+    # Contenido indexado (preview, no todo el archivo)
+    content_preview = Column(Text, nullable=True)  # Primeros 2000 chars
+    extracted_text = Column(Text, nullable=True)  # OCR si es imagen/PDF
+
+    # Categorización AI
+    document_type = Column(String(50), nullable=True)  # syllabus, notes, assignment, exam, other
+    related_class = Column(String(200), nullable=True)  # "Cálculo I", "Física"
+    keywords = Column(Text, nullable=True)  # JSON array de palabras clave
+
+    # Si el documento sigue existiendo en el dispositivo
+    is_deleted_on_device = Column(Boolean, default=False)
+
+    last_sync = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User")
+
+
+# =============================================
 # ACTUALIZAR MODELO USER PARA NUEVAS RELACIONES
 # =============================================
 
@@ -1335,6 +1459,10 @@ __all__ = [
     "AgendaItem",
     "AgendaItemType",
     "AgendaItemStatus",
+    # 🤖 Agenda inteligente automatizada
+    "ScheduledRecording",
+    "UserContext",
+    "UserDocumentIndex",
     # 🎙️ Grabación de clases eficiente
     "ClassRecording",
     "ClassTranscriptChunk",
