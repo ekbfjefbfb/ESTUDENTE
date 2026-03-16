@@ -49,6 +49,7 @@ from routers import (
     class_notes_router,
     profile_router,
     agenda_router,
+    class_recording_router,
 )
 
 # Middlewares
@@ -381,6 +382,9 @@ app.include_router(profile_router.router, tags=["Profile"])
 
 # Agenda IA
 app.include_router(agenda_router.router, tags=["Agenda"])
+
+# 🎙️ Grabación de clases eficiente (streaming STT + resumen al final)
+app.include_router(class_recording_router.router, tags=["Class Recordings"])
 
 # =============================================
 # STARTUP MESSAGE

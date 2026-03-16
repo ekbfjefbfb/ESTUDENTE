@@ -1220,6 +1220,71 @@ class AgendaItem(Base):
 
 
 # =============================================
+# SISTEMA DE GRABACIÓN DE CLASES EFICIENTE
+# Streaming STT + Resumen único al final
+# =============================================
+
+class ClassRecording(Base):
+    """🎙️ Grabación de clase con transcripción en tiempo real y resumen al final"""
+    __tablename__ = "class_recordings"
+
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    class_name = Column(String(200), nullable=False)
+    teacher_name = Column(String(200), nullable=True)
+
+    status = Column(String(32), default="recording", nullable=False, index=True)  # recording, processing, completed, error
+
+    # Transcripción acumulada (se actualiza en tiempo real)
+    transcript = Column(Text, default="", nullable=False)
+    transcript_chunks_count = Column(Integer, default=0, nullable=False)
+
+    # Resumen generado al final por IA
+    summary = Column(Text, nullable=True)
+    summary_generated_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Duración calculada
+    started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+
+    # Metadata
+    language = Column(String(10), default="es", nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relaciones
+    user = relationship("User")
+    chunks = relationship("ClassTranscriptChunk", back_populates="recording", cascade="all, delete-orphan")
+
+
+class ClassTranscriptChunk(Base):
+    """📝 Chunk individual de transcripción de clase"""
+    __tablename__ = "class_transcript_chunks"
+
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    recording_id = Column(String(36), ForeignKey("class_recordings.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Texto transcrito de este chunk
+    text = Column(Text, nullable=False)
+
+    # Timestamp desde el inicio de la grabación (segundos)
+    timestamp_seconds = Column(Integer, nullable=False)
+
+    # Duración del audio de este chunk (segundos)
+    duration_seconds = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relaciones
+    recording = relationship("ClassRecording", back_populates="chunks")
+
+
+# =============================================
 # ACTUALIZAR MODELO USER PARA NUEVAS RELACIONES
 # =============================================
 
@@ -1270,6 +1335,9 @@ __all__ = [
     "AgendaItem",
     "AgendaItemType",
     "AgendaItemStatus",
+    # 🎙️ Grabación de clases eficiente
+    "ClassRecording",
+    "ClassTranscriptChunk",
     # Enums
     "PlanType",
     "SubscriptionStatus", 
