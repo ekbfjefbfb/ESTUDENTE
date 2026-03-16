@@ -15,6 +15,7 @@ from models.models import ScheduledRecording, UserContext, User
 from database.db_enterprise import get_primary_session
 from services.chat_intent_extractor import chat_intent_extractor, ScheduleIntent
 from services.class_recording_service import class_recording_service
+from services.user_context_service import user_context_service
 
 logger = logging.getLogger("scheduled_recording_router")
 
@@ -279,35 +280,27 @@ async def cancel_scheduled_recording(
 async def update_user_location(
     payload: UpdateLocationRequest,
     device_id: Optional[str] = Header(None),
+    platform: Optional[str] = Header(None, description="ios/android"),
     user=Depends(get_current_user)
 ):
     """
     Actualiza ubicación y contexto del usuario desde la app móvil.
     La app envía esto periódicamente (cada 5 minutos cuando está activa).
     """
-    async with get_primary_session() as session:
-        user_context = await session.get(UserContext, user["user_id"])
-        
-        if not user_context:
-            user_context = UserContext(
-                user_id=user["user_id"],
-                current_location_lat=payload.lat,
-                current_location_lng=payload.lng,
-                location_updated_at=datetime.utcnow(),
-                device_id=device_id
-            )
-            session.add(user_context)
-        else:
-            user_context.current_location_lat = payload.lat
-            user_context.current_location_lng = payload.lng
-            user_context.location_updated_at = datetime.utcnow()
-            user_context.device_id = device_id
-            if payload.battery_level is not None:
-                user_context.device_battery_level = payload.battery_level
-        
-        await session.commit()
-        
-        return {"success": True, "message": "Ubicación actualizada"}
+    context = await user_context_service.update_location(
+        user_id=user["user_id"],
+        lat=payload.lat,
+        lng=payload.lng,
+        device_id=device_id,
+        battery_level=payload.battery_level,
+        device_platform=platform
+    )
+    
+    return {
+        "success": True, 
+        "message": "Ubicación actualizada",
+        "last_updated": context.location_updated_at.isoformat() if context.location_updated_at else None
+    }
 
 
 # =============================================
