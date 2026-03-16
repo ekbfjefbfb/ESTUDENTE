@@ -14,7 +14,7 @@ from utils.auth import get_current_user
 from models.models import ScheduledRecording, UserContext, User
 from database.db_enterprise import get_primary_session
 from services.chat_intent_extractor import chat_intent_extractor, ScheduleIntent
-from services.class_recording_service import class_recording_service
+from services.recording_session_service import recording_session_service
 from services.user_context_service import user_context_service
 
 logger = logging.getLogger("scheduled_recording_router")

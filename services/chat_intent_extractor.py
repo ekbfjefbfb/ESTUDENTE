@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from services.groq_ai_service import chat_with_ai
 from models.models import ScheduledRecording, RecordingSession, RecordingSessionType, RecordingSessionStatus
 from database.db_enterprise import get_primary_session
-from services.class_recording_service import recording_session_service
+from services.recording_session_service import recording_session_service
 
 logger = logging.getLogger("chat_intent_extractor")
 

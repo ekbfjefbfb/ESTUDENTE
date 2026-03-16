@@ -10,7 +10,7 @@ from math import radians, sin, cos, sqrt, atan2
 
 from models.models import UserContext, UserDocumentIndex, ScheduledRecording
 from database.db_enterprise import get_primary_session
-from services.class_recording_service import class_recording_service
+from services.recording_session_service import recording_session_service
 
 logger = logging.getLogger("user_context_service")
 
