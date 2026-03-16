@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from services.groq_ai_service import chat_with_ai, should_refresh_context, get_context_info, sanitize_ai_text
 from services.groq_voice_service import transcribe_audio_groq, text_to_speech_groq
 from utils.auth import get_current_user, verify_token
-from models.models import AgendaItem, AgendaSession
+from models.models import SessionItem, RecordingSession
 from sqlalchemy import select, and_
 
 _WS_MAX_AUDIO_BYTES = 30 * 1024 * 1024
@@ -257,58 +257,115 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
     # Persistir en Base de Datos
     try:
         from database.db_enterprise import get_primary_session
-        from models.models import AgendaItem, AgendaSession
+        from models.models import SessionItem, RecordingSession, RecordingSessionType
         from sqlalchemy import select, and_
         
         db = await get_primary_session()
         async with db:
             # Asegurar que existe una sesión activa para este usuario para vincular las tareas
-            stmt_session = select(AgendaSession).where(
+            stmt_session = select(RecordingSession).where(
                 and_(
-                    AgendaSession.user_id == user_id,
-                    AgendaSession.class_name == "Chat Asistente"
+                    RecordingSession.user_id == user_id,
+                    RecordingSession.title == "Chat Asistente"
                 )
-            ).order_by(AgendaSession.created_at.desc()).limit(1)
+            ).order_by(RecordingSession.created_at.desc()).limit(1)
             result_session = await db.execute(stmt_session)
             active_session = result_session.scalar_one_or_none()
 
             if not active_session:
-                active_session = AgendaSession(
+                active_session = RecordingSession(
                     user_id=user_id,
-                    class_name="Chat Asistente",
-                    status="active",
-                    live_transcript="Sesión automática para tareas de chat"
+                    title="Chat Asistente",
+                    session_type=RecordingSessionType.MANUAL,
+                    status="completed",
+                    transcript="Sesión de chat para persistencia de tareas"
                 )
                 db.add(active_session)
                 await db.flush()
 
-            # Persistir tareas detectadas
-            for task_data in structured_data.get("tasks", []):
-                title = (task_data.get("title") or "").strip()
-                if not title: continue
-                
+            for task in structured_data.get("tasks", []):
+                title = task.get("title", "Tarea sin título")
+                content = task.get("content", "")
+                date_str = task.get("due_date")
                 due_date_val = None
-                if task_data.get("due_date"):
+                if date_str:
                     try:
-                        date_str = task_data["due_date"].replace("Z", "").split("T")[0]
                         due_date_val = datetime.fromisoformat(date_str)
                     except (ValueError, TypeError): pass
 
-                new_task = AgendaItem(
+                new_task = SessionItem(
                     user_id=user_id,
                     session_id=active_session.id,
                     title=title,
-                    content=title,
+                    content=content,
+                    due_date=due_date_val,
                     item_type="task",
-                    status="confirmed",
-                    priority=str(task_data.get("priority", "medium")),
-                    due_date=due_date_val
+                    status="suggested",
+                    source="ai"
                 )
                 db.add(new_task)
+            
             await db.commit()
             logger.info(f"✅ Progress and tasks persisted for user {user_id}")
     except Exception as e:
         logger.error(f"❌ Error persisting user progress: {e}")
+
+    # Agregar acciones automáticas
+    if structured_data.get("actions"):
+        for action in structured_data["actions"]:
+            action_type = action.get("type")
+            action_data = action.get("data")
+            if action_type == "schedule_class":
+                logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Agendando clase/evento - {action_data}")
+                try:
+                    from models.models import SessionItem
+                    from database.db_enterprise import get_primary_session
+                    db = await get_primary_session()
+                    async with db:
+                        # Buscar sesión de chat asistente unificada
+                        from models.models import RecordingSession, RecordingSessionType
+                        stmt_session = select(RecordingSession).where(
+                            and_(
+                                RecordingSession.user_id == user_id,
+                                RecordingSession.title == "Chat Asistente"
+                            )
+                        ).order_by(RecordingSession.created_at.desc()).limit(1)
+                        result_session = await db.execute(stmt_session)
+                        active_session = result_session.scalar_one_or_none()
+
+                        if not active_session:
+                            active_session = RecordingSession(
+                                user_id=user_id,
+                                title="Chat Asistente",
+                                session_type=RecordingSessionType.MANUAL,
+                                status="completed",
+                                transcript="Sesión de chat para acciones automáticas"
+                            )
+                            db.add(active_session)
+                            await db.flush()
+
+                        date_str = action_data.get("datetime") or action_data.get("date")
+                        start_time_val = None
+                        if date_str:
+                            try:
+                                start_time_val = datetime.fromisoformat(date_str)
+                            except (ValueError, TypeError): pass
+
+                        new_event = SessionItem(
+                            user_id=user_id,
+                            session_id=active_session.id,
+                            title=action_data.get("title", "Evento sin título"),
+                            content=action_data.get("description", ""),
+                            datetime_start=start_time_val,
+                            item_type="event",
+                            status="confirmed",
+                            source="ai"
+                        )
+                        db.add(new_event)
+                        await db.commit()
+                        logger.info(f"✅ Evento unificado persistido: {new_event.id}")
+                except Exception as ex:
+                    logger.error(f"Error persistiendo acción automática unificada: {ex}")
 
 
 @router.get("/progress")
@@ -318,7 +375,7 @@ async def get_user_progress(user=Depends(get_current_user)):
     
     if user_id not in _user_progress:
         # Cargar desde DB si está disponible
-        user_context = await get_user_context_for_chat(user_id)
+        user_context = await _get_user_full_context(user_id)
         return {
             "success": True,
             "today_tasks": user_context.get("tasks_today", []),
@@ -403,7 +460,7 @@ async def get_progress_stats(user=Depends(get_current_user)):
     user_id = user["user_id"]
     
     # Obtener datos de la DB
-    user_context = await get_user_context_for_chat(user_id)
+    user_context = await _get_user_full_context(user_id)
     
     completed_today = 0
     total_today = len(user_context.get("tasks_today", []))
@@ -422,17 +479,17 @@ async def get_progress_stats(user=Depends(get_current_user)):
 # FUNCIONES DE CONTEXTO
 # =========================
 
-async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
+async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
     # REDEPLOY 2026-03-12: Fixed enum values - using lowercase 'task' and 'done'
     """Obtiene contexto completo del usuario: tareas + sesiones recientes"""
     from sqlalchemy import and_, select
-    from models.models import AgendaItem, AgendaSession
+    from models.models import SessionItem, RecordingSession
     
     context = {
         "tasks_today": [],
         "tasks_upcoming": [],
         "recent_sessions": [],
-        "key_points": []
+        "key_points_recent": []
     }
     
     try:
@@ -443,12 +500,12 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
             end_week = today + timedelta(days=7)
             
             # Tareas de hoy - use lowercase string literals directly
-            stmt_tasks_today = select(AgendaItem).where(
+            stmt_tasks_today = select(SessionItem).where(
                 and_(
-                    AgendaItem.user_id == user_id,
-                    AgendaItem.item_type == "task",
-                    AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
-                    AgendaItem.status != "done"
+                    SessionItem.user_id == user_id,
+                    SessionItem.item_type == "task",
+                    SessionItem.due_date >= datetime.combine(today, datetime.min.time()),
+                    SessionItem.status != "done"
                 )
             ).limit(10)
             result = await db.execute(stmt_tasks_today)
@@ -459,15 +516,15 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
             ]
             
             # Tareas próximas (próxima semana) - use lowercase string literals
-            stmt_tasks_upcoming = select(AgendaItem).where(
+            stmt_tasks_upcoming = select(SessionItem).where(
                 and_(
-                    AgendaItem.user_id == user_id,
-                    AgendaItem.item_type == "task",
-                    AgendaItem.due_date >= datetime.combine(today, datetime.min.time()),
-                    AgendaItem.due_date < datetime.combine(end_week, datetime.max.time()),
-                    AgendaItem.status != "done"
+                    SessionItem.user_id == user_id,
+                    SessionItem.item_type == "task",
+                    SessionItem.due_date >= datetime.combine(today, datetime.min.time()),
+                    SessionItem.due_date < datetime.combine(end_week, datetime.max.time()),
+                    SessionItem.status != "done"
                 )
-            ).order_by(AgendaItem.due_date).limit(10)
+            ).order_by(SessionItem.due_date).limit(10)
             result = await db.execute(stmt_tasks_upcoming)
             tasks_upcoming = result.scalars().all()
             context["tasks_upcoming"] = [
@@ -476,41 +533,37 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
             ]
             
             # Puntos clave recientes - use lowercase string literals
-            stmt_points = select(AgendaItem).where(
+            stmt_points = select(SessionItem).where(
                 and_(
-                    AgendaItem.user_id == user_id,
-                    AgendaItem.item_type == "key_point",
-                    AgendaItem.created_at >= datetime.combine(today - timedelta(days=7), datetime.min.time())
+                    SessionItem.user_id == user_id,
+                    SessionItem.item_type == "key_point",
+                    SessionItem.created_at >= datetime.combine(today - timedelta(days=7), datetime.min.time())
                 )
             ).limit(5)
             result = await db.execute(stmt_points)
-            key_points = result.scalars().all()
-            context["key_points"] = [
-                {"id": p.id, "title": p.title, "content": p.content[:200] if p.content else ""}
-                for p in key_points
+            points = result.scalars().all()
+            context["key_points_recent"] = [
+                {"id": p.id, "content": p.content[:100], "created_at": p.created_at.isoformat()}
+                for p in points
             ]
             
             # Sesiones recientes con transcripción
-            stmt_sessions = select(AgendaSession).where(
+            stmt_sessions = select(RecordingSession).where(
                 and_(
-                    AgendaSession.user_id == user_id,
-                    AgendaSession.live_transcript.isnot(None),
-                    AgendaSession.live_transcript != ""
+                    RecordingSession.user_id == user_id,
+                    RecordingSession.transcript.isnot(None),
+                    RecordingSession.transcript != ""
                 )
-            ).order_by(AgendaSession.created_at.desc()).limit(3)
+            ).order_by(RecordingSession.created_at.desc()).limit(3)
             result = await db.execute(stmt_sessions)
             sessions = result.scalars().all()
             context["recent_sessions"] = [
-                {
-                    "id": s.id,
-                    "class_name": s.class_name,
-                    "topic": getattr(s, "topic", None) or getattr(s, "topic_hint", None),
-                    "transcript_preview": (s.live_transcript or "")[:500]
-                }
+                {"id": s.id, "title": s.title, "date": s.created_at.isoformat()}
                 for s in sessions
             ]
     except Exception as e:
-        logger.error(f"Error fetching user context: {e}", exc_info=True)
+        logger.error(f"Error al obtener contexto de usuario: {e}")
+        
     
     return context
 

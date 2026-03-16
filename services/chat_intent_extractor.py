@@ -9,8 +9,9 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
 from services.groq_ai_service import chat_with_ai
-from models.models import ScheduledRecording
+from models.models import ScheduledRecording, RecordingSession, RecordingSessionType, RecordingSessionStatus
 from database.db_enterprise import get_primary_session
+from services.class_recording_service import recording_session_service
 
 logger = logging.getLogger("chat_intent_extractor")
 
@@ -220,6 +221,32 @@ EJEMPLOS:
 
         logger.info(f"✅ ScheduledRecording creada: {scheduled.id} - {scheduled.class_name} @ {scheduled.scheduled_at}")
         return scheduled
+
+    async def execute_scheduled_recording(self, scheduled_id: str) -> Optional[RecordingSession]:
+        """
+        Ejecuta una grabación programada creando una RecordingSession real.
+        """
+        async with get_primary_session() as session:
+            scheduled = await session.get(ScheduledRecording, scheduled_id)
+            if not scheduled or scheduled.status != "pending":
+                return None
+
+            # Iniciar la sesión unificada
+            recording_session = await recording_session_service.start_session(
+                user_id=scheduled.user_id,
+                title=scheduled.class_name,
+                teacher_name=scheduled.teacher_name,
+                session_type=RecordingSessionType.SCHEDULED_AUTO,
+                scheduled_id=scheduled.id
+            )
+
+            # Actualizar estado de la programación
+            scheduled.status = "recording"
+            scheduled.recording_session_id = recording_session.id
+            scheduled.executed_at = datetime.utcnow()
+            
+            await session.commit()
+            return recording_session
 
 
 # Instancia global
