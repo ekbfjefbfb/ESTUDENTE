@@ -1,25 +1,30 @@
 """
-🎙️ ClassRecordingService - Sistema de grabación de clases eficiente
-Streaming STT en tiempo real + Resumen único al final
+🎙️ RecordingSessionService - Servicio unificado para gestión de sesiones de grabación.
+Streaming STT, procesamiento de IA, resumen y extracción de items.
 """
-import asyncio
 import uuid
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any
-from fastapi import WebSocket
+from typing import Optional, List, Dict, Any
 
-from models.models import RecordingSession, TranscriptChunk, SessionItem, RecordingSessionType, RecordingSessionStatus, SessionItemType, SessionItemStatus
+from models.models import (
+    RecordingSession, 
+    TranscriptChunk, 
+    SessionItem, 
+    RecordingSessionType, 
+    RecordingSessionStatus, 
+    SessionItemType, 
+    SessionItemStatus
+)
 from database.db_enterprise import get_primary_session
 from services.groq_voice_service import transcribe_audio_groq
 from services.groq_ai_service import chat_with_ai
 
-logger = logging.getLogger("recording_session")
-
+logger = logging.getLogger("recording_session_service")
 
 class RecordingSessionService:
     """
-    Servicio unificado para gestión de sesiones de grabación y procesamiento de IA
+    Servicio unificado para gestión de sesiones de grabación y procesamiento de IA.
     """
 
     def __init__(self):
@@ -35,7 +40,7 @@ class RecordingSessionService:
         language: str = "es"
     ) -> RecordingSession:
         """
-        Inicia una nueva sesión de grabación unificada
+        Inicia una nueva sesión de grabación unificada.
         """
         session = RecordingSession(
             id=str(uuid.uuid4()),
@@ -63,11 +68,10 @@ class RecordingSessionService:
         session_id: str,
         user_id: str,
         audio_bytes: bytes,
-        timestamp_seconds: int,
-        duration_seconds: Optional[int] = None
+        timestamp_seconds: int
     ) -> Optional[str]:
         """
-        Procesa un chunk de audio unificado: STT + Chunk + Update Transcript
+        Procesa un chunk de audio: STT + Guardar Chunk + Actualizar Transcript.
         """
         try:
             async with get_primary_session() as db_session:
@@ -95,6 +99,7 @@ class RecordingSessionService:
                 db_session.add(chunk)
 
                 # Actualización eficiente del transcript acumulado
+                # Usamos una lista temporal en el objeto para evitar concatenaciones O(n^2)
                 if not hasattr(session, '_transcript_parts'):
                     session._transcript_parts = [session.transcript] if session.transcript else []
                 session._transcript_parts.append(text)
@@ -114,7 +119,7 @@ class RecordingSessionService:
         user_id: str
     ) -> Optional[RecordingSession]:
         """
-        Finaliza la sesión y genera procesamiento de IA (Resumen + Items)
+        Finaliza la sesión y genera procesamiento de IA (Resumen + Items).
         """
         async with get_primary_session() as db_session:
             session = await db_session.get(RecordingSession, session_id)
@@ -141,12 +146,12 @@ class RecordingSessionService:
                 summary = await self._generate_ai_summary(session)
                 session.summary = summary
                 
-                # 2. Extraer Items (Incremental/Final)
-                extracted = await self._extract_session_items(session.transcript, session.extracted_state)
+                # 2. Extraer Items (Tareas, Puntos Clave)
+                extracted = await self._extract_session_items(session.transcript)
                 if extracted:
                     session.extracted_state = extracted
                     
-                    # Eliminar items previos generados por IA para esta sesión
+                    # Eliminar items previos generados por IA
                     from sqlalchemy import delete
                     await db_session.execute(
                         delete(SessionItem).where(
@@ -155,9 +160,7 @@ class RecordingSessionService:
                         )
                     )
                     
-                    # Agregar nuevos items
                     order = 0
-                    
                     # Key Points
                     for kp in extracted.get("key_points", []):
                         item = SessionItem(
@@ -205,34 +208,8 @@ class RecordingSessionService:
                 await db_session.commit()
                 return session
 
-    async def _extract_session_items(self, transcript: str, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Extrae items (tareas, puntos clave) usando el extractor existente"""
-        try:
-            from notes_grpc.extractor import extract_note_segmented
-            from notes_grpc.groq_client import GroqClient
-
-            client = GroqClient()
-            extracted = await extract_note_segmented(client=client, transcript=transcript, title_hint="")
-
-            return {
-                "summary": extracted.summary,
-                "lecture_notes": getattr(extracted, "lecture_notes", ""),
-                "key_points": extracted.key_points,
-                "tasks": [
-                    {
-                        "text": t.text,
-                        "due_date": t.due_date.isoformat() if getattr(t, "due_date", None) else None,
-                        "priority": getattr(t, "priority", None),
-                    }
-                    for t in (extracted.tasks or [])
-                ],
-            }
-        except Exception as e:
-            logger.error(f"Error en extracción incremental: {e}")
-            return {}
-
     async def _generate_ai_summary(self, session: RecordingSession) -> str:
-        """Llamada unificada a IA para resumen estructurado"""
+        """Llamada unificada a IA para resumen estructurado."""
         max_chars = 25000
         transcript = session.transcript
         if len(transcript) > max_chars:
@@ -245,10 +222,10 @@ TRANSCRIPCIÓN:
 {transcript}
 
 INSTRUCCIONES:
-1. Resumen ejecutivo (puntos clave)
-2. Temas principales y detalles técnicos
-3. Tareas, fechas o exámenes mencionados
-4. Formato Markdown limpio"""
+1. Resumen ejecutivo (puntos clave).
+2. Temas principales y detalles técnicos.
+3. Tareas, fechas o exámenes mencionados.
+4. Formato Markdown limpio."""
 
         messages = [
             {"role": "system", "content": "Eres un asistente académico de élite."},
@@ -263,6 +240,31 @@ INSTRUCCIONES:
         )
         return summary.strip()
 
+    async def _extract_session_items(self, transcript: str) -> Dict[str, Any]:
+        """Extrae items usando el motor de extracción."""
+        try:
+            from notes_grpc.extractor import extract_note_segmented
+            from notes_grpc.groq_client import GroqClient
+
+            client = GroqClient()
+            extracted = await extract_note_segmented(client=client, transcript=transcript, title_hint="")
+
+            return {
+                "summary": extracted.summary,
+                "key_points": extracted.key_points,
+                "tasks": [
+                    {
+                        "text": t.text,
+                        "due_date": t.due_date.isoformat() if getattr(t, "due_date", None) else None,
+                        "priority": getattr(t, "priority", None),
+                    }
+                    for t in (extracted.tasks or [])
+                ],
+            }
+        except Exception as e:
+            logger.error(f"Error en extracción de items: {e}")
+            return {}
+
     async def list_user_sessions(self, user_id: str, limit: int = 20, offset: int = 0) -> List[RecordingSession]:
         from sqlalchemy import select, desc
         async with get_primary_session() as db_session:
@@ -270,5 +272,5 @@ INSTRUCCIONES:
             result = await db_session.execute(query)
             return list(result.scalars().all())
 
-# Instancia global unificada
+# Instancia global
 recording_session_service = RecordingSessionService()

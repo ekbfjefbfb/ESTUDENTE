@@ -1,6 +1,6 @@
 """
-🎙️ Recording Session Router - WebSocket unificado y HTTP endpoints
-Unifica Agenda, ClassRecording y Grabaciones Automáticas
+🎙️ Recording Session Router - WebSocket unificado y HTTP endpoints.
+Unifica Agenda, ClassRecording y Grabaciones Automáticas.
 """
 import json
 import logging
@@ -11,8 +11,8 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPExce
 from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketState
 
-from utils.auth import get_current_user
-from services.class_recording_service import recording_session_service
+from utils.auth import get_current_user, verify_token
+from services.recording_session_service import recording_session_service
 from models.models import RecordingSession, RecordingSessionType, RecordingSessionStatus
 
 logger = logging.getLogger("recording_session_router")
@@ -38,10 +38,10 @@ class SessionOut(BaseModel):
     status: str
     transcript: str
     summary: Optional[str]
-    started_at: str
-    ended_at: Optional[str]
+    started_at: datetime
+    ended_at: Optional[datetime]
     duration_seconds: Optional[int]
-    created_at: str
+    created_at: datetime
 
     class Config:
         from_attributes = True
@@ -113,15 +113,15 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
     """
     await websocket.accept()
     
-    # Auth simple inicial (el frontend envía token en primer mensaje o query)
+    # Auth inicial vía query param
     token = websocket.query_params.get("token")
     user_id = None
     if token:
         try:
-            from utils.auth import verify_token
             payload = await verify_token(token)
             user_id = payload.get("sub")
-        except:
+        except Exception as e:
+            logger.warning(f"Error auth WS: {e}")
             await websocket.close(code=1008)
             return
 
@@ -143,7 +143,23 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
                     data = json.loads(message["text"])
                     msg_type = data.get("type")
                     
-                    if msg_type == "end":
+                    if msg_type == "start_auto":
+                        # Iniciar una sesión programada automáticamente
+                        scheduled_id = data.get("scheduled_id")
+                        from services.chat_intent_extractor import chat_intent_extractor
+                        session = await chat_intent_extractor.execute_scheduled_recording(scheduled_id)
+                        if session:
+                            session_id = session.id
+                            await websocket.send_json({
+                                "type": "started",
+                                "session_id": session.id,
+                                "title": session.title
+                            })
+                        else:
+                            await websocket.send_json({"type": "error", "message": "No se pudo iniciar grabación programada"})
+                            break
+
+                    elif msg_type == "end":
                         await websocket.send_json({"type": "processing", "message": "Finalizando y resumiendo..."})
                         session = await recording_session_service.finalize_session(session_id, user_id)
                         if session:
@@ -161,7 +177,7 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
                 chunk = message["bytes"]
                 audio_buffer += chunk
                 
-                # Procesar cada ~2 segundos de audio
+                # Procesar cada ~2 segundos de audio (32000 bytes aprox para webm/opus)
                 if len(audio_buffer) >= 32000:
                     elapsed = int((datetime.utcnow() - start_time).total_seconds())
                     text = await recording_session_service.process_audio_chunk(
@@ -184,3 +200,6 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
         logger.info(f"🔌 WS Desconectado: {session_id}")
     except Exception as e:
         logger.error(f"❌ Error crítico WS: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except: pass
