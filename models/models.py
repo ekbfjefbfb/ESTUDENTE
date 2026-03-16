@@ -1411,19 +1411,18 @@ __all__ = [
     "Referral",
     # 🔔 Push Notifications
     "DeviceToken",
-    # Agenda IA en tiempo real
-    "AgendaSession",
-    "AgendaChunk",
-    "AgendaItem",
-    "AgendaItemType",
-    "AgendaItemStatus",
+    # 🎙️ Sesiones de Grabación Unificadas
+    "RecordingSession",
+    "TranscriptChunk",
+    "SessionItem",
+    "RecordingSessionType",
+    "RecordingSessionStatus",
+    "SessionItemType",
+    "SessionItemStatus",
     # 🤖 Agenda inteligente automatizada
     "ScheduledRecording",
     "UserContext",
     "UserDocumentIndex",
-    # 🎙️ Grabación de clases eficiente
-    "ClassRecording",
-    "ClassTranscriptChunk",
     # Enums
     "PlanType",
     "SubscriptionStatus", 

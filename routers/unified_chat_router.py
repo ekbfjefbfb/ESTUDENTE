@@ -835,10 +835,30 @@ async def unified_chat_message(
                 if action_type == "schedule_class":
                     logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Agendando clase/evento - {action_data}")
                     try:
-                        from models.models import AgendaItem
+                        from models.models import SessionItem, RecordingSession, RecordingSessionType
                         from database.db_enterprise import get_primary_session
                         db = await get_primary_session()
                         async with db:
+                            # Asegurar sesión de chat asistente unificada
+                            stmt_session = select(RecordingSession).where(
+                                and_(
+                                    RecordingSession.user_id == user_id,
+                                    RecordingSession.title == "Chat Asistente"
+                                )
+                            ).order_by(RecordingSession.created_at.desc()).limit(1)
+                            result_session = await db.execute(stmt_session)
+                            active_session = result_session.scalar_one_or_none()
+
+                            if not active_session:
+                                active_session = RecordingSession(
+                                    user_id=user_id,
+                                    title="Chat Asistente",
+                                    session_type=RecordingSessionType.MANUAL,
+                                    status="completed"
+                                )
+                                db.add(active_session)
+                                await db.flush()
+
                             # Mapear datos de la IA a campos de la DB
                             start_time_val = datetime.utcnow()
                             if action_data.get("start_time"):
@@ -847,21 +867,22 @@ async def unified_chat_message(
                                     start_time_val = datetime.fromisoformat(date_str)
                                 except (ValueError, TypeError): pass
 
-                            new_event = AgendaItem(
+                            new_event = SessionItem(
                                 user_id=user_id,
-                                session_id=active_session.id,  # Usar la sesión real creada arriba
+                                session_id=active_session.id,
                                 title=action_data.get("title", "Evento sin título"),
                                 item_type="event",
                                 datetime_start=start_time_val,
                                 content=f"Automatización: Grabación={action_data.get('recording', True)}, Recurrente={action_data.get('recurring', 'none')}. Participantes: {', '.join(action_data.get('participants', []))}",
                                 status="confirmed",
-                                priority="medium"
+                                priority="medium",
+                                source="ai"
                             )
                             db.add(new_event)
                             await db.commit()
-                            logger.info(f"✅ Ejecución silenciosa exitosa: {action_type}")
+                            logger.info(f"✅ Ejecución silenciosa unificada exitosa: {action_type}")
                     except Exception as e:
-                        logger.error(f"❌ Fallo en ejecución silenciosa ({action_type}): {e}")
+                        logger.error(f"❌ Fallo en ejecución silenciosa unificada ({action_type}): {e}")
 
                 elif action_type == "generate_document":
                     logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Preparando documento - {action_data}")

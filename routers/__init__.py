@@ -19,10 +19,8 @@ from . import (
 
     # Profile
     profile_router,
-
-    # Agenda
-    agenda_router,
-    
+    scheduled_recording_router,
+    recording_session_router,
 )
 
 # Lista explícita de exportaciones válidas
@@ -41,9 +39,8 @@ __all__ = [
 
     # Profile
     "profile_router",
-
-    # Agenda
-    "agenda_router",
+    "scheduled_recording_router",
+    "recording_session_router",
 ]
 
 __version__ = "1.0.1"
