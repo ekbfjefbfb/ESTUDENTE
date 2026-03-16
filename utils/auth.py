@@ -143,7 +143,8 @@ async def verify_token(token: str, *, allow_expired_grace: bool = False) -> Dict
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # Si el token expiró, permitimos un margen de 5 minutos solo para WebSockets
+        # Si el token expiró, permitimos un margen de 24 horas solo para WebSockets
+        # (para evitar interrupciones en conexiones activas mientras el frontend refresca)
         try:
             # Decodificar sin verificar expiración para obtener el user_id
             payload = jwt.decode(
@@ -154,9 +155,12 @@ async def verify_token(token: str, *, allow_expired_grace: bool = False) -> Dict
             )
             # Verificar qué tan viejo es el token
             exp = payload.get("exp")
-            if exp and (datetime.utcnow().timestamp() - exp) < 300: # 5 minutos de gracia
-                logger.info(f"Using expired token within grace period for user {payload.get('sub')}")
+            now = datetime.utcnow().timestamp()
+            if exp and (now - exp) < 86400:  # 24 horas de gracia
+                logger.info(f"Using expired token within grace period for user {payload.get('sub')} (expired {int(now - exp)}s ago)")
                 return payload
+            elif exp:
+                logger.warning(f"Token expired {int(now - exp)}s ago, exceeds 24h grace period")
         except Exception:
             pass
             

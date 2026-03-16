@@ -107,11 +107,13 @@ class EmbeddingsService:
                 return embedding
             
             else:
-                # Sin proveedor de embeddings: deshabilitado (evitar comportamiento no determinista en producción)
+                # Fallback: embedding simple basado en características del texto
+                # No requiere librerías externas
+                embedding = self._simple_text_embedding(text)
                 if not self._logged_no_provider:
-                    logger.warning("No hay proveedor de embeddings disponible, embeddings deshabilitados")
+                    logger.warning("No hay proveedor de embeddings disponible, usando fallback simple")
                     self._logged_no_provider = True
-                return np.zeros(384)
+                return embedding
                 
         except Exception as e:
             logger.error(f"Error generando embedding: {e}")
@@ -205,6 +207,62 @@ class EmbeddingsService:
             return 0.0
         
         return float(dot_product / (norm1 * norm2))
+
+    def _simple_text_embedding(self, text: str) -> np.ndarray:
+        """
+        Embedding simple basado en características del texto.
+        No requiere librerías externas. Funciona para caché semántico básico.
+        """
+        import re
+        
+        text_lower = text.lower()
+        
+        # 1. Frecuencia de caracteres a-z (26 dims)
+        char_freq = np.zeros(26)
+        for c in text_lower:
+            if 'a' <= c <= 'z':
+                char_freq[ord(c) - ord('a')] += 1
+        if len(text) > 0:
+            char_freq = char_freq / (len(text) + 1e-8)
+        
+        # 2. Frecuencia de dígitos 0-9 (10 dims)
+        digit_freq = np.zeros(10)
+        for c in text:
+            if '0' <= c <= '9':
+                digit_freq[ord(c) - ord('0')] += 1
+        if len(text) > 0:
+            digit_freq = digit_freq / (len(text) + 1e-8)
+        
+        # 3. Estadísticas del texto (10 dims)
+        words = text.split()
+        sentences = re.split(r'[.!?]+', text)
+        
+        stats = np.array([
+            len(text) / 1000.0,
+            len(words) / 100.0,
+            len(words) / (len(text) + 1e-8) * 10,
+            len(sentences) / 10.0,
+            np.mean([len(w) for w in words]) / 10.0 if words else 0,
+            max([len(w) for w in words]) / 20.0 if words else 0,
+            text.count('?') / 10.0,
+            text.count('!') / 10.0,
+            sum(1 for c in text if c.isupper()) / (len(text) + 1e-8) * 10,
+            len(set(words)) / (len(words) + 1e-8) * 10,
+        ])
+        
+        # 4. Hash del texto distribuido (338 dims)
+        hash_val = hashlib.md5(text.encode()).hexdigest()
+        hash_features = np.zeros(338)
+        for i, hex_char in enumerate(hash_val):
+            idx = i % 338
+            hash_features[idx] += int(hex_char, 16) / 16.0
+        
+        # Concatenar y normalizar
+        embedding = np.concatenate([char_freq, digit_freq, stats, hash_features])
+        norm = np.linalg.norm(embedding)
+        if norm > 0:
+            embedding = embedding / norm
+        return embedding
     
     async def semantic_search(
         self,

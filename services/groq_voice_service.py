@@ -351,6 +351,14 @@ async def transcribe_audio_groq(
     if language:
         data["language"] = language
 
+    # Validar audio antes de enviar
+    if not audio_bytes or len(audio_bytes) < 100:
+        logger.error(f"Audio too small or empty: {len(audio_bytes) if audio_bytes else 0} bytes")
+        raise ValueError("Audio file too small or empty (min 100 bytes)")
+    
+    # Log info del audio para debug
+    logger.info(f"STT request: {len(audio_bytes)} bytes, format={audio_format}, lang={language}")
+
     filename, content_type, transform = _infer_upload_meta(audio_format=audio_format, sample_rate=sample_rate)
     try:
         send_bytes = transform(audio_bytes, sample_rate=sample_rate)
@@ -370,6 +378,20 @@ async def transcribe_audio_groq(
         resp.raise_for_status()
         payload = resp.json()
     except Exception as e:
+        # Mejor manejo de error 400
+        if hasattr(e, 'response') and e.response is not None:
+            status_code = e.response.status_code if hasattr(e.response, 'status_code') else None
+            if status_code == 400:
+                error_body = e.response.text[:500] if hasattr(e.response, 'text') else str(e)
+                logger.error(f"Groq STT 400 Bad Request: {error_body}")
+                try:
+                    error_json = e.response.json()
+                    error_msg = error_json.get('error', {}).get('message', 'Audio format not supported')
+                    raise ValueError(f"Groq STT rejected audio: {error_msg}")
+                except ValueError:
+                    raise
+                except:
+                    raise ValueError(f"Groq STT rejected audio format. Ensure valid webm/mp3/wav file.")
         logger.error(f"Groq STT failed after retries: {e}")
         raise
 
