@@ -48,8 +48,6 @@ from routers import (
     apa7_pdf_router,
     class_notes_router,
     profile_router,
-    agenda_router,
-    class_recording_router,
     scheduled_recording_router,
     recording_session_router,
 )
@@ -381,12 +379,6 @@ app.include_router(class_notes_router.router, tags=["Class Notes"])
 
 # Profile
 app.include_router(profile_router.router, tags=["Profile"])
-
-# Agenda IA
-app.include_router(agenda_router.router, tags=["Agenda"])
-
-# 🎙️ Grabación de clases eficiente (streaming STT + resumen al final)
-app.include_router(class_recording_router.router, tags=["Class Recordings"])
 
 # 🤖 Agenda inteligente automatizada (programación vía chat + auto-ejecución)
 app.include_router(scheduled_recording_router.router, tags=["Scheduled Recordings"])
