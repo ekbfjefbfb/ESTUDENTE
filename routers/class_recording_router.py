@@ -2,7 +2,6 @@
 🎙️ Class Recording Router - WebSocket streaming + HTTP endpoints
 Grabación de clases con transcripción en tiempo real y resumen al final
 """
-import asyncio
 import json
 import logging
 from datetime import datetime
@@ -12,7 +11,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPExce
 from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketState
 
-from utils.auth import get_current_user, verify_token
+from utils.auth import get_current_user
 from services.class_recording_service import class_recording_service
 from models.models import ClassRecording
 
@@ -240,7 +239,16 @@ async def class_recording_websocket(websocket: WebSocket, user_id: str):
 
             # Mensaje de texto (comandos)
             if "text" in message:
-                data = json.loads(message["text"])
+                try:
+                    data = json.loads(message["text"])
+                except json.JSONDecodeError as e:
+                    logger.warning(f"JSON inválido recibido: {e}")
+                    await _send_ws_json(websocket, {
+                        "type": "error",
+                        "message": "Formato JSON inválido"
+                    })
+                    continue
+                
                 msg_type = data.get("type")
 
                 # Iniciar grabación
@@ -359,9 +367,9 @@ async def class_recording_websocket(websocket: WebSocket, user_id: str):
                 # Acumular en buffer
                 audio_buffer += chunk
 
-                # Procesar cuando tengamos suficiente audio (~5-10 segundos)
-                # O cuando el buffer sea muy grande
-                if len(audio_buffer) > 32000 or len(audio_buffer) > MAX_AUDIO_BYTES:  # ~2 segundos de audio
+                # Procesar cuando tengamos suficiente audio (~2 segundos)
+                # 32000 bytes ~ 2 segundos de audio webm
+                if len(audio_buffer) >= 32000:
                     elapsed = int((datetime.utcnow() - start_time).total_seconds())
 
                     text = await class_recording_service.process_audio_chunk(

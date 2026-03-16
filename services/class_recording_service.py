@@ -23,8 +23,6 @@ class ClassRecordingService:
     """
 
     def __init__(self):
-        # Sessions activas por recording_id
-        self._sessions: Dict[str, Dict[str, Any]] = {}
         logger.info("✅ ClassRecordingService inicializado")
 
     async def start_recording(
@@ -88,10 +86,11 @@ class ClassRecordingService:
             Texto transcrito o None si falló
         """
         try:
-            # STT con Groq
+            # STT con Groq - usar idioma de la grabación
+            language = recording.language if recording else None
             text = await transcribe_audio_groq(
                 audio_bytes=audio_bytes,
-                language=None  # Usar auto-detection o pasar desde recording
+                language=language
             )
 
             if not text or not text.strip():
@@ -110,10 +109,14 @@ class ClassRecordingService:
             async with get_primary_session() as session:
                 session.add(chunk)
 
-                # Actualizar transcript acumulado en la grabación
+                # Actualizar transcript acumulado en la grabación - usar lista para eficiencia O(1)
                 recording = await session.get(ClassRecording, recording_id)
                 if recording:
-                    recording.transcript += text + " "
+                    # Usar lista para evitar O(n²) de concatenación de strings
+                    if not hasattr(recording, '_transcript_parts'):
+                        recording._transcript_parts = [recording.transcript] if recording.transcript else []
+                    recording._transcript_parts.append(text)
+                    recording.transcript = "".join(recording._transcript_parts)
                     recording.transcript_chunks_count += 1
                     recording.updated_at = datetime.utcnow()
 
@@ -165,35 +168,33 @@ class ClassRecordingService:
             recording.status = "processing"
             await session.commit()
 
-        try:
-            # Generar resumen con IA (llamada única al final)
-            summary = await self._generate_summary(
-                class_name=recording.class_name,
-                teacher_name=recording.teacher_name,
-                transcript=recording.transcript
-            )
+            try:
+                # Generar resumen con IA (llamada única al final)
+                summary = await self._generate_summary(
+                    class_name=recording.class_name,
+                    teacher_name=recording.teacher_name,
+                    transcript=recording.transcript
+                )
 
-            # Actualizar con resumen
-            async with get_primary_session() as session:
-                recording = await session.get(ClassRecording, recording_id)
+                # Actualizar con resumen
                 recording.summary = summary
                 recording.summary_generated_at = datetime.utcnow()
                 recording.status = "completed"
                 await session.commit()
 
-            logger.info(f"✅ Grabación finalizada: {recording_id} - Resumen generado")
-            return recording
+                logger.info(f"✅ Grabación finalizada: {recording_id} - Resumen generado")
+                return recording
 
-        except Exception as e:
-            logger.error(f"❌ Error generando resumen {recording_id}: {e}")
-
-            async with get_primary_session() as session:
-                recording = await session.get(ClassRecording, recording_id)
+            except Exception as e:
+                logger.error(f"❌ Error generando resumen {recording_id}: {e}")
+                
+                # Rollback y marcar error
+                await session.rollback()
                 recording.status = "error"
-                recording.error_message = f"Error generando resumen: {str(e)}"
+                recording.error_message = f"Error generando resumen: {str(e)[:500]}"
                 await session.commit()
 
-            return recording
+                return recording
 
     async def _generate_summary(
         self,
