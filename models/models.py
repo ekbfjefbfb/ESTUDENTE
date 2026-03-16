@@ -2,11 +2,11 @@
 Modelos de Base de Datos Enterprise - Mi Backend Super IA
 Incluye modelos para agentes personalizados, perfiles dinámicos y integraciones
 """
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, Float, JSON, Enum
+from sqlalchemy import Column, String, Integer, DateTime, Float, Text, Boolean, ForeignKey, JSON, func, select, and_, delete, update, Date, Enum
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from datetime import datetime
+from datetime import datetime, date
 from typing import Dict, Any, List, Optional
 import enum
 import uuid
