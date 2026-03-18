@@ -345,7 +345,14 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "version": APP_VERSION,
+        "git_sha": str(os.getenv("GIT_SHA", "")),
         "environment": ENVIRONMENT,
+        "sentry": {
+            "enabled": bool(os.getenv("SENTRY_DSN")),
+            "environment": str(os.getenv("SENTRY_ENVIRONMENT") or ENVIRONMENT),
+            "traces_sample_rate": float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0") or 0),
+            "profiles_sample_rate": float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", "0") or 0),
+        },
         "components": {
             "database": "unknown",
             "cache": "unknown",
@@ -378,6 +385,13 @@ async def health_check():
     health_status["components"]["ai_models"] = "ready"
     
     return health_status
+
+
+@app.get("/api/_debug/sentry-test", tags=["Debug"])
+async def sentry_test():
+    if not DEBUG:
+        raise HTTPException(status_code=404, detail="not_found")
+    1 / 0
 
 @app.get("/metrics", tags=["Monitoring"])
 async def metrics():
