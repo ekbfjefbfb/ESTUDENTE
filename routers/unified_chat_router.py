@@ -37,10 +37,17 @@ def _user_requested_web_search(message: str) -> bool:
         return False
     return bool(
         re.search(
-            r"\b(busca|buscar|buscame|búscame|investiga|investigar|search|googlea|googlear|web|en internet|en la web)\b",
+            r"\b(busca|buscar|buscame|búscame|investiga|investigar|search|googlea|googlear|web|en internet|en la web|muestrame|muéstrame|muestra|mostrar)\b",
             msg,
         )
     )
+
+
+def _user_requested_images(message: str) -> bool:
+    msg = str(message or "").strip().lower()
+    if not msg:
+        return False
+    return bool(re.search(r"\b(imagen|imagenes|imágenes|foto|fotos|pictures|images)\b", msg))
 
 # =========================
 # SCHEMAS
@@ -705,6 +712,8 @@ def build_context_prompt(user_context: Dict[str, Any]) -> str:
     web_search_results = user_context.get("web_search_results")
     if isinstance(web_search_results, list) and web_search_results:
         prompt_parts.append("\n🔎 RESULTADOS WEB (DuckDuckGo):")
+        if user_context.get("web_search_images_requested"):
+            prompt_parts.append("- Nota: el usuario pidió imágenes. Describe lo que se ve usando los thumbnails/imagenes y snippets.")
         for r in web_search_results[:3]:
             if not isinstance(r, dict):
                 continue
@@ -1315,6 +1324,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 if ddg_sources:
                     user_context = dict(user_context)
                     user_context["web_search_results"] = list(ddg_sources or [])[:3]
+                    if _user_requested_images(user_message):
+                        user_context["web_search_images_requested"] = True
             if yt_video_id:
                 await _ws_send_status(websocket, "Leyendo transcripción de YouTube...")
                 yt = await youtube_transcript_service.fetch_transcript_text(video_id=yt_video_id)
