@@ -602,20 +602,30 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
                 else:
                     raise
             
-            # Sesiones recientes con transcripción
-            stmt_sessions = select(RecordingSession).where(
-                and_(
-                    RecordingSession.user_id == user_id,
-                    RecordingSession.transcript.isnot(None),
-                    RecordingSession.transcript != ""
-                )
-            ).order_by(RecordingSession.created_at.desc()).limit(3)
-            result = await db.execute(stmt_sessions)
-            sessions = result.scalars().all()
-            context["recent_sessions"] = [
-                {"id": s.id, "title": s.title, "date": s.created_at.isoformat()}
-                for s in sessions
-            ]
+            try:
+                stmt_sessions = select(RecordingSession).where(
+                    and_(
+                        RecordingSession.user_id == user_id,
+                        RecordingSession.transcript.isnot(None),
+                        RecordingSession.transcript != ""
+                    )
+                ).order_by(RecordingSession.created_at.desc()).limit(3)
+                result = await db.execute(stmt_sessions)
+                sessions = result.scalars().all()
+                context["recent_sessions"] = [
+                    {"id": s.id, "title": s.title, "date": s.created_at.isoformat()}
+                    for s in sessions
+                ]
+            except Exception as e:
+                msg = str(e)
+                if "relation \"recording_sessions\" does not exist" in msg:
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
+                    context["recent_sessions"] = []
+                else:
+                    raise
     except Exception as e:
         logger.error(f"Error al obtener contexto de usuario: {e}")
         
@@ -1341,7 +1351,6 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 "latency_ms": latency_ms,
                 "query": query,
             }
-            await _ws_send_status(websocket, "Guardando memoria...")
             memory_id = await hub_memory_service.save_memory(
                 user_id=user_id,
                 text=text,
