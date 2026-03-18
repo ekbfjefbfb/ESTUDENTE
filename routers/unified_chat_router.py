@@ -130,8 +130,28 @@ def _tail_bytes_for_pcm16(*, buf: bytearray, sample_rate: int, tail_window_ms: i
 
 async def _ws_send_json(websocket: WebSocket, payload: Dict[str, Any]) -> None:
     try:
+        from starlette.websockets import WebSocketState
+
+        if websocket.client_state != WebSocketState.CONNECTED:
+            return
         await websocket.send_text(json.dumps(payload, ensure_ascii=False))
     except Exception as e:
+        try:
+            from websockets.exceptions import ConnectionClosed
+        except Exception:
+            ConnectionClosed = None
+
+        if ConnectionClosed is not None and isinstance(e, ConnectionClosed):
+            return
+
+        try:
+            from starlette.websockets import WebSocketDisconnect
+        except Exception:
+            WebSocketDisconnect = None
+
+        if WebSocketDisconnect is not None and isinstance(e, WebSocketDisconnect):
+            return
+
         logger.error(f"Error sending WebSocket JSON: {e}")
         raise
 
@@ -517,53 +537,63 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
             today = date.today()
             end_week = today + timedelta(days=7)
             
-            # Tareas de hoy - use lowercase string literals directly
-            stmt_tasks_today = select(SessionItem).where(
-                and_(
-                    SessionItem.user_id == user_id,
-                    SessionItem.item_type == "task",
-                    SessionItem.due_date >= datetime.combine(today, datetime.min.time()),
-                    SessionItem.status != "done"
-                )
-            ).limit(10)
-            result = await db.execute(stmt_tasks_today)
-            tasks_today = result.scalars().all()
-            context["tasks_today"] = [
-                {"id": t.id, "title": t.title, "due_date": t.due_date.isoformat() if t.due_date else None}
-                for t in tasks_today
-            ]
-            
-            # Tareas próximas (próxima semana) - use lowercase string literals
-            stmt_tasks_upcoming = select(SessionItem).where(
-                and_(
-                    SessionItem.user_id == user_id,
-                    SessionItem.item_type == "task",
-                    SessionItem.due_date >= datetime.combine(today, datetime.min.time()),
-                    SessionItem.due_date < datetime.combine(end_week, datetime.max.time()),
-                    SessionItem.status != "done"
-                )
-            ).order_by(SessionItem.due_date).limit(10)
-            result = await db.execute(stmt_tasks_upcoming)
-            tasks_upcoming = result.scalars().all()
-            context["tasks_upcoming"] = [
-                {"id": t.id, "title": t.title, "due_date": t.due_date.isoformat() if t.due_date else None}
-                for t in tasks_upcoming
-            ]
-            
-            # Puntos clave recientes - use lowercase string literals
-            stmt_points = select(SessionItem).where(
-                and_(
-                    SessionItem.user_id == user_id,
-                    SessionItem.item_type == "key_point",
-                    SessionItem.created_at >= datetime.combine(today - timedelta(days=7), datetime.min.time())
-                )
-            ).limit(5)
-            result = await db.execute(stmt_points)
-            points = result.scalars().all()
-            context["key_points_recent"] = [
-                {"id": p.id, "content": p.content[:100], "created_at": p.created_at.isoformat()}
-                for p in points
-            ]
+            try:
+                # Tareas de hoy - use lowercase string literals directly
+                stmt_tasks_today = select(SessionItem).where(
+                    and_(
+                        SessionItem.user_id == user_id,
+                        SessionItem.item_type == "task",
+                        SessionItem.due_date >= datetime.combine(today, datetime.min.time()),
+                        SessionItem.status != "done",
+                    )
+                ).limit(10)
+                result = await db.execute(stmt_tasks_today)
+                tasks_today = result.scalars().all()
+                context["tasks_today"] = [
+                    {"id": t.id, "title": t.title, "due_date": t.due_date.isoformat() if t.due_date else None}
+                    for t in tasks_today
+                ]
+
+                # Tareas próximas (próxima semana) - use lowercase string literals
+                stmt_tasks_upcoming = select(SessionItem).where(
+                    and_(
+                        SessionItem.user_id == user_id,
+                        SessionItem.item_type == "task",
+                        SessionItem.due_date >= datetime.combine(today, datetime.min.time()),
+                        SessionItem.due_date < datetime.combine(end_week, datetime.max.time()),
+                        SessionItem.status != "done",
+                    )
+                ).order_by(SessionItem.due_date).limit(10)
+                result = await db.execute(stmt_tasks_upcoming)
+                tasks_upcoming = result.scalars().all()
+                context["tasks_upcoming"] = [
+                    {"id": t.id, "title": t.title, "due_date": t.due_date.isoformat() if t.due_date else None}
+                    for t in tasks_upcoming
+                ]
+
+                # Puntos clave recientes - use lowercase string literals
+                stmt_points = select(SessionItem).where(
+                    and_(
+                        SessionItem.user_id == user_id,
+                        SessionItem.item_type == "key_point",
+                        SessionItem.created_at
+                        >= datetime.combine(today - timedelta(days=7), datetime.min.time()),
+                    )
+                ).limit(5)
+                result = await db.execute(stmt_points)
+                points = result.scalars().all()
+                context["key_points_recent"] = [
+                    {"id": p.id, "content": p.content[:100], "created_at": p.created_at.isoformat()}
+                    for p in points
+                ]
+            except Exception as e:
+                msg = str(e)
+                if "relation \"session_items\" does not exist" in msg:
+                    context["tasks_today"] = []
+                    context["tasks_upcoming"] = []
+                    context["key_points_recent"] = []
+                else:
+                    raise
             
             # Sesiones recientes con transcripción
             stmt_sessions = select(RecordingSession).where(
