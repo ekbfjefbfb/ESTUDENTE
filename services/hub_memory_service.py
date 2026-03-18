@@ -24,12 +24,13 @@ class HubMemoryService:
         self,
         *,
         user_id: str,
+        memory_id: Optional[str] = None,
         text: str,
         sources: List[Dict[str, str]],
         query: str,
         debug: Dict[str, Any],
     ) -> str:
-        memory_id = str(uuid.uuid4())
+        memory_id = str(memory_id or uuid.uuid4())
         payload = {
             "memory_id": memory_id,
             "user_id": str(user_id),

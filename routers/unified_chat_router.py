@@ -1351,13 +1351,22 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 "latency_ms": latency_ms,
                 "query": query,
             }
-            memory_id = await hub_memory_service.save_memory(
-                user_id=user_id,
-                text=text,
-                sources=sources,
-                query=query,
-                debug=debug,
-            )
+            memory_id = str(uuid.uuid4())
+
+            async def _persist_memory() -> None:
+                try:
+                    await hub_memory_service.save_memory(
+                        user_id=user_id,
+                        memory_id=memory_id,
+                        text=text,
+                        sources=sources,
+                        query=query,
+                        debug=debug,
+                    )
+                except Exception as e:
+                    logger.warning(f"hub_memory_persist_failed: {e}")
+
+            asyncio.create_task(_persist_memory())
 
             # 4) Mensaje final (contrato estricto: type=complete)
             await _ws_send_json(
