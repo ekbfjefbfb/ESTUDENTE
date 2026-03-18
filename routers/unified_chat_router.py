@@ -144,8 +144,9 @@ async def _ws_heartbeat(websocket: WebSocket):
                 from starlette.websockets import WebSocketState
 
                 if websocket.client_state == WebSocketState.CONNECTED:
-                    await websocket.send_json({"type": "ping", "ts": _ws_now_iso()})
-                    logger.debug("Sent WS heartbeat ping")
+                    # Importante: NO enviar mensajes fuera del contrato (token/complete/error)
+                    # El heartbeat queda como chequeo de conexión.
+                    logger.debug("WS heartbeat check: connected")
             except Exception:
                 # Conexión probablemente cerrada, salir del loop
                 break
@@ -478,7 +479,7 @@ async def get_progress_stats(user=Depends(get_current_user)):
 # =========================
 # FUNCIONES DE CONTEXTO
 # =========================
-
+ 
 async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
     # REDEPLOY 2026-03-12: Fixed enum values - using lowercase 'task' and 'done'
     """Obtiene contexto completo del usuario: tareas + sesiones recientes"""
@@ -568,6 +569,18 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
     return context
 
 
+async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
+    """Contexto requerido por chat (HTTP y WebSocket)."""
+    context = await _get_user_full_context(user_id)
+
+    # Enriquecer con progreso en memoria si existe
+    progress = _user_progress.get(user_id)
+    if isinstance(progress, dict) and progress.get("last_plan"):
+        context["last_plan"] = progress.get("last_plan")
+
+    return context
+
+
 def build_context_prompt(user_context: Dict[str, Any]) -> str:
     """Construye el prompt de contexto para la IA"""
     prompt_parts = []
@@ -584,10 +597,19 @@ def build_context_prompt(user_context: Dict[str, Any]) -> str:
             due = f" (fecha: {t['due_date']})" if t.get("due_date") else ""
             prompt_parts.append(f"  - {t['title']}{due}")
     
-    if user_context.get("key_points"):
+    key_points = user_context.get("key_points") or user_context.get("key_points_recent")
+    if key_points:
         prompt_parts.append("\n🔑 PUNTOS CLAVE DE CLASES RECIENTES:")
-        for p in user_context["key_points"]:
-            prompt_parts.append(f"  - {p['title']}: {p['content'][:100]}...")
+        for p in key_points:
+            if not isinstance(p, dict):
+                prompt_parts.append(f"  - {str(p)[:100]}...")
+                continue
+            title = str(p.get("title") or "").strip()
+            content = str(p.get("content") or "")
+            if title:
+                prompt_parts.append(f"  - {title}: {content[:100]}...")
+            else:
+                prompt_parts.append(f"  - {content[:100]}...")
     
     if user_context.get("recent_sessions"):
         prompt_parts.append("\n🎓 SESIONES RECIENTES:")
@@ -609,15 +631,12 @@ async def get_ai_response_with_streaming(
     user_context: Dict[str, Any],
     websocket: WebSocket
 ) -> Dict[str, Any]:
-    """
-    Streaming REAL: Envía tokens uno por uno al WebSocket
-    Al finalizar, parsea y retorna structured data
-    """
+    """Streaming REAL: Envía tokens uno por uno al WebSocket."""
     from services.groq_ai_service import chat_with_ai, sanitize_ai_text
     
     context_prompt = build_context_prompt(user_context)
     
-    # Prompt que fuerza JSON estructurado al final
+    # Prompt que fuerza texto plano (sin JSON) para respetar el contrato WS
     system_content = (
         "Eres la Extensión Cognitiva del usuario. Respuestas de 1-3 oraciones máximo.\n\n"
         "ESTILO:\n"
@@ -631,15 +650,10 @@ async def get_ai_response_with_streaming(
         "• Activar grabaciones de audio automáticamente.\n"
         "• Generar documentos APA7, resúmenes, puntos clave.\n"
         "• Recordar TODO: nombres, fechas, preferencias, historial académico.\n\n"
-        "FORMATO DE RESPUESTA (MUY IMPORTANTE):\n"
-        'Primero: tu respuesta en texto plano (1-3 oraciones).\n'
-        'Luego, al FINAL, incluye este JSON estructurado en una línea separada:\n'
-        '{"tasks": [{"title": "...", "due_date": "YYYY-MM-DD", "priority": "high/medium/low"}], '
-        '"plan": [{"step": "...", "duration": "..."}], '
-        '"actions": [{"type": "schedule_class/generate_document", "data": {...}}], '
-        '"response": "tu respuesta aquí"}\n\n'
+        "FORMATO DE RESPUESTA (OBLIGATORIO):\n"
+        "- Devuelve ÚNICAMENTE texto plano.\n"
+        "- NO incluyas JSON, XML, Markdown ni bloques de código.\n"
         "REGLA DE ORO: Ejecuta inmediatamente. Cero confirmaciones.\n"
-        "Ejemplo: clase mañana 8am -> '✅ Clase agendada 8am. Grabación ON. 📚 Resumen listo post-clase.'"
     )
 
     if context_prompt:
@@ -650,17 +664,9 @@ async def get_ai_response_with_streaming(
         {"role": "user", "content": message}
     ]
     
-    # Enviar mensaje de inicio de stream
-    await _ws_send_json(websocket, {
-        "type": "stream_start",
-        "message_id": f"stream_{datetime.utcnow().timestamp()}",
-        "ts": _ws_now_iso()
-    })
-    
     # Acumulador de texto completo
     full_text = ""
-    buffer = ""
-    
+
     try:
         # Obtener el stream de la IA
         stream_generator = await chat_with_ai(
@@ -670,114 +676,34 @@ async def get_ai_response_with_streaming(
             stream=True  # Streaming real
         )
         
-        # Iterar sobre cada chunk del stream
-        json_started = False
+        # Iterar sobre cada chunk del stream (contrato: solo type=token)
         async for chunk in stream_generator:
-            if chunk:
-                full_text += chunk
-                
-                # Detectar inicio del JSON
-                if not json_started:
-                    if '{"tasks"' in full_text or (buffer + chunk).count('{') > 0:
-                        # Verificar si estamos empezando el JSON
-                        if '{"tasks"' in (buffer + chunk) or (buffer + chunk).endswith('{'):
-                            # Enviar lo que queda en buffer antes del JSON
-                            if buffer and not buffer.lstrip().startswith('{'):
-                                await _ws_send_json(websocket, {
-                                    "type": "token",
-                                    "content": buffer,
-                                    "ts": _ws_now_iso()
-                                })
-                            json_started = True
-                            continue
-                    
-                    if not json_started:
-                        buffer += chunk
-                        # Enviar tokens en grupos pequeños para eficiencia
-                        if len(buffer) >= 3 or "\n" in buffer:
-                            await _ws_send_json(websocket, {
-                                "type": "token",
-                                "content": buffer,
-                                "ts": _ws_now_iso()
-                            })
-                            buffer = ""
-        
-        # Enviar cualquier contenido restante en el buffer (solo si no empezó JSON)
-        if buffer and not json_started:
-            await _ws_send_json(websocket, {
-                "type": "token",
-                "content": buffer,
-                "ts": _ws_now_iso()
-            })
-        
-        # Enviar señal de fin de stream
-        await _ws_send_json(websocket, {
-            "type": "stream_end",
-            "ts": _ws_now_iso()
-        })
+            if not chunk:
+                continue
+            full_text += chunk
+            await _ws_send_json(
+                websocket,
+                {
+                    "type": "token",
+                    "content": chunk,
+                },
+            )
         
     except Exception as e:
         logger.error(f"Streaming error: {e}")
-        await _ws_send_json(websocket, {
-            "type": "error",
-            "code": "STREAM_ERROR",
-            "message": str(e),
-            "ts": _ws_now_iso()
-        })
+        await _ws_send_json(
+            websocket,
+            {
+                "type": "error",
+                "message": "stream_error",
+                "debug": {"stack": str(e)},
+            },
+        )
         raise
-    
-    # Parsear structured data del texto completo
-    structured_data = {
-        "tasks": [],
-        "plan": [],
-        "actions": [],
-        "response": full_text,
-        "is_stream": False
+
+    return {
+        "text": sanitize_ai_text(full_text or ""),
     }
-    
-    # Buscar JSON en la respuesta completa
-    json_text = None
-    clean_response = full_text
-    try:
-        # Buscar patrón JSON al final del texto (desde la última llave)
-        # El JSON empieza con { y termina con }
-        json_start = full_text.rfind('{"tasks"')
-        if json_start == -1:
-            json_start = full_text.rfind('{')
-        
-        if json_start != -1:
-            json_candidate = full_text[json_start:]
-            # Verificar que termina con }
-            if json_candidate.rstrip().endswith('}'):
-                parsed = json.loads(json_candidate)
-                if isinstance(parsed, dict) and "tasks" in parsed:
-                    structured_data["tasks"] = parsed.get("tasks", [])
-                    structured_data["plan"] = parsed.get("plan", [])
-                    structured_data["actions"] = parsed.get("actions", [])
-                    # Usar el response del JSON o todo el texto antes del JSON
-                    clean_response = full_text[:json_start].strip()
-                    if parsed.get("response") and not clean_response:
-                        clean_response = parsed.get("response")
-                    structured_data["response"] = clean_response
-                    json_text = json_candidate
-    except Exception as e:
-        logger.debug(f"No JSON found in response or parse failed: {e}")
-        # Si falla el parseo, usar respuesta completa como texto plano
-        clean_response = full_text
-    
-    # Si se encontró JSON, enviar corrección al frontend (sobrescribir el JSON mostrado)
-    if json_text and websocket and hasattr(websocket, 'send_json'):
-        try:
-            # Enviar un update que limpia el JSON del display
-            await _ws_send_json(websocket, {
-                "type": "final_response",
-                "response": clean_response,
-                "ts": _ws_now_iso()
-            })
-        except Exception:
-            pass  # Si falla, la respuesta ya está en full_text
-    
-    return structured_data
 
 
 @router.post("/message", response_model=ChatResponse)
@@ -1185,9 +1111,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 websocket,
                 {
                     "type": "error",
-                    "code": "AUTH_ERROR",
-                    "message": f"auth_failed: {str(auth_error)}",
-                    "ts": _ws_now_iso(),
+                    "message": "auth_failed",
+                    "debug": {"stack": str(auth_error)},
                 },
             )
             await websocket.close(code=1008)
@@ -1200,9 +1125,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 websocket,
                 {
                     "type": "error",
-                    "code": "FORBIDDEN",
-                    "message": "user_id_mismatch",
-                    "ts": _ws_now_iso(),
+                    "message": "forbidden_user_id_mismatch",
+                    "debug": {"token_user_id": str(token_user_id), "path_user_id": str(user_id)},
                 },
             )
             await websocket.close(code=1008)
@@ -1236,9 +1160,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                     websocket,
                     {
                         "type": "error",
-                        "code": "PAYLOAD_TOO_LARGE",
-                        "message": f"message_too_large_max_{max_text_len}",
-                        "ts": _ws_now_iso(),
+                        "message": "payload_too_large",
+                        "debug": {"max_len": max_text_len, "len": len(data)},
                     },
                 )
                 try:
@@ -1255,24 +1178,27 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                     websocket,
                     {
                         "type": "error",
-                        "code": "INVALID_JSON",
                         "message": "invalid_json",
-                        "ts": _ws_now_iso(),
+                        "debug": {"stack": str(e)},
                     },
                 )
                 continue
 
-            messages = [{"role": "user", "content": message_data.get("message", "")}]
-            needs_refresh = should_refresh_context(user_id, messages)
+            from services.ddg_search_service import ddg_search_service
+            from services.hub_memory_service import hub_memory_service
+            start_ts = datetime.utcnow()
 
-            # ========== STREAMING REAL ==========
-            # Enviar tokens uno por uno y al final parsear structured data
+            user_message = str(message_data.get("message", "") or "")
+            messages = [{"role": "user", "content": user_message}]
+            should_refresh_context(user_id, messages)
+
+            # 1) Streaming Groq -> type=token
             try:
-                structured = await get_ai_response_with_streaming(
-                    user_id, 
-                    message_data.get("message", ""), 
+                ai_result = await get_ai_response_with_streaming(
+                    user_id,
+                    user_message,
                     await get_user_context_for_chat(user_id),
-                    websocket
+                    websocket,
                 )
             except Exception as e:
                 logger.exception(f"WebSocket streaming error user_id={user_id}: {e}")
@@ -1280,39 +1206,44 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                     websocket,
                     {
                         "type": "error",
-                        "code": "LLM_ERROR",
-                        "message": str(e),
-                        "ts": _ws_now_iso(),
+                        "message": "llm_error",
+                        "debug": {"stack": str(e)},
                     },
                 )
                 continue
 
-            # Respuesta final directa sin sanitizar
-            final_response = structured.get("response", "")
-            
-            # Enviar respuesta final completa con metadata
+            text = str(ai_result.get("text") or "")
+
+            # 2) MCP-like búsqueda (DuckDuckGo) -> sources
+            # MVP: usar el mismo mensaje como query; si quieres heurística, se ajusta aquí.
+            query = user_message.strip()
+            sources = await ddg_search_service.search(query)
+
+            # 3) Guardar memoria en Redis -> memory_id
+            latency_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
+            debug = {
+                "latency_ms": latency_ms,
+                "query": query,
+            }
+            memory_id = await hub_memory_service.save_memory(
+                user_id=user_id,
+                text=text,
+                sources=sources,
+                query=query,
+                debug=debug,
+            )
+
+            # 4) Mensaje final (contrato estricto: type=complete)
             await _ws_send_json(
                 websocket,
                 {
                     "type": "complete",
-                    "success": True,
-                    "response": final_response,
-                    "message_id": f"ws_{datetime.utcnow().timestamp()}",
-                    "context": {
-                        "needs_refresh": needs_refresh,
-                        "auto_refreshed": needs_refresh,
-                    },
-                    "structured": {
-                        "tasks": structured.get("tasks", []),
-                        "plan": structured.get("plan", []),
-                        "actions": structured.get("actions", [])
-                    },
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "text": text,
+                    "memory_id": memory_id,
+                    "sources": sources,
+                    "debug": debug,
                 },
             )
-            
-            # Guardar progreso en background (no bloquear)
-            asyncio.create_task(save_user_progress(user_id, message_data.get("message", ""), structured))
 
     except json.JSONDecodeError as e:
         logger.warning(f"WebSocket JSON decode error for user_id={user_id}: {e}")
@@ -1320,10 +1251,9 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             await _ws_send_json(
                 websocket,
                 {
-                    "success": False,
-                    "error": "Invalid JSON",
-                    "error_code": "INVALID_JSON",
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "type": "error",
+                    "message": "invalid_json",
+                    "debug": {"stack": str(e)},
                 },
             )
         except Exception:
@@ -1343,9 +1273,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 websocket,
                 {
                     "type": "error",
-                    "code": "WS_ERROR",
-                    "message": "Error interno en el servidor de chat.",
-                    "ts": _ws_now_iso(),
+                    "message": "ws_error",
+                    "debug": {"stack": str(e)},
                 },
             )
         except Exception:
@@ -1376,9 +1305,8 @@ async def voice_stream_ws(websocket: WebSocket):
             websocket,
             {
                 "type": "error",
-                "code": "UNAUTHORIZED",
-                "message": f"auth_failed: {str(e)}",
-                "ts": _ws_now_iso(),
+                "message": "auth_failed",
+                "debug": {"stack": str(e)},
             },
         )
         await websocket.close(code=1008)
@@ -1432,7 +1360,7 @@ async def voice_stream_ws(websocket: WebSocket):
                     logger.warning(f"Voice WS invalid JSON: {e}")
                     await _ws_send_json(
                         websocket,
-                        {"type": "error", "code": "INVALID_JSON", "message": "invalid_json", "ts": _ws_now_iso()},
+                        {"type": "error", "message": "invalid_json", "debug": {"stack": str(e)}},
                     )
                     continue
 
@@ -1448,7 +1376,7 @@ async def voice_stream_ws(websocket: WebSocket):
                     logger.warning(f"Voice WS unknown message type: {mtype}")
                     await _ws_send_json(
                         websocket,
-                        {"type": "error", "code": "UNKNOWN_MESSAGE", "message": str(mtype), "ts": _ws_now_iso()},
+                        {"type": "error", "message": "unknown_message_type", "debug": {"stack": str(mtype)}},
                     )
 
             if "bytes" in msg and msg["bytes"] is not None:
@@ -1486,7 +1414,7 @@ async def voice_stream_ws(websocket: WebSocket):
         try:
             await _ws_send_json(
                 websocket,
-                {"type": "error", "code": "WS_ERROR", "message": "Error en la conexión de voz.", "ts": _ws_now_iso()},
+                {"type": "error", "message": "voice_ws_error", "debug": {"stack": str(e)}},
             )
         except Exception:
             pass
