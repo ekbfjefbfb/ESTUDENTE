@@ -620,6 +620,11 @@ def build_context_prompt(user_context: Dict[str, Any]) -> str:
     if yt_transcript:
         prompt_parts.append("\n🎥 TRANSCRIPCIÓN YOUTUBE (extracto):")
         prompt_parts.append(yt_transcript[:1200])
+
+    web_extract = str(user_context.get("web_extract") or "").strip()
+    if web_extract:
+        prompt_parts.append("\n🌐 EXTRACTO WEB (texto visible):")
+        prompt_parts.append(web_extract[:1200])
     
     if prompt_parts:
         return "INFORMACIÓN DEL USUARIO:\n" + "\n".join(prompt_parts) + "\n\n"
@@ -1193,6 +1198,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
 
             from services.ddg_search_service import ddg_search_service
             from services.hub_memory_service import hub_memory_service
+            from services.browser_mcp_service import browser_mcp_service
             from services.youtube_transcript_service import youtube_transcript_service
             start_ts = datetime.utcnow()
 
@@ -1202,6 +1208,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
 
             yt_video_id = youtube_transcript_service.extract_video_id(user_message)
             yt_source = None
+            web_source = None
             user_context = await get_user_context_for_chat(user_id)
             if yt_video_id:
                 yt = await youtube_transcript_service.fetch_transcript_text(video_id=yt_video_id)
@@ -1212,6 +1219,19 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                         video_id=yt_video_id,
                         snippet=str(yt.get("text") or "")[:400],
                     )
+
+            if browser_mcp_service.enabled() and not yt_video_id:
+                url = browser_mcp_service.extract_first_url(user_message)
+                if url:
+                    extracted = await browser_mcp_service.fetch_page_extract(url=url)
+                    if isinstance(extracted, dict) and str(extracted.get("text") or "").strip():
+                        user_context = dict(user_context)
+                        user_context["web_extract"] = str(extracted.get("text") or "")
+                        web_source = browser_mcp_service.build_source(
+                            url=str(extracted.get("url") or url),
+                            title=str(extracted.get("title") or ""),
+                            snippet=str(extracted.get("text") or "")[:400],
+                        )
 
             # 1) Streaming Groq -> type=token
             try:
@@ -1239,9 +1259,13 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             # MVP: usar el mismo mensaje como query; si quieres heurística, se ajusta aquí.
             query = user_message.strip()
             sources = await ddg_search_service.search(query)
+            combined_sources = []
             if yt_source:
-                sources = [yt_source] + list(sources or [])
-            sources = list(sources or [])[:3]
+                combined_sources.append(yt_source)
+            if web_source:
+                combined_sources.append(web_source)
+            combined_sources.extend(list(sources or []))
+            sources = list(combined_sources)[:3]
 
             # 3) Guardar memoria en Redis -> memory_id
             latency_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
