@@ -1060,11 +1060,13 @@ async def refresh_user_context(user_id: str, user: dict = Depends(get_current_us
 @router.get("/health")
 async def chat_health():
     """Health check del servicio de chat"""
+    import os
     return {
         "status": "healthy",
         "service": "unified-chat",
         "version": "5.0",
         "features": ["text", "voice", "websocket", "context_monitoring"],
+        "git_sha": os.getenv("GIT_SHA", "unknown"),
         "timestamp": datetime.utcnow().isoformat()
     }
 

@@ -1,6 +1,8 @@
 # Dockerfile para Render.com
 FROM python:3.10-slim
 
+ARG GIT_SHA=unknown
+
 # Configurar directorio de trabajo
 WORKDIR /app
 
@@ -26,6 +28,7 @@ EXPOSE 8000
 # Variables de entorno por defecto
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+ENV GIT_SHA=${GIT_SHA}
 
 # Comando de inicio
 CMD ["sh", "-c", "python -m alembic upgrade heads && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
