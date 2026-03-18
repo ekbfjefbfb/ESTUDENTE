@@ -7,6 +7,7 @@ Diseñado para integración óptima con frontend
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 from datetime import datetime, date, timedelta
@@ -133,6 +134,22 @@ async def _ws_send_json(websocket: WebSocket, payload: Dict[str, Any]) -> None:
     except Exception as e:
         logger.error(f"Error sending WebSocket JSON: {e}")
         raise
+
+
+def _ws_status_enabled() -> bool:
+    return str(os.getenv("WS_STATUS_ENABLED", "0")).strip() in {"1", "true", "True"}
+
+
+async def _ws_send_status(websocket: WebSocket, content: str) -> None:
+    if not _ws_status_enabled():
+        return
+    await _ws_send_json(
+        websocket,
+        {
+            "type": "status",
+            "content": str(content or "")[:200],
+        },
+    )
 
 async def _ws_heartbeat(websocket: WebSocket):
     """Tarea en background para enviar pings y mantener la conexión activa."""
@@ -1211,6 +1228,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             web_source = None
             user_context = await get_user_context_for_chat(user_id)
             if yt_video_id:
+                await _ws_send_status(websocket, "Leyendo transcripción de YouTube...")
                 yt = await youtube_transcript_service.fetch_transcript_text(video_id=yt_video_id)
                 if isinstance(yt, dict) and str(yt.get("text") or "").strip():
                     user_context = dict(user_context)
@@ -1223,6 +1241,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             if browser_mcp_service.enabled() and not yt_video_id:
                 url = browser_mcp_service.extract_first_url(user_message)
                 if url:
+                    await _ws_send_status(websocket, "Leyendo página web...")
                     extracted = await browser_mcp_service.fetch_page_extract(url=url)
                     if isinstance(extracted, dict) and str(extracted.get("text") or "").strip():
                         user_context = dict(user_context)
@@ -1235,6 +1254,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
 
             # 1) Streaming Groq -> type=token
             try:
+                await _ws_send_status(websocket, "Generando respuesta...")
                 ai_result = await get_ai_response_with_streaming(
                     user_id,
                     user_message,
@@ -1258,6 +1278,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             # 2) MCP-like búsqueda (DuckDuckGo) -> sources
             # MVP: usar el mismo mensaje como query; si quieres heurística, se ajusta aquí.
             query = user_message.strip()
+            await _ws_send_status(websocket, "Buscando en la web...")
             sources = await ddg_search_service.search(query)
             combined_sources = []
             if yt_source:
@@ -1273,6 +1294,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 "latency_ms": latency_ms,
                 "query": query,
             }
+            await _ws_send_status(websocket, "Guardando memoria...")
             memory_id = await hub_memory_service.save_memory(
                 user_id=user_id,
                 text=text,
