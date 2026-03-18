@@ -45,7 +45,6 @@ def upgrade() -> None:
             nullable=True,
             server_default=sa.text("now()"),
         ),
-        sa.ForeignKeyConstraint(["session_id"], ["recording_sessions.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
     )
 
@@ -53,9 +52,45 @@ def upgrade() -> None:
     op.create_index("idx_session_items_user_id", "session_items", ["user_id"], unique=False)
     op.create_index("idx_session_items_item_type", "session_items", ["item_type"], unique=False)
 
+    # recording_sessions puede no existir todavía en algunas bases (deploys viejos).
+    # Agregamos el FK solo si la tabla existe para evitar que la migración falle.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = 'recording_sessions'
+            ) THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.table_constraints
+                    WHERE constraint_name = 'fk_session_items_session_id' AND table_name = 'session_items'
+                ) THEN
+                    ALTER TABLE session_items
+                    ADD CONSTRAINT fk_session_items_session_id
+                    FOREIGN KEY (session_id) REFERENCES recording_sessions (id) ON DELETE CASCADE;
+                END IF;
+            END IF;
+        END $$;
+        """
+    )
+
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.table_constraints
+                WHERE constraint_name = 'fk_session_items_session_id' AND table_name = 'session_items'
+            ) THEN
+                ALTER TABLE session_items DROP CONSTRAINT fk_session_items_session_id;
+            END IF;
+        END $$;
+        """
+    )
     op.drop_index("idx_session_items_item_type", table_name="session_items")
     op.drop_index("idx_session_items_user_id", table_name="session_items")
     op.drop_index("idx_session_items_session_id", table_name="session_items")
