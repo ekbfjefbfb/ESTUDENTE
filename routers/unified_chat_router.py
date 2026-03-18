@@ -30,6 +30,18 @@ logger = logging.getLogger("unified_chat_router")
 
 router = APIRouter(prefix="/unified-chat", tags=["Chat IA"])
 
+
+def _user_requested_web_search(message: str) -> bool:
+    msg = str(message or "").strip().lower()
+    if not msg:
+        return False
+    return bool(
+        re.search(
+            r"\b(busca|buscar|buscame|búscame|investiga|investigar|search|googlea|googlear|web|en internet|en la web)\b",
+            msg,
+        )
+    )
+
 # =========================
 # SCHEMAS
 # =========================
@@ -689,6 +701,24 @@ def build_context_prompt(user_context: Dict[str, Any]) -> str:
     if web_extract:
         prompt_parts.append("\n🌐 EXTRACTO WEB (texto visible):")
         prompt_parts.append(web_extract[:1200])
+
+    web_search_results = user_context.get("web_search_results")
+    if isinstance(web_search_results, list) and web_search_results:
+        prompt_parts.append("\n🔎 RESULTADOS WEB (DuckDuckGo):")
+        for r in web_search_results[:3]:
+            if not isinstance(r, dict):
+                continue
+            title = str(r.get("title") or "").strip()[:120]
+            url = str(r.get("url") or "").strip()[:300]
+            snippet = str(r.get("snippet") or "").strip()[:220]
+            line = "- "
+            if title:
+                line += title
+            if url:
+                line += f" ({url})"
+            if snippet:
+                line += f" — {snippet}"
+            prompt_parts.append(line[:700])
     
     if prompt_parts:
         return "INFORMACIÓN DEL USUARIO:\n" + "\n".join(prompt_parts) + "\n\n"
@@ -1274,6 +1304,17 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             yt_source = None
             web_source = None
             user_context = await get_user_context_for_chat(user_id)
+
+            ddg_sources = []
+            if _user_requested_web_search(user_message):
+                await _ws_send_status(websocket, "Buscando en la web...")
+                try:
+                    ddg_sources = await ddg_search_service.search(user_message.strip())
+                except Exception:
+                    ddg_sources = []
+                if ddg_sources:
+                    user_context = dict(user_context)
+                    user_context["web_search_results"] = list(ddg_sources or [])[:3]
             if yt_video_id:
                 await _ws_send_status(websocket, "Leyendo transcripción de YouTube...")
                 yt = await youtube_transcript_service.fetch_transcript_text(video_id=yt_video_id)
@@ -1302,12 +1343,6 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             # 1) Streaming Groq -> type=token
             try:
                 await _ws_send_status(websocket, "Generando respuesta...")
-                query = user_message.strip()
-                ddg_task = None
-                if query:
-                    await _ws_send_status(websocket, "Buscando en la web...")
-                    ddg_task = asyncio.create_task(ddg_search_service.search(query))
-
                 ai_result = await get_ai_response_with_streaming(
                     user_id,
                     user_message,
@@ -1332,11 +1367,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             # MVP: usar el mismo mensaje como query; si quieres heurística, se ajusta aquí.
             query = user_message.strip()
             sources = []
-            if ddg_task is not None:
-                try:
-                    sources = await ddg_task
-                except Exception:
-                    sources = []
+            if isinstance(ddg_sources, list) and ddg_sources:
+                sources = list(ddg_sources)
             combined_sources = []
             if yt_source:
                 combined_sources.append(yt_source)
