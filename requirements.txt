@@ -39,6 +39,9 @@ reportlab==4.2.5
 aiolimiter==1.1.0
 duckduckgo-search==6.3.7
 
+# YouTube transcript
+youtube-transcript-api==1.2.4
+
 # Embeddings
 numpy==1.26.4
 

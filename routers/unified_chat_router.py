@@ -615,6 +615,11 @@ def build_context_prompt(user_context: Dict[str, Any]) -> str:
         prompt_parts.append("\n🎓 SESIONES RECIENTES:")
         for s in user_context["recent_sessions"]:
             prompt_parts.append(f"  - {s['class_name']}: {s['topic'] or 'Sin tema'}")
+
+    yt_transcript = str(user_context.get("youtube_transcript") or "").strip()
+    if yt_transcript:
+        prompt_parts.append("\n🎥 TRANSCRIPCIÓN YOUTUBE (extracto):")
+        prompt_parts.append(yt_transcript[:1200])
     
     if prompt_parts:
         return "INFORMACIÓN DEL USUARIO:\n" + "\n".join(prompt_parts) + "\n\n"
@@ -1188,18 +1193,32 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
 
             from services.ddg_search_service import ddg_search_service
             from services.hub_memory_service import hub_memory_service
+            from services.youtube_transcript_service import youtube_transcript_service
             start_ts = datetime.utcnow()
 
             user_message = str(message_data.get("message", "") or "")
             messages = [{"role": "user", "content": user_message}]
             should_refresh_context(user_id, messages)
 
+            yt_video_id = youtube_transcript_service.extract_video_id(user_message)
+            yt_source = None
+            user_context = await get_user_context_for_chat(user_id)
+            if yt_video_id:
+                yt = await youtube_transcript_service.fetch_transcript_text(video_id=yt_video_id)
+                if isinstance(yt, dict) and str(yt.get("text") or "").strip():
+                    user_context = dict(user_context)
+                    user_context["youtube_transcript"] = str(yt.get("text") or "")
+                    yt_source = youtube_transcript_service.build_source(
+                        video_id=yt_video_id,
+                        snippet=str(yt.get("text") or "")[:400],
+                    )
+
             # 1) Streaming Groq -> type=token
             try:
                 ai_result = await get_ai_response_with_streaming(
                     user_id,
                     user_message,
-                    await get_user_context_for_chat(user_id),
+                    user_context,
                     websocket,
                 )
             except Exception as e:
@@ -1220,6 +1239,9 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             # MVP: usar el mismo mensaje como query; si quieres heurística, se ajusta aquí.
             query = user_message.strip()
             sources = await ddg_search_service.search(query)
+            if yt_source:
+                sources = [yt_source] + list(sources or [])
+            sources = list(sources or [])[:3]
 
             # 3) Guardar memoria en Redis -> memory_id
             latency_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
