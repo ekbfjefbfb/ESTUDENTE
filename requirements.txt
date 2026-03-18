@@ -54,6 +54,7 @@ redis==4.6.0
 tenacity==8.2.3
 aioredis==2.0.1
 json-log-formatter==1.0
+sentry-sdk==2.17.0
 
 # Protobuf tooling (kept)
 grpcio==1.62.3

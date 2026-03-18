@@ -37,6 +37,37 @@ from config import (
     ALLOWED_HOSTS
 )
 
+# =============================================
+# SENTRY (observability) - fail-open
+# =============================================
+try:
+    from config import SENTRY_DSN
+
+    if SENTRY_DSN:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.logging import LoggingIntegration
+
+        traces_sample_rate = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0"))
+        profiles_sample_rate = float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", "0"))
+
+        sentry_logging = LoggingIntegration(
+            level=logging.INFO,
+            event_level=logging.ERROR,
+        )
+
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            environment=os.getenv("SENTRY_ENVIRONMENT") or ENVIRONMENT,
+            send_default_pii=str(os.getenv("SENTRY_SEND_DEFAULT_PII", "false")).lower()
+            in {"1", "true", "t", "yes"},
+            traces_sample_rate=traces_sample_rate,
+            profiles_sample_rate=profiles_sample_rate,
+            integrations=[FastApiIntegration(), sentry_logging],
+        )
+except Exception:
+    pass
+
 # Database
 from database.db_enterprise import get_async_db
 
