@@ -1185,7 +1185,7 @@ class RecordingSession(Base):
     user = relationship("User")
     chunks = relationship("TranscriptChunk", back_populates="session", cascade="all, delete-orphan")
     items = relationship("SessionItem", back_populates="session", cascade="all, delete-orphan")
-    scheduled = relationship("ScheduledRecording", back_populates="recording_session", foreign_keys=[scheduled_id])
+    scheduled = relationship("ScheduledRecording", foreign_keys=[scheduled_id])
 
 class TranscriptChunk(Base):
     """📝 Modelo Unificado de Chunk de Transcripción"""
@@ -1294,7 +1294,7 @@ class ScheduledRecording(Base):
 
     # Relaciones
     user = relationship("User")
-    recording_session = relationship("RecordingSession", foreign_keys=[recording_session_id], back_populates="scheduled")
+    recording_session = relationship("RecordingSession", foreign_keys=[recording_session_id])
 
 
 class UserContext(Base):
