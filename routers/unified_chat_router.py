@@ -592,6 +592,10 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
             except Exception as e:
                 msg = str(e)
                 if "relation \"session_items\" does not exist" in msg:
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
                     context["tasks_today"] = []
                     context["tasks_upcoming"] = []
                     context["key_points_recent"] = []
