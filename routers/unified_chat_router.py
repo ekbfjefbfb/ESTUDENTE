@@ -157,7 +157,10 @@ async def _ws_send_json(websocket: WebSocket, payload: Dict[str, Any]) -> None:
 
 
 def _ws_status_enabled() -> bool:
-    return str(os.getenv("WS_STATUS_ENABLED", "0")).strip() in {"1", "true", "True"}
+    raw = os.getenv("WS_STATUS_ENABLED")
+    if raw is None:
+        return True
+    return str(raw).strip() in {"1", "true", "True"}
 
 
 async def _ws_send_status(websocket: WebSocket, content: str) -> None:
