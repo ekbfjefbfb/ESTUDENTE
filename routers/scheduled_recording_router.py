@@ -84,6 +84,28 @@ async def schedule_from_chat(
     # Obtener contexto del usuario
     async with get_primary_session() as session:
         user_context = await session.get(UserContext, user["user_id"])
+
+        recent_classes = []
+        try:
+            recent_q = (
+                select(ScheduledRecording.class_name, ScheduledRecording.teacher_name)
+                .where(ScheduledRecording.user_id == user["user_id"])
+                .order_by(desc(ScheduledRecording.scheduled_at))
+                .limit(5)
+            )
+            recent_res = await session.execute(recent_q)
+            for class_name, teacher_name in recent_res.all():
+                cn = str(class_name or "").strip()
+                tn = str(teacher_name or "").strip()
+                if cn:
+                    recent_classes.append(
+                        {
+                            "class_name": cn[:200],
+                            "teacher_name": tn[:200] if tn else None,
+                        }
+                    )
+        except Exception:
+            recent_classes = []
         
         context = {
             "timezone": user_context.timezone if user_context else "America/Mexico_City",
@@ -91,7 +113,7 @@ async def schedule_from_chat(
                 "lat": user_context.current_location_lat if user_context else None,
                 "lng": user_context.current_location_lng if user_context else None
             } if user_context else None,
-            "recent_classes": []  # TODO: Obtener clases recientes del usuario
+            "recent_classes": recent_classes  # TODO: Obtener clases recientes del usuario
         }
     
     # Extraer intención
