@@ -73,21 +73,22 @@ async def get_redis_client():
     """
     Obtiene cliente Redis para manejo de tokens
     """
-    global redis_client
     global _redis_unavailable_until
     now = time.time()
     if _redis_unavailable_until and now < _redis_unavailable_until:
         return None
-    if redis_client is None:
-        try:
-            redis_client = redis.from_url(REDIS_URL)
-            await redis_client.ping()
-            logger.info("✅ Redis conectado para auth")
-        except Exception as e:
-            logger.warning(f"⚠️ Redis no disponible para auth: {e}")
-            redis_client = None
+
+    try:
+        from services.redis_service import get_redis as get_redis_enterprise
+        redis_conn = await get_redis_enterprise()
+        if redis_conn is None:
             _redis_unavailable_until = now + 60.0
-    return redis_client
+            return None
+        return redis_conn
+    except Exception as e:
+        logger.warning(f"⚠️ Redis no disponible para auth: {e}")
+        _redis_unavailable_until = now + 60.0
+        return None
 
 async def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
     """
