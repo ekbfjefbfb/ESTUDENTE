@@ -1255,6 +1255,12 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             # 1) Streaming Groq -> type=token
             try:
                 await _ws_send_status(websocket, "Generando respuesta...")
+                query = user_message.strip()
+                ddg_task = None
+                if query:
+                    await _ws_send_status(websocket, "Buscando en la web...")
+                    ddg_task = asyncio.create_task(ddg_search_service.search(query))
+
                 ai_result = await get_ai_response_with_streaming(
                     user_id,
                     user_message,
@@ -1278,8 +1284,12 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             # 2) MCP-like búsqueda (DuckDuckGo) -> sources
             # MVP: usar el mismo mensaje como query; si quieres heurística, se ajusta aquí.
             query = user_message.strip()
-            await _ws_send_status(websocket, "Buscando en la web...")
-            sources = await ddg_search_service.search(query)
+            sources = []
+            if ddg_task is not None:
+                try:
+                    sources = await ddg_task
+                except Exception:
+                    sources = []
             combined_sources = []
             if yt_source:
                 combined_sources.append(yt_source)

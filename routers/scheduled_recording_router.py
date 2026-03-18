@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, desc, and_
 
 from utils.auth import get_current_user
+from utils.auth import create_access_token
 from models.models import ScheduledRecording, UserContext, User
 from database.db_enterprise import get_primary_session
 from services.chat_intent_extractor import chat_intent_extractor, ScheduleIntent
@@ -197,8 +198,14 @@ async def get_pending_recording(
         await session.commit()
         
         # Generar token temporal para WebSocket (1 hora de validez)
-        # TODO: Implementar JWT temporal
-        recording_token = "temp_token_placeholder"
+        recording_token = await create_access_token(
+            {
+                "sub": str(user["user_id"]),
+                "scope": "scheduled_recording",
+                "scheduled_recording_id": str(pending.id),
+            },
+            expires_delta=timedelta(hours=1),
+        )
         
         return PendingRecordingResponse(
             should_record=True,

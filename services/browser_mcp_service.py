@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import os
 import re
 from typing import Any, Dict, Optional
@@ -45,8 +46,44 @@ class BrowserMcpService:
             "snippet": (snippet or "")[:500],
         }
 
+    def is_url_allowed(self, url: str) -> bool:
+        try:
+            p = urlparse(url)
+            if p.scheme not in {"http", "https"}:
+                return False
+            host = (p.hostname or "").strip().lower()
+            if not host:
+                return False
+            if host in {"localhost"}:
+                return False
+            if host.endswith(".local"):
+                return False
+
+            try:
+                ip = ipaddress.ip_address(host)
+                if (
+                    ip.is_private
+                    or ip.is_loopback
+                    or ip.is_link_local
+                    or ip.is_multicast
+                    or ip.is_reserved
+                    or ip.is_unspecified
+                ):
+                    return False
+            except ValueError:
+                pass
+
+            if host in {"169.254.169.254", "metadata.google.internal"}:
+                return False
+
+            return True
+        except Exception:
+            return False
+
     async def fetch_page_extract(self, *, url: str) -> Optional[Dict[str, Any]]:
         if not url:
+            return None
+        if not self.is_url_allowed(url):
             return None
 
         async def _run() -> Optional[Dict[str, Any]]:

@@ -2,6 +2,7 @@
 FROM python:3.10-slim
 
 ARG GIT_SHA=unknown
+ARG INSTALL_PLAYWRIGHT_BROWSERS=0
 
 # Configurar directorio de trabajo
 WORKDIR /app
@@ -15,6 +16,11 @@ RUN apt-get update && apt-get install -y \
 # Copiar requirements y instalar dependencias Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Optional: install Playwright browsers (Chromium) only when needed
+RUN if [ "$INSTALL_PLAYWRIGHT_BROWSERS" = "1" ]; then \
+    python -m playwright install --with-deps chromium; \
+  fi
 
 # Copiar código de la aplicación
 COPY . .
