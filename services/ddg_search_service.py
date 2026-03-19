@@ -35,12 +35,19 @@ class DDGSearchService:
     def __init__(self):
         self.max_results = int(os.getenv("DDG_MAX_RESULTS", "3"))
         self.timeout_ms = int(os.getenv("DDG_TIMEOUT_MS", "2500"))
+        self.image_timeout_ms = int(os.getenv("DDG_IMAGE_TIMEOUT_MS", "12000"))
         self.region = os.getenv("DDG_REGION", "wt-wt").strip() or "wt-wt"
         self.safesearch = os.getenv("DDG_SAFESEARCH", "moderate").strip() or "moderate"
         self.cache_ttl_s = int(os.getenv("DDG_CACHE_TTL_S", "120"))
         self.retries = int(os.getenv("DDG_RETRIES", "2"))
         self.retry_backoff_ms = int(os.getenv("DDG_RETRY_BACKOFF_MS", "350"))
         self._cache: Dict[str, Tuple[float, List[Dict[str, str]]]] = {}
+
+    def _is_image_query(self, query: str) -> bool:
+        q = (query or "").strip().lower()
+        if not q:
+            return False
+        return any(k in q for k in ("imagen", "imagenes", "image", "foto", "fotos", "muestrame", "muéstrame"))
 
     async def search(self, query: str) -> List[Dict[str, str]]:
         sources, _meta = await self.search_with_meta(query)
@@ -65,10 +72,26 @@ class DDGSearchService:
         last_error: Optional[str] = None
         last_status: str = "failed"
         attempts = max(1, int(self.retries) + 1)
+        is_image_query = self._is_image_query(q)
+        timeout_ms = int(self.image_timeout_ms if is_image_query else self.timeout_ms)
         
         for i in range(attempts):
             try:
-                result = await asyncio.wait_for(self._search_sync(q), timeout=self.timeout_ms / 1000.0)
+                result = await asyncio.wait_for(
+                    self._search_sync(q, prefer_images=is_image_query),
+                    timeout=timeout_ms / 1000.0,
+                )
+                if is_image_query and result and not any(str(r.get("image") or "").strip() for r in result if isinstance(r, dict)):
+                    try:
+                        img_only = await asyncio.wait_for(
+                            self._search_images_only(q),
+                            timeout=timeout_ms / 1000.0,
+                        )
+                        if img_only:
+                            merged = list(img_only) + [r for r in list(result) if isinstance(r, dict)]
+                            result = merged
+                    except Exception:
+                        pass
                 if not result:
                     # Fallback: HTML scrape (no API keys) para ambientes donde DDGS suele fallar (403/rate-limit)
                     result = await self._search_http_fallback(q)
@@ -78,7 +101,14 @@ class DDGSearchService:
                 return list(result), {"status": status, "attempt": i + 1}
             except asyncio.TimeoutError:
                 last_status = "timeout"
-                last_error = f"timeout_ms={self.timeout_ms}"
+                last_error = f"timeout_ms={timeout_ms}"
+                try:
+                    result = await self._search_http_fallback(q)
+                    if result:
+                        self._cache[q] = (loop.time(), list(result))
+                        return list(result), {"status": "ok", "attempt": i + 1, "fallback": "http"}
+                except Exception:
+                    pass
             except Exception as e:
                 msg = str(e)
                 last_error = f"{type(e).__name__}: {msg}" if msg else type(e).__name__
@@ -98,10 +128,37 @@ class DDGSearchService:
         )
         return [], {"status": last_status, "error": str(last_error or ""), "attempts": attempts}
 
-    async def _search_sync(self, query: str) -> List[Dict[str, str]]:
+    async def _search_sync(self, query: str, *, prefer_images: bool = False) -> List[Dict[str, str]]:
         def _run() -> List[Dict[str, str]]:
             sources: List[SearchSource] = []
             with DDGS() as ddgs:
+                # 0. Imágenes (Images) - si el usuario pidió imágenes, priorizar
+                if prefer_images:
+                    try:
+                        img_gen = ddgs.images(
+                            query,
+                            region=self.region,
+                            safesearch=self.safesearch,
+                            max_results=max(self.max_results, 3),
+                        )
+                        for r in img_gen:
+                            title = str(r.get("title") or "").strip()
+                            url = str(r.get("url") or "").strip()
+                            image = str(r.get("image") or "").strip()
+                            if image:
+                                sources.append(
+                                    SearchSource(
+                                        title=title or "Imagen",
+                                        url=url or image,
+                                        image=image,
+                                        snippet="",
+                                    )
+                                )
+                            if len(sources) >= self.max_results + 2:
+                                break
+                    except Exception:
+                        pass
+
                 # 1. Noticias (News)
                 try:
                     for r in ddgs.news(query, region=self.region, safesearch=self.safesearch, max_results=self.max_results):
@@ -150,6 +207,51 @@ class DDGSearchService:
             out: List[Dict[str, str]] = []
             for s in sources:
                 key = (s.url or s.image or s.title).strip()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                out.append(s.to_dict())
+                if len(out) >= self.max_results + 2:
+                    break
+            return out
+
+        return await asyncio.to_thread(_run)
+
+    async def _search_images_only(self, query: str) -> List[Dict[str, str]]:
+        def _run() -> List[Dict[str, str]]:
+            if DDGS is None:
+                return []
+            sources: List[SearchSource] = []
+            with DDGS() as ddgs:
+                try:
+                    img_gen = ddgs.images(
+                        query,
+                        region=self.region,
+                        safesearch=self.safesearch,
+                        max_results=max(self.max_results + 2, 5),
+                    )
+                    for r in img_gen:
+                        title = str(r.get("title") or "").strip()
+                        url = str(r.get("url") or "").strip()
+                        image = str(r.get("image") or "").strip()
+                        if image:
+                            sources.append(
+                                SearchSource(
+                                    title=title or "Imagen",
+                                    url=url or image,
+                                    image=image,
+                                    snippet="",
+                                )
+                            )
+                        if len(sources) >= self.max_results + 2:
+                            break
+                except Exception:
+                    return []
+
+            seen = set()
+            out: List[Dict[str, str]] = []
+            for s in sources:
+                key = (s.image or s.url or s.title).strip()
                 if not key or key in seen:
                     continue
                 seen.add(key)

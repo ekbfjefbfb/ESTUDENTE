@@ -1513,7 +1513,20 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             if web_source:
                 combined_sources.append(web_source)
             combined_sources.extend(list(sources or []))
-            sources = list(combined_sources)[:3]
+            max_sources = 5 if _user_requested_images(user_message) else 3
+            if _user_requested_images(user_message):
+                prioritized = []
+                remainder = []
+                for s in list(combined_sources):
+                    if not isinstance(s, dict):
+                        continue
+                    if str(s.get("image") or "").strip():
+                        prioritized.append(s)
+                    else:
+                        remainder.append(s)
+                sources = (prioritized + remainder)[:max_sources]
+            else:
+                sources = list(combined_sources)[:max_sources]
 
             # 3) Guardar memoria en Redis -> memory_id
             latency_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
