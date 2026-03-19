@@ -274,18 +274,30 @@ async def global_exception_handler(request: Request, exc: Exception):
 
     # Handler global para otras excepciones no capturadas
     logger.error(f"Unhandled exception on {request.url.path}: {exc}", exc_info=True)
-    import traceback
-    stack_trace = traceback.format_exc()
-    
+    request_id = request.headers.get("X-Request-ID", "unknown")
+
+    if DEBUG:
+        import traceback
+
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "success": False,
+                "error": "Internal server error",
+                "message": str(exc),
+                "traceback": traceback.format_exc(),
+                "request_id": request_id,
+            },
+        )
+
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "success": False,
-            "error": "Internal server error",
-            "message": str(exc),
-            "traceback": stack_trace if DEBUG else "Contact support",
-            "request_id": request.headers.get("X-Request-ID", "unknown")
-        }
+            "error": "internal_error",
+            "message": "Internal server error",
+            "request_id": request_id,
+        },
     )
 
 @app.exception_handler(404)

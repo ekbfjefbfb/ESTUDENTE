@@ -212,5 +212,5 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
     except Exception as e:
         logger.error(f"❌ Error crítico WS: {e}")
         try:
-            await websocket.send_json({"type": "error", "message": str(e)})
+            await websocket.send_json({"type": "error", "message": "internal_error"})
         except: pass
