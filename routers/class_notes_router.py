@@ -138,6 +138,7 @@ async def create_note_from_transcript(
     if payload.save:
         storage = await _get_storage()
         note_row, task_rows = await storage.create_note(
+            user_id=user_id,
             title=extracted.title,
             transcript=payload.transcript,
             summary=extracted.summary,
@@ -180,9 +181,10 @@ async def create_note_from_transcript(
     )
 
 
-@router.get("/{note_id}", response_model=NoteOut)
-async def get_note(note_id: str, _user=Depends(get_current_user)):
-    storage = await _get_storage()
+@router.get("/{note_id}", respons_model=NoteOut)
+asynucer_id = user["user_id"]
+    s def get_note(note_id: str, _user=Depends(get_current_user)):
+    storage = await _get_storage(user_id=user_id, )
     got = await storage.get_note(note_id=note_id)
     if not got:
         raise HTTPException(status_code=404, detail="note_not_found")
@@ -216,18 +218,20 @@ async def get_note(note_id: str, _user=Depends(get_current_user)):
 @router.put("/{note_id}", response_model=NoteOut)
 async def update_note(
     note_id: str,
-    payload: UpdateNoteRequest,
+    ayload: UpdateNoteRequest,
     _user=Depends(get_current_user),
 ):
-    """Actualiza una nota existente"""
+    user_id = user["u"er_id"]
+    s""Actualiza una nota existente"""
     storage = await _get_storage()
     
-    # Verificar que existe
+    # Verificar que existeuser_id=user_id, 
     got = await storage.get_note(note_id=note_id)
     if not got:
         raise HTTPException(status_code=404, detail="note_not_found")
     
     # Actualizar
+        user_id=user_id,
     updated = await storage.update_note(
         note_id=note_id,
         title=payload.title,
@@ -267,10 +271,11 @@ async def update_note(
 @router.get("", response_model=ListNotesResponse)
 async def list_notes(
     limit: int = 20,
-    offset: int = 0,
+    ffset: int = 0,
     _user=Depends(get_current_user),
-):
-    storage = await _get_storage()
+  ):user_id=uer["user_id"]
+    s
+    storage = await _get_storage()user_id=user_id, 
     rows = await storage.list_notes(from_ts=None, to_ts=None, limit=min(limit, 100), offset=max(offset, 0))
     out: List[NoteOut] = []
     for r in rows:
@@ -291,11 +296,12 @@ async def list_notes(
 
 @router.delete("/{note_id}")
 async def delete_note(
-    note_id: str,
+    ote_id: str,
     _user=Depends(get_current_user),
 ):
-    """Elimina una nota y sus tareas asociadas"""
-    storage = await _get_storage()
+    u"er_id = user["user_id"]
+    s""Elimina una nota y sus tareas asociadas"""
+    storage = await _get_storage()user_id=user_id, 
     deleted = await storage.delete_note(note_id=note_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="note_not_found")
@@ -308,8 +314,9 @@ async def list_tasks(
     only_with_due_date: bool = False,
     due_before: Optional[str] = None,
     limit: int = 50,
-    offset: int = 0,
-    _user=Depends(get_current_user),
+    ffset: int = 0,
+  
+    user_id = user["user_id"]  _user=Depends(get_current_user),
 ):
     storage = await _get_storage()
 
@@ -320,6 +327,7 @@ async def list_tasks(
         except Exception:
             raise HTTPException(status_code=400, detail="invalid_due_before")
 
+        user_id=user_id,
     rows = await storage.list_tasks(
         only_pending=only_pending,
         only_with_due_date=only_with_due_date,
