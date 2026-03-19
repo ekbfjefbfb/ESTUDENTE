@@ -1421,6 +1421,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 continue
 
             from services.ddg_search_service import ddg_search_service
+            from services.tavily_search_service import tavily_search_service
             from services.hub_memory_service import hub_memory_service
             from services.browser_mcp_service import browser_mcp_service
             from services.youtube_transcript_service import youtube_transcript_service
@@ -1438,20 +1439,51 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             ddg_sources = []
             if _should_web_search(user_id=user_id, message=user_message):
                 await _ws_send_status(websocket, "Buscando en la web...")
-                try:
-                    ddg_sources, ddg_meta = await ddg_search_service.search_with_meta(user_message.strip())
-                except Exception:
-                    ddg_sources = []
-                    ddg_meta = {"status": "failed"}
-                if ddg_sources:
+                ddg_meta = {"status": "skipped"}
+
+                # 1) Tavily (primario) con rotación por user_id
+                tavily_sources: List[Dict[str, str]] = []
+                tavily_meta: Dict[str, Any] = {"status": "disabled"}
+                if tavily_search_service.enabled():
+                    try:
+                        tavily_sources, tavily_meta = await tavily_search_service.search_with_meta(
+                            query=user_message.strip(),
+                            user_id=str(user_id),
+                            include_images=_user_requested_images(user_message),
+                        )
+                    except Exception:
+                        tavily_sources = []
+                        tavily_meta = {"status": "failed"}
+
+                if tavily_sources:
+                    ddg_sources = list(tavily_sources)
                     user_context = dict(user_context)
-                    user_context["web_search_results"] = list(ddg_sources or [])[:3]
+                    user_context["web_search_results"] = list(ddg_sources or [])[:5]
                     if _user_requested_images(user_message):
                         user_context["web_search_images_requested"] = True
                 else:
-                    if isinstance(ddg_meta, dict) and ddg_meta.get("status") not in (None, "ok", "cache_hit"):
+                    # 2) DDG fallback
+                    try:
+                        ddg_sources, ddg_meta = await ddg_search_service.search_with_meta(user_message.strip())
+                    except Exception:
+                        ddg_sources = []
+                        ddg_meta = {"status": "failed"}
+
+                if ddg_sources:
+                    user_context = dict(user_context)
+                    user_context["web_search_results"] = list(ddg_sources or [])[:5]
+                    if _user_requested_images(user_message):
+                        user_context["web_search_images_requested"] = True
+                else:
+                    # no enviar error crudo al cliente; solo un estado
+                    status_val = None
+                    if isinstance(tavily_meta, dict) and tavily_meta.get("status") not in (None, "ok"):
+                        status_val = tavily_meta.get("status")
+                    if status_val is None and isinstance(ddg_meta, dict) and ddg_meta.get("status") not in (None, "ok", "cache_hit"):
+                        status_val = ddg_meta.get("status")
+                    if status_val is not None:
                         user_context = dict(user_context)
-                        user_context["web_search_status"] = str(ddg_meta.get("status") or "failed")
+                        user_context["web_search_status"] = str(status_val or "failed")
             if yt_video_id:
                 await _ws_send_status(websocket, "Leyendo transcripción de YouTube...")
                 yt = await youtube_transcript_service.fetch_transcript_text(video_id=yt_video_id)
