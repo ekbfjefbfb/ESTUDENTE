@@ -835,6 +835,11 @@ def build_context_prompt(user_context: Dict[str, Any]) -> str:
             if snippet:
                 line += f" — {snippet}"
             prompt_parts.append(line[:700])
+
+    web_search_status = str(user_context.get("web_search_status") or "").strip()
+    if web_search_status:
+        prompt_parts.append("\n🔎 ESTADO BÚSQUEDA WEB:")
+        prompt_parts.append(f"- {web_search_status}")
     
     if prompt_parts:
         return "INFORMACIÓN DEL USUARIO:\n" + "\n".join(prompt_parts) + "\n\n"
@@ -1429,14 +1434,19 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             if _should_web_search(user_id=user_id, message=user_message):
                 await _ws_send_status(websocket, "Buscando en la web...")
                 try:
-                    ddg_sources = await ddg_search_service.search(user_message.strip())
+                    ddg_sources, ddg_meta = await ddg_search_service.search_with_meta(user_message.strip())
                 except Exception:
                     ddg_sources = []
+                    ddg_meta = {"status": "failed"}
                 if ddg_sources:
                     user_context = dict(user_context)
                     user_context["web_search_results"] = list(ddg_sources or [])[:3]
                     if _user_requested_images(user_message):
                         user_context["web_search_images_requested"] = True
+                else:
+                    if isinstance(ddg_meta, dict) and ddg_meta.get("status") not in (None, "ok", "cache_hit"):
+                        user_context = dict(user_context)
+                        user_context["web_search_status"] = str(ddg_meta.get("status") or "failed")
             if yt_video_id:
                 await _ws_send_status(websocket, "Leyendo transcripción de YouTube...")
                 yt = await youtube_transcript_service.fetch_transcript_text(video_id=yt_video_id)
