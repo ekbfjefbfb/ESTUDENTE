@@ -761,7 +761,24 @@ def build_context_prompt(user_context: Dict[str, Any]) -> str:
     if user_context.get("recent_sessions"):
         prompt_parts.append("\n🎓 SESIONES RECIENTES:")
         for s in user_context["recent_sessions"]:
-            prompt_parts.append(f"  - {s['class_name']}: {s['topic'] or 'Sin tema'}")
+            if not isinstance(s, dict):
+                prompt_parts.append(f"  - {str(s)[:120]}")
+                continue
+            class_name = str(s.get("class_name") or "").strip()
+            topic = s.get("topic")
+            title = str(s.get("title") or "").strip()
+            date_val = s.get("date")
+            if class_name:
+                topic_text = "Sin tema"
+                if isinstance(topic, str) and topic.strip():
+                    topic_text = topic.strip()
+                prompt_parts.append(f"  - {class_name}: {topic_text[:120]}")
+                continue
+            if title:
+                suffix = f" ({date_val})" if isinstance(date_val, str) and date_val.strip() else ""
+                prompt_parts.append(f"  - {title[:200]}{suffix}")
+                continue
+            prompt_parts.append(f"  - {str(s)[:120]}")
 
     yt_transcript = str(user_context.get("youtube_transcript") or "").strip()
     if yt_transcript:
