@@ -3,12 +3,23 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import json
 import hashlib
-from sqlalchemy.orm import Session
-from database.db_enterprise import get_primary_session as get_db
+import os
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from database.db_enterprise import get_primary_session
 from models.models import UserPermissions, StorageStrategy, CostSavings
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _debug_enabled() -> bool:
+    try:
+        from config import DEBUG as CONFIG_DEBUG
+
+        return bool(CONFIG_DEBUG)
+    except Exception:
+        return str(os.getenv("DEBUG") or "").strip() in {"1", "true", "True"}
 
 class PermissionsService:
     """🔧 Servicio de gestión de permisos de usuario y almacenamiento local"""
@@ -28,76 +39,81 @@ class PermissionsService:
         user_id: str,
         permissions_granted: Dict[str, Any],
         device_info: Dict[str, Any],
-        db: Session
+        db: Optional[AsyncSession] = None
     ) -> Dict[str, Any]:
         """
         📱 Procesa permisos otorgados durante MFA
         """
         try:
             logger.info(f"Processing permissions for user {user_id}")
-            
+
+            if db is None:
+                async with get_primary_session() as session:
+                    return await self.process_user_permissions(
+                        user_id=user_id,
+                        permissions_granted=permissions_granted,
+                        device_info=device_info,
+                        db=session,
+                    )
+
             # 1. Guardar permisos en perfil de usuario
-            permissions_record = await self._save_user_permissions(
-                user_id, permissions_granted, device_info, db
-            )
-            
+            await self._save_user_permissions(user_id, permissions_granted, device_info, db)
+
             # 2. Configurar estrategia de almacenamiento
-            storage_strategy = await self._configure_storage_strategy(
-                user_id, permissions_granted, db
-            )
-            
+            storage_strategy = await self._configure_storage_strategy(user_id, permissions_granted, db)
+
             # 3. Configurar notificaciones
             notification_config = await self._configure_notifications(
-                user_id, permissions_granted.get('notifications', {}), db
+                user_id, permissions_granted.get("notifications", {}), db
             )
-            
+
             # 4. Configurar geolocalización para seguridad
             location_config = await self._configure_location_security(
-                user_id, permissions_granted.get('geolocation', {}), db
+                user_id, permissions_granted.get("geolocation", {}), db
             )
-            
+
             # 5. Calcular ahorro de costos
-            cost_reduction = await self._calculate_cost_savings(
-                user_id, storage_strategy, db
-            )
-            
+            cost_reduction = await self._calculate_cost_savings(user_id, storage_strategy, db)
+
             # 6. Generar respuesta para frontend
             frontend_config = await self._generate_frontend_config(
                 permissions_granted, storage_strategy, cost_reduction
             )
-            
+
             return {
                 "success": True,
                 "permissions_saved": True,
-                "permissions_count": len([p for p in permissions_granted.values() if p.get('permission_granted')]),
+                "permissions_count": len(
+                    [p for p in permissions_granted.values() if isinstance(p, dict) and p.get("permission_granted")]
+                ),
                 "storage_strategy": storage_strategy,
                 "notification_config": notification_config,
                 "location_config": location_config,
                 "cost_reduction_estimate": cost_reduction,
                 "frontend_config": frontend_config,
-                "user_benefits": self._generate_user_benefits(
-                    storage_strategy, cost_reduction
-                )
+                "user_benefits": self._generate_user_benefits(storage_strategy, cost_reduction),
             }
-            
+
         except Exception as e:
             logger.error(f"Error processing permissions for user {user_id}: {str(e)}")
-            raise Exception(f"Error procesando permisos: {str(e)}")
+            detail = str(e) if _debug_enabled() else "permissions_processing_failed"
+            raise Exception(detail)
     
     async def _save_user_permissions(
         self, 
         user_id: str,
         permissions: Dict[str, Any],
         device_info: Dict[str, Any],
-        db: Session
+        db: AsyncSession
     ) -> Optional[UserPermissions]:
         """💾 Guarda permisos de usuario en base de datos"""
         
         try:
             # Buscar registro existente
-            existing = db.query(UserPermissions).filter(
-                UserPermissions.user_id == user_id
-            ).first()
+            result = await db.execute(
+                select(UserPermissions).where(UserPermissions.user_id == user_id).limit(1)
+            )
+            existing = result.scalar_one_or_none()
             
             permissions_data = {
                 "local_storage": permissions.get('local_storage', {}),
@@ -114,8 +130,8 @@ class PermissionsService:
                 existing.permissions_data = permissions_data
                 existing.granted_at = datetime.utcnow()
                 existing.last_updated = datetime.utcnow()
-                db.commit()
-                db.refresh(existing)
+                await db.commit()
+                await db.refresh(existing)
                 return existing
             else:
                 # Crear nuevo
@@ -126,8 +142,8 @@ class PermissionsService:
                     last_updated=datetime.utcnow()
                 )
                 db.add(new_permissions)
-                db.commit()
-                db.refresh(new_permissions)
+                await db.commit()
+                await db.refresh(new_permissions)
                 return new_permissions
         except Exception as e:
             logger.warning(f"Error guardando permisos (tabla puede no existir): {e}")
@@ -137,7 +153,7 @@ class PermissionsService:
         self, 
         user_id: str,
         permissions: Dict[str, Any],
-        db: Session
+        db: AsyncSession
     ) -> Dict[str, Any]:
         """🗄️ Configura estrategia de almacenamiento híbrido"""
         
@@ -193,14 +209,15 @@ class PermissionsService:
         self,
         user_id: str,
         strategy: Dict[str, Any],
-        db: Session
+        db: AsyncSession
     ):
         """💾 Guarda estrategia de almacenamiento"""
         
         try:
-            existing = db.query(StorageStrategy).filter(
-                StorageStrategy.user_id == user_id
-            ).first()
+            result = await db.execute(
+                select(StorageStrategy).where(StorageStrategy.user_id == user_id).limit(1)
+            )
+            existing = result.scalar_one_or_none()
             
             if existing:
                 existing.strategy_config = strategy
@@ -213,8 +230,8 @@ class PermissionsService:
                     last_updated=datetime.utcnow()
                 )
                 db.add(new_strategy)
-            
-            db.commit()
+
+            await db.commit()
         except Exception as e:
             logger.warning(f"Error guardando estrategia (tabla puede no existir): {e}")
             # No propagar error - funcionalidad no crítica
@@ -223,7 +240,7 @@ class PermissionsService:
         self,
         user_id: str,
         notifications: Dict[str, Any],
-        db: Session
+        db: AsyncSession
     ) -> Dict[str, Any]:
         """🔔 Configura sistema de notificaciones"""
         
@@ -264,7 +281,7 @@ class PermissionsService:
         self,
         user_id: str,
         geolocation: Dict[str, Any],
-        db: Session
+        db: AsyncSession
     ) -> Dict[str, Any]:
         """🌍 Configura geolocalización para seguridad"""
         
@@ -302,7 +319,7 @@ class PermissionsService:
         self,
         user_id: str,
         storage_strategy: Dict[str, Any],
-        db: Session
+        db: AsyncSession
     ) -> Dict[str, Any]:
         """💰 Calcula ahorro de costos por almacenamiento local"""
         
@@ -377,14 +394,15 @@ class PermissionsService:
         self,
         user_id: str,
         savings: Dict[str, Any],
-        db: Session
+        db: AsyncSession
     ):
         """💾 Guarda métricas de ahorro de costos"""
         
         try:
-            existing = db.query(CostSavings).filter(
-                CostSavings.user_id == user_id
-            ).first()
+            result = await db.execute(
+                select(CostSavings).where(CostSavings.user_id == user_id).limit(1)
+            )
+            existing = result.scalar_one_or_none()
             
             if existing:
                 existing.monthly_savings_usd = savings["monthly_cost_saved_usd"]
@@ -405,8 +423,8 @@ class PermissionsService:
                     last_calculated=datetime.utcnow()
                 )
                 db.add(new_savings)
-            
-            db.commit()
+
+            await db.commit()
         except Exception as e:
             logger.warning(f"Error guardando cost savings (tabla puede no existir): {e}")
             # No propagar error - funcionalidad no crítica
@@ -469,25 +487,32 @@ class PermissionsService:
     async def get_user_permissions_status(
         self,
         user_id: str,
-        db: Session
+        db: Optional[AsyncSession] = None
     ) -> Dict[str, Any]:
         """📊 Obtiene estado actual de permisos del usuario"""
         
         try:
+            if db is None:
+                async with get_primary_session() as session:
+                    return await self.get_user_permissions_status(user_id=user_id, db=session)
+
             # Obtener permisos
-            permissions = db.query(UserPermissions).filter(
-                UserPermissions.user_id == user_id
-            ).first()
+            result = await db.execute(
+                select(UserPermissions).where(UserPermissions.user_id == user_id).limit(1)
+            )
+            permissions = result.scalar_one_or_none()
             
             # Obtener estrategia de almacenamiento
-            storage = db.query(StorageStrategy).filter(
-                StorageStrategy.user_id == user_id
-            ).first()
+            result = await db.execute(
+                select(StorageStrategy).where(StorageStrategy.user_id == user_id).limit(1)
+            )
+            storage = result.scalar_one_or_none()
             
             # Obtener ahorros
-            savings = db.query(CostSavings).filter(
-                CostSavings.user_id == user_id
-            ).first()
+            result = await db.execute(
+                select(CostSavings).where(CostSavings.user_id == user_id).limit(1)
+            )
+            savings = result.scalar_one_or_none()
             
             return {
                 "permissions": permissions.permissions_data if permissions else {},

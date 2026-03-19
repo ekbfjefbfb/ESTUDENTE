@@ -4,14 +4,25 @@ from datetime import datetime, timedelta
 import json
 import hashlib
 import asyncio
-from sqlalchemy.orm import Session
-from database.db_enterprise import get_primary_session as get_db
+import os
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from database.db_enterprise import get_primary_session
 from models.models import ChatMessage, LocalChatMetadata, ChatSyncStatus
 import logging
 import gzip
 import base64
 
 logger = logging.getLogger(__name__)
+
+
+def _debug_enabled() -> bool:
+    try:
+        from config import DEBUG as CONFIG_DEBUG
+
+        return bool(CONFIG_DEBUG)
+    except Exception:
+        return str(os.getenv("DEBUG") or "").strip() in {"1", "true", "True"}
 
 class LocalChatService:
     """💬 Gestión de chats con almacenamiento local híbrido"""
@@ -32,13 +43,23 @@ class LocalChatService:
         user_id: str,
         message: Dict[str, Any],
         storage_strategy: str,
-        db: Session,
+        db: Optional[AsyncSession] = None,
         priority: str = "medium"
     ) -> Dict[str, Any]:
         """
         💾 Guarda mensaje según estrategia de almacenamiento
         """
         try:
+            if db is None:
+                async with get_primary_session() as session:
+                    return await self.save_message(
+                        user_id=user_id,
+                        message=message,
+                        storage_strategy=storage_strategy,
+                        db=session,
+                        priority=priority,
+                    )
+
             message_id = message.get("id") or self._generate_message_id()
             timestamp = message.get("timestamp") or datetime.utcnow().isoformat()
             content = message.get("content", "")
@@ -82,7 +103,8 @@ class LocalChatService:
                 
         except Exception as e:
             logger.error(f"Error saving message for user {user_id}: {str(e)}")
-            raise Exception(f"Error guardando mensaje: {str(e)}")
+            detail = str(e) if _debug_enabled() else "save_message_failed"
+            raise Exception(detail)
     
     async def _save_to_local_storage(
         self,
@@ -90,7 +112,7 @@ class LocalChatService:
         message_id: str,
         message: Dict[str, Any],
         priority: str,
-        db: Session
+        db: AsyncSession
     ) -> Dict[str, Any]:
         """📱 Guarda mensaje en almacenamiento local (simulado)"""
         
@@ -141,7 +163,7 @@ class LocalChatService:
         message_id: str,
         message: Dict[str, Any],
         priority: str,
-        db: Session
+        db: AsyncSession
     ):
         """☁️ Guarda solo metadata en cloud (ahorro masivo)"""
         
@@ -164,7 +186,7 @@ class LocalChatService:
         )
         
         db.add(metadata_record)
-        db.commit()
+        await db.commit()
         
         logger.info(f"Saved metadata-only record for message {message_id}")
     
@@ -172,7 +194,7 @@ class LocalChatService:
         self,
         user_id: str,
         message: Dict[str, Any],
-        db: Session
+        db: AsyncSession
     ) -> Dict[str, Any]:
         """☁️ Guarda mensaje completo en cloud (método tradicional)"""
         
@@ -193,7 +215,7 @@ class LocalChatService:
         )
         
         db.add(chat_message)
-        db.commit()
+        await db.commit()
         
         return {
             "message_id": message_id,
@@ -205,7 +227,7 @@ class LocalChatService:
         user_id: str,
         message_id: str,
         local_record: Dict[str, Any],
-        db: Session
+        db: AsyncSession
     ):
         """📊 Guarda metadata sobre almacenamiento local"""
         
@@ -222,21 +244,27 @@ class LocalChatService:
         )
         
         db.add(metadata)
-        db.commit()
+        await db.commit()
     
     async def sync_local_messages(
         self,
         user_id: str,
         local_messages: List[Dict[str, Any]],
         force_sync: bool = False,
-        db: Session = None
+        db: Optional[AsyncSession] = None
     ) -> Dict[str, Any]:
         """
         🔄 Sincroniza mensajes locales con cloud cuando sea necesario
         """
         try:
-            if not db:
-                db = next(get_db())
+            if db is None:
+                async with get_primary_session() as session:
+                    return await self.sync_local_messages(
+                        user_id=user_id,
+                        local_messages=local_messages,
+                        force_sync=force_sync,
+                        db=session,
+                    )
             
             logger.info(f"Syncing {len(local_messages)} messages for user {user_id}")
             
@@ -281,13 +309,14 @@ class LocalChatService:
             
         except Exception as e:
             logger.error(f"Error syncing messages for user {user_id}: {str(e)}")
-            raise Exception(f"Error sincronizando mensajes: {str(e)}")
+            detail = str(e) if _debug_enabled() else "sync_messages_failed"
+            raise Exception(detail)
     
     async def _should_sync_message(
         self,
         message: Dict[str, Any],
         user_id: str,
-        db: Session
+        db: AsyncSession
     ) -> bool:
         """🤔 Determina si un mensaje debe sincronizarse con cloud"""
         
@@ -324,7 +353,7 @@ class LocalChatService:
         self,
         user_id: str,
         message: Dict[str, Any],
-        db: Session
+        db: AsyncSession
     ) -> Dict[str, Any]:
         """☁️ Sincroniza mensaje específico con cloud"""
         
@@ -332,10 +361,13 @@ class LocalChatService:
             message_id = message.get("id")
             
             # Verificar si ya existe metadata
-            existing = db.query(ChatMessage).filter(
-                ChatMessage.id == message_id,
-                ChatMessage.user_id == user_id
-            ).first()
+            result = await db.execute(
+                select(ChatMessage).where(
+                    ChatMessage.id == message_id,
+                    ChatMessage.user_id == user_id,
+                ).limit(1)
+            )
+            existing = result.scalar_one_or_none()
             
             if existing and existing.metadata_only:
                 # Actualizar de metadata a contenido completo
@@ -343,8 +375,8 @@ class LocalChatService:
                 existing.metadata_only = False
                 existing.sync_priority = "synced"
                 existing.updated_at = datetime.utcnow()
-                
-                db.commit()
+
+                await db.commit()
                 
                 cost_saved = 0  # Ya no hay ahorro al sincronizar
             else:
@@ -363,42 +395,46 @@ class LocalChatService:
     async def get_user_chat_stats(
         self,
         user_id: str,
-        db: Session
+        db: Optional[AsyncSession] = None
     ) -> Dict[str, Any]:
         """📊 Obtiene estadísticas de chat del usuario"""
         
         try:
+            if db is None:
+                async with get_primary_session() as session:
+                    return await self.get_user_chat_stats(user_id=user_id, db=session)
+
             # Contar mensajes por tipo de almacenamiento
-            local_count = db.query(ChatMessage).filter(
-                ChatMessage.user_id == user_id,
-                ChatMessage.stored_locally == True
-            ).count()
-            
-            cloud_count = db.query(ChatMessage).filter(
-                ChatMessage.user_id == user_id,
-                ChatMessage.stored_locally == False
-            ).count()
-            
-            # Calcular tamaño total
-            total_size_query = db.query(ChatMessage).filter(
-                ChatMessage.user_id == user_id
+            result = await db.execute(
+                select(func.count()).select_from(ChatMessage).where(
+                    ChatMessage.user_id == user_id,
+                    ChatMessage.stored_locally == True,
+                )
             )
-            
-            total_size_bytes = sum([
-                msg.estimated_size_bytes or 0 
-                for msg in total_size_query.all()
-            ])
-            
-            # Calcular ahorros
-            local_messages = db.query(ChatMessage).filter(
-                ChatMessage.user_id == user_id,
-                ChatMessage.stored_locally == True
-            ).all()
-            
-            storage_saved_bytes = sum([
-                msg.estimated_size_bytes or 0 
-                for msg in local_messages
-            ])
+            local_count = int(result.scalar_one() or 0)
+
+            result = await db.execute(
+                select(func.count()).select_from(ChatMessage).where(
+                    ChatMessage.user_id == user_id,
+                    ChatMessage.stored_locally == False,
+                )
+            )
+            cloud_count = int(result.scalar_one() or 0)
+
+            result = await db.execute(
+                select(func.coalesce(func.sum(ChatMessage.estimated_size_bytes), 0)).where(
+                    ChatMessage.user_id == user_id
+                )
+            )
+            total_size_bytes = int(result.scalar_one() or 0)
+
+            result = await db.execute(
+                select(func.coalesce(func.sum(ChatMessage.estimated_size_bytes), 0)).where(
+                    ChatMessage.user_id == user_id,
+                    ChatMessage.stored_locally == True,
+                )
+            )
+            storage_saved_bytes = int(result.scalar_one() or 0)
             
             cost_saved = self._calculate_total_cost_saved(storage_saved_bytes)
             
@@ -436,21 +472,29 @@ class LocalChatService:
         self,
         user_id: str,
         days_to_keep: int = 30,
-        db: Session = None
+        db: Optional[AsyncSession] = None
     ) -> Dict[str, Any]:
         """🧹 Limpia mensajes locales antiguos"""
         
         try:
-            if not db:
-                db = next(get_db())
+            if db is None:
+                async with get_primary_session() as session:
+                    return await self.cleanup_old_local_messages(
+                        user_id=user_id,
+                        days_to_keep=days_to_keep,
+                        db=session,
+                    )
             
             cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
             
             # Encontrar mensajes para limpiar
-            old_metadata = db.query(LocalChatMetadata).filter(
-                LocalChatMetadata.user_id == user_id,
-                LocalChatMetadata.created_at < cutoff_date
-            ).all()
+            result = await db.execute(
+                select(LocalChatMetadata).where(
+                    LocalChatMetadata.user_id == user_id,
+                    LocalChatMetadata.created_at < cutoff_date,
+                )
+            )
+            old_metadata = list(result.scalars().all())
             
             cleanup_stats = {
                 "messages_cleaned": len(old_metadata),
@@ -467,9 +511,9 @@ class LocalChatService:
                 })
                 
                 # Eliminar metadata
-                db.delete(metadata)
-            
-            db.commit()
+                await db.delete(metadata)
+
+            await db.commit()
             
             return cleanup_stats
         except Exception as e:
@@ -501,7 +545,7 @@ class LocalChatService:
         except:
             return 0.0
     
-    async def _get_user_sync_preference(self, user_id: str, db: Session) -> str:
+    async def _get_user_sync_preference(self, user_id: str, db: AsyncSession) -> str:
         """⚙️ Obtiene preferencia de sincronización del usuario"""
         # Implementar consulta a configuración de usuario
         # Por ahora retornar "balanced" por defecto
@@ -548,14 +592,15 @@ class LocalChatService:
         self,
         user_id: str,
         sync_results: Dict[str, Any],
-        db: Session
+        db: AsyncSession
     ):
         """📊 Actualiza estado de sincronización"""
         
         try:
-            existing = db.query(ChatSyncStatus).filter(
-                ChatSyncStatus.user_id == user_id
-            ).first()
+            result = await db.execute(
+                select(ChatSyncStatus).where(ChatSyncStatus.user_id == user_id).limit(1)
+            )
+            existing = result.scalar_one_or_none()
             
             if existing:
                 existing.last_sync = datetime.utcnow()
@@ -575,7 +620,7 @@ class LocalChatService:
                 )
                 db.add(new_status)
             
-            db.commit()
+            await db.commit()
         except Exception as e:
             logger.warning(f"Error actualizando sync status (tabla puede no existir): {e}")
             # No propagar error - funcionalidad no crítica
