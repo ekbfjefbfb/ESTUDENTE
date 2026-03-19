@@ -31,6 +31,15 @@ logger = logging.getLogger("unified_chat_router")
 router = APIRouter(prefix="/unified-chat", tags=["Chat IA"])
 
 
+def _debug_enabled() -> bool:
+    try:
+        from config import DEBUG as CONFIG_DEBUG
+
+        return bool(CONFIG_DEBUG)
+    except Exception:
+        return str(os.getenv("DEBUG") or "").strip() in {"1", "true", "True"}
+
+
 def _user_requested_web_search(message: str) -> bool:
     msg = str(message or "").strip().lower()
     if not msg:
@@ -916,14 +925,6 @@ async def get_ai_response_with_streaming(
         
     except Exception as e:
         logger.error(f"Streaming error: {e}")
-        await _ws_send_json(
-            websocket,
-            {
-                "type": "error",
-                "message": "stream_error",
-                "debug": {"stack": str(e)},
-            },
-        )
         raise
 
     return {
@@ -1338,12 +1339,13 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             logger.error(
                 f"WebSocket AUTH FAILED for user_id={user_id}: {type(auth_error).__name__}: {auth_error}\n{traceback.format_exc()}"
             )
+            debug = {"stack": str(auth_error)} if _debug_enabled() else None
             await _ws_send_json(
                 websocket,
                 {
                     "type": "error",
                     "message": "auth_failed",
-                    "debug": {"stack": str(auth_error)},
+                    **({"debug": debug} if debug else {}),
                 },
             )
             await websocket.close(code=1008)
@@ -1387,12 +1389,13 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 logger.debug(f"Received pong from {user_id}")
                 continue
             if data is not None and len(data) > max_text_len:
+                debug = {"max_len": max_text_len, "len": len(data)} if _debug_enabled() else None
                 await _ws_send_json(
                     websocket,
                     {
                         "type": "error",
                         "message": "payload_too_large",
-                        "debug": {"max_len": max_text_len, "len": len(data)},
+                        **({"debug": debug} if debug else {}),
                     },
                 )
                 try:
@@ -1405,12 +1408,13 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 message_data = json.loads(data)
             except Exception as e:
                 logger.warning(f"WebSocket invalid JSON user_id={user_id}: {e}")
+                debug = {"stack": str(e)} if _debug_enabled() else None
                 await _ws_send_json(
                     websocket,
                     {
                         "type": "error",
                         "message": "invalid_json",
-                        "debug": {"stack": str(e)},
+                        **({"debug": debug} if debug else {}),
                     },
                 )
                 continue
@@ -1483,12 +1487,13 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 )
             except Exception as e:
                 logger.exception(f"WebSocket streaming error user_id={user_id}: {e}")
+                debug = {"stack": str(e)} if _debug_enabled() else None
                 await _ws_send_json(
                     websocket,
                     {
                         "type": "error",
                         "message": "llm_error",
-                        "debug": {"stack": str(e)},
+                        **({"debug": debug} if debug else {}),
                     },
                 )
                 continue
@@ -1547,12 +1552,13 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
     except json.JSONDecodeError as e:
         logger.warning(f"WebSocket JSON decode error for user_id={user_id}: {e}")
         try:
+            debug = {"stack": str(e)} if _debug_enabled() else None
             await _ws_send_json(
                 websocket,
                 {
                     "type": "error",
                     "message": "invalid_json",
-                    "debug": {"stack": str(e)},
+                    **({"debug": debug} if debug else {}),
                 },
             )
         except Exception:
@@ -1568,12 +1574,13 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             f"WebSocket ERROR for user_id={user_id}: {type(e).__name__}: {e}\n{tb_str}"
         )
         try:
+            debug = {"stack": str(e)} if _debug_enabled() else None
             await _ws_send_json(
                 websocket,
                 {
                     "type": "error",
                     "message": "ws_error",
-                    "debug": {"stack": str(e)},
+                    **({"debug": debug} if debug else {}),
                 },
             )
         except Exception:
@@ -1600,12 +1607,13 @@ async def voice_stream_ws(websocket: WebSocket):
     except Exception as e:
         import traceback
         logger.warning(f"Voice WebSocket auth failed: {e}\n{traceback.format_exc()}")
+        debug = {"stack": str(e)} if _debug_enabled() else None
         await _ws_send_json(
             websocket,
             {
                 "type": "error",
                 "message": "auth_failed",
-                "debug": {"stack": str(e)},
+                **({"debug": debug} if debug else {}),
             },
         )
         await websocket.close(code=1008)
@@ -1657,9 +1665,10 @@ async def voice_stream_ws(websocket: WebSocket):
                     logger.debug(f"Voice WS text message: type={mtype}, user_id={user_id}")
                 except Exception as e:
                     logger.warning(f"Voice WS invalid JSON: {e}")
+                    debug = {"stack": str(e)} if _debug_enabled() else None
                     await _ws_send_json(
                         websocket,
-                        {"type": "error", "message": "invalid_json", "debug": {"stack": str(e)}},
+                        {"type": "error", "message": "invalid_json", **({"debug": debug} if debug else {})},
                     )
                     continue
 
@@ -1673,9 +1682,10 @@ async def voice_stream_ws(websocket: WebSocket):
 
                 else:
                     logger.warning(f"Voice WS unknown message type: {mtype}")
+                    debug = {"stack": str(mtype)} if _debug_enabled() else None
                     await _ws_send_json(
                         websocket,
-                        {"type": "error", "message": "unknown_message_type", "debug": {"stack": str(mtype)}},
+                        {"type": "error", "message": "unknown_message_type", **({"debug": debug} if debug else {})},
                     )
 
             if "bytes" in msg and msg["bytes"] is not None:
@@ -1711,9 +1721,10 @@ async def voice_stream_ws(websocket: WebSocket):
     except Exception as e:
         logger.exception(f"Voice WebSocket error: user_id={user_id}, messages={message_count}")
         try:
+            debug = {"stack": str(e)} if _debug_enabled() else None
             await _ws_send_json(
                 websocket,
-                {"type": "error", "message": "voice_ws_error", "debug": {"stack": str(e)}},
+                {"type": "error", "message": "voice_ws_error", **({"debug": debug} if debug else {})},
             )
         except Exception:
             pass
