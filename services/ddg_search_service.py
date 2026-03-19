@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import re
+from urllib.parse import unquote, urlparse, parse_qs
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -67,6 +69,10 @@ class DDGSearchService:
         for i in range(attempts):
             try:
                 result = await asyncio.wait_for(self._search_sync(q), timeout=self.timeout_ms / 1000.0)
+                if not result:
+                    # Fallback: HTML scrape (no API keys) para ambientes donde DDGS suele fallar (403/rate-limit)
+                    result = await self._search_http_fallback(q)
+
                 self._cache[q] = (loop.time(), list(result))
                 status = "ok" if result else "no_results"
                 return list(result), {"status": status, "attempt": i + 1}
@@ -85,7 +91,11 @@ class DDGSearchService:
             if i < attempts - 1:
                 await asyncio.sleep((self.retry_backoff_ms / 1000.0) * (i + 1))
 
-        logger.warning("ddg_search_failed", extra={"query": q, "status": last_status, "error": str(last_error or "")})
+        # Importante: Render a veces no imprime el `extra`, así que incluirlo en el mensaje.
+        logger.warning(
+            f"ddg_search_failed status={last_status} error={str(last_error or '')}",
+            extra={"query": q, "status": last_status, "error": str(last_error or "")},
+        )
         return [], {"status": last_status, "error": str(last_error or ""), "attempts": attempts}
 
     async def _search_sync(self, query: str) -> List[Dict[str, str]]:
@@ -149,5 +159,80 @@ class DDGSearchService:
             return out
 
         return await asyncio.to_thread(_run)
+
+    async def _search_http_fallback(self, query: str) -> List[Dict[str, str]]:
+        """Fallback sin dependencia DDGS: scrape simple de DuckDuckGo Lite.
+
+        Nota: No pretende ser perfecto; busca robustez y entregar *algo*.
+        """
+        try:
+            import httpx
+        except Exception:
+            return []
+
+        url = "https://lite.duckduckgo.com/lite/"
+        timeout_s = max(2.0, float(self.timeout_ms) / 1000.0)
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+
+        async with httpx.AsyncClient(timeout=timeout_s, headers=headers, follow_redirects=True) as client:
+            r = await client.get(url, params={"q": query})
+            if r.status_code >= 400:
+                return []
+            html = r.text or ""
+
+        # DuckDuckGo lite suele renderizar links como /l/?uddg=<encoded>
+        # Capturamos anchors y tratamos de recuperar el uddg.
+        anchor_re = re.compile(r"<a[^>]+href=\"(?P<href>[^\"]+)\"[^>]*>(?P<title>.*?)</a>", re.IGNORECASE)
+
+        def _strip_tags(s: str) -> str:
+            s = re.sub(r"<[^>]+>", " ", s)
+            s = re.sub(r"\s+", " ", s)
+            return s.strip()
+
+        out: List[Dict[str, str]] = []
+        seen: set[str] = set()
+
+        for m in anchor_re.finditer(html):
+            href = (m.group("href") or "").strip()
+            title = _strip_tags(m.group("title") or "")
+            if not href:
+                continue
+
+            final_url = href
+            if href.startswith("/l/?") or "uddg=" in href:
+                try:
+                    parsed = urlparse(href)
+                    qs = parse_qs(parsed.query)
+                    uddg = (qs.get("uddg") or [""])[0]
+                    if uddg:
+                        final_url = unquote(uddg)
+                except Exception:
+                    pass
+
+            if final_url.startswith("/"):
+                # Evitar URLs internas sin interés
+                continue
+
+            key = final_url.strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+
+            if "duckduckgo.com" in key and "lite" in key:
+                continue
+
+            if title:
+                out.append({"title": title[:160], "url": key[:500], "image": "", "snippet": ""})
+            else:
+                out.append({"title": "Resultado", "url": key[:500], "image": "", "snippet": ""})
+
+            if len(out) >= max(1, int(self.max_results)):
+                break
+
+        return out
 
 ddg_search_service = DDGSearchService()
