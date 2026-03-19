@@ -7,7 +7,10 @@ from typing import Any, Dict, List, Optional, Tuple
 try:
     from ddgs import DDGS
 except ImportError:
-    from duckduckgo_search import DDGS
+    try:
+        from duckduckgo_search import DDGS
+    except Exception:
+        DDGS = None
 
 logger = logging.getLogger("ddg_search_service")
 
@@ -29,11 +32,11 @@ class SearchSource:
 class DDGSearchService:
     def __init__(self):
         self.max_results = int(os.getenv("DDG_MAX_RESULTS", "3"))
-        self.timeout_ms = int(os.getenv("DDG_TIMEOUT_MS", "500"))
+        self.timeout_ms = int(os.getenv("DDG_TIMEOUT_MS", "2500"))
         self.region = os.getenv("DDG_REGION", "wt-wt").strip() or "wt-wt"
         self.safesearch = os.getenv("DDG_SAFESEARCH", "moderate").strip() or "moderate"
         self.cache_ttl_s = int(os.getenv("DDG_CACHE_TTL_S", "120"))
-        self.retries = int(os.getenv("DDG_RETRIES", "1"))
+        self.retries = int(os.getenv("DDG_RETRIES", "2"))
         self.retry_backoff_ms = int(os.getenv("DDG_RETRY_BACKOFF_MS", "350"))
         self._cache: Dict[str, Tuple[float, List[Dict[str, str]]]] = {}
 
@@ -45,6 +48,9 @@ class DDGSearchService:
         q = (query or "").strip()
         if not q:
             return [], {"status": "empty_query"}
+
+        if DDGS is None:
+            return [], {"status": "unavailable", "error": "ddgs_not_installed"}
 
         loop = asyncio.get_event_loop()
         now = loop.time()
@@ -69,8 +75,9 @@ class DDGSearchService:
                 last_error = f"timeout_ms={self.timeout_ms}"
             except Exception as e:
                 msg = str(e)
-                last_error = msg
-                if "Ratelimit" in msg or "rate" in msg.lower() and "limit" in msg.lower() or "202" in msg or "403" in msg:
+                last_error = f"{type(e).__name__}: {msg}" if msg else type(e).__name__
+                low = msg.lower()
+                if "ratelimit" in msg or ("rate" in low and "limit" in low) or "202" in msg or "403" in msg:
                     last_status = "rate_limited"
                 else:
                     last_status = "failed"
