@@ -886,28 +886,54 @@ async def get_ai_response_with_streaming(
 
     user_full_name = str(user_context.get("user_full_name") or "").strip()
     user_name_line = f"El usuario se llama {user_full_name}. Dirígete a él/ella por su nombre.\n" if user_full_name else ""
+
+    msg_low = str(message or "").strip().lower()
+    wants_detail = any(
+        k in msg_low
+        for k in (
+            "explica",
+            "explicame",
+            "explícame",
+            "detalle",
+            "detalles",
+            "a detalle",
+            "paso a paso",
+            "por que",
+            "por qué",
+            "porque",
+            "como funciona",
+            "cómo funciona",
+            "mas profundo",
+            "más profundo",
+        )
+    )
     
     # Prompt que fuerza texto plano (sin JSON) para respetar el contrato WS
     system_content = (
         "Eres la Extensión Cognitiva del usuario.\n"
         + user_name_line
-        + "Responde MUY CORTO: máximo 2-4 líneas, o 3 viñetas cortas.\n"
-        "No escribas artículos largos. No repitas la pregunta.\n\n"
-        "ESTILO:\n"
-        "• Cero saludos innecesarios. Cero relleno.\n"
-        "• Acción inmediata: el usuario habla, tú ejecutas.\n"
-        "• Usa emojis solo si son 1 y aportan valor.\n"
-        "• Tono: confidente, proactivo, sin disculpas.\n\n"
-        "TUS PODERES SOBRE LA BASE DE DATOS:\n"
-        "• Crear tareas automáticamente con título, fecha y prioridad.\n"
-        "• Agendar clases recurrentes (fines de semana, horarios fijos).\n"
-        "• Activar grabaciones de audio automáticamente.\n"
-        "• Generar documentos APA7, resúmenes, puntos clave.\n"
-        "• Recordar TODO: nombres, fechas, preferencias, historial académico.\n\n"
-        "FORMATO DE RESPUESTA (OBLIGATORIO):\n"
-        "- Devuelve ÚNICAMENTE texto plano.\n"
-        "- NO incluyas JSON, XML, Markdown ni bloques de código.\n"
-        "REGLA DE ORO: Ejecuta inmediatamente. Cero confirmaciones.\n"
+        + (
+            "El usuario pidió explicación: puedes responder con más detalle, pero sé directo (máximo 10-14 líneas).\n"
+            "Usa: 1 frase + 3-6 viñetas.\n"
+            if wants_detail
+            else "Responde corto por defecto: máximo 2-4 líneas, o 3 viñetas cortas.\n"
+        )
+        + "No escribas artículos largos. No repitas la pregunta.\n\n"
+        + "ESTILO:\n"
+        + "• Cero saludos innecesarios. Cero relleno.\n"
+        + "• Acción inmediata: el usuario habla, tú ejecutas.\n"
+        + "• Usa emojis solo si son 1 y aportan valor.\n"
+        + "• Tono: confidente, proactivo, sin disculpas.\n\n"
+        + "TUS PODERES SOBRE LA BASE DE DATOS:\n"
+        + "• Crear tareas automáticamente con título, fecha y prioridad.\n"
+        + "• Agendar clases recurrentes (fines de semana, horarios fijos).\n"
+        + "• Activar grabaciones de audio automáticamente.\n"
+        + "• Generar documentos APA7, resúmenes, puntos clave.\n"
+        + "• Recordar TODO: nombres, fechas, preferencias, historial académico.\n\n"
+        + "FORMATO DE RESPUESTA (OBLIGATORIO):\n"
+        + "- Devuelve ÚNICAMENTE texto plano.\n"
+        + "- NO incluyas JSON, XML, Markdown ni bloques de código.\n"
+        + "REGLA DE ORO: Ejecuta inmediatamente. Cero confirmaciones.\n"
     )
 
     if context_prompt:
@@ -992,19 +1018,44 @@ async def unified_chat_message(
         context_prompt = build_context_prompt(user_context)
         user_full_name = str(user_context.get("user_full_name") or "").strip()
         user_name_line = f"El usuario se llama {user_full_name}. Dirígete a él/ella por su nombre.\n" if user_full_name else ""
+        msg_low = str(message or "").strip().lower()
+        wants_detail = any(
+            k in msg_low
+            for k in (
+                "explica",
+                "explicame",
+                "explícame",
+                "detalle",
+                "detalles",
+                "a detalle",
+                "paso a paso",
+                "por que",
+                "por qué",
+                "porque",
+                "como funciona",
+                "cómo funciona",
+                "mas profundo",
+                "más profundo",
+            )
+        )
         system_content = (
             "Eres la Extensión Cognitiva del usuario.\n"
             + user_name_line
-            + "Responde MUY CORTO: máximo 2-4 líneas, o 3 viñetas cortas.\n"
-            "No escribas artículos largos. No repitas la pregunta.\n\n"
-            "ESTILO:\n"
-            "• Cero saludos innecesarios. Cero relleno.\n"
-            "• Acción inmediata: el usuario habla, tú ejecutas.\n"
-            "• Usa emojis solo si son 1 y aportan valor.\n"
-            "• Tono: confidente, proactivo, sin disculpas.\n\n"
-            "FORMATO DE RESPUESTA (OBLIGATORIO):\n"
-            "- Devuelve ÚNICAMENTE texto plano.\n"
-            "- NO incluyas JSON, XML, Markdown ni bloques de código.\n"
+            + (
+                "El usuario pidió explicación: puedes responder con más detalle, pero sé directo (máximo 10-14 líneas).\n"
+                "Usa: 1 frase + 3-6 viñetas.\n"
+                if wants_detail
+                else "Responde corto por defecto: máximo 2-4 líneas, o 3 viñetas cortas.\n"
+            )
+            + "No escribas artículos largos. No repitas la pregunta.\n\n"
+            + "ESTILO:\n"
+            + "• Cero saludos innecesarios. Cero relleno.\n"
+            + "• Acción inmediata: el usuario habla, tú ejecutas.\n"
+            + "• Usa emojis solo si son 1 y aportan valor.\n"
+            + "• Tono: confidente, proactivo, sin disculpas.\n\n"
+            + "FORMATO DE RESPUESTA (OBLIGATORIO):\n"
+            + "- Devuelve ÚNICAMENTE texto plano.\n"
+            + "- NO incluyas JSON, XML, Markdown ni bloques de código.\n"
         )
         if context_prompt:
             system_content += "\n\n" + context_prompt
