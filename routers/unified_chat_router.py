@@ -1422,6 +1422,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
 
             from services.ddg_search_service import ddg_search_service
             from services.tavily_search_service import tavily_search_service
+            from services.serper_search_service import serper_search_service
             from services.hub_memory_service import hub_memory_service
             from services.browser_mcp_service import browser_mcp_service
             from services.youtube_transcript_service import youtube_transcript_service
@@ -1462,12 +1463,26 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                     if _user_requested_images(user_message):
                         user_context["web_search_images_requested"] = True
                 else:
-                    # 2) DDG fallback
-                    try:
-                        ddg_sources, ddg_meta = await ddg_search_service.search_with_meta(user_message.strip())
-                    except Exception:
-                        ddg_sources = []
-                        ddg_meta = {"status": "failed"}
+                    # 2) Serper (secundario) con rotación por user_id
+                    serper_meta: Dict[str, Any] = {"status": "disabled"}
+                    if serper_search_service.enabled():
+                        try:
+                            ddg_sources, serper_meta = await serper_search_service.search_with_meta(
+                                query=user_message.strip(),
+                                user_id=str(user_id),
+                                include_images=_user_requested_images(user_message),
+                            )
+                        except Exception:
+                            ddg_sources = []
+                            serper_meta = {"status": "failed"}
+
+                    # 3) DDG fallback
+                    if not ddg_sources:
+                        try:
+                            ddg_sources, ddg_meta = await ddg_search_service.search_with_meta(user_message.strip())
+                        except Exception:
+                            ddg_sources = []
+                            ddg_meta = {"status": "failed"}
 
                 if ddg_sources:
                     user_context = dict(user_context)
@@ -1479,6 +1494,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                     status_val = None
                     if isinstance(tavily_meta, dict) and tavily_meta.get("status") not in (None, "ok"):
                         status_val = tavily_meta.get("status")
+                    if status_val is None and isinstance(serper_meta, dict) and serper_meta.get("status") not in (None, "ok"):
+                        status_val = serper_meta.get("status")
                     if status_val is None and isinstance(ddg_meta, dict) and ddg_meta.get("status") not in (None, "ok", "cache_hit"):
                         status_val = ddg_meta.get("status")
                     if status_val is not None:
