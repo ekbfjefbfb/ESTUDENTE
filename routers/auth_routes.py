@@ -35,6 +35,15 @@ RATE_LIMIT_PERIOD = 10  # segundos
 JWT_SECRET = os.getenv("JWT_SECRET_KEY", os.getenv("JWT_SECRET", "default_secret"))
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
+
+def _debug_enabled() -> bool:
+    try:
+        from config import DEBUG as CONFIG_DEBUG
+
+        return bool(CONFIG_DEBUG)
+    except Exception:
+        return str(os.getenv("DEBUG") or "").strip() in {"1", "true", "True"}
+
 # ---------------- Circuit Breakers ----------------
 cb_oauth = CircuitBreaker("oauth_call", max_failures=3, reset_timeout=30)
 cb_refresh = CircuitBreaker("refresh_call", max_failures=3, reset_timeout=30)
@@ -154,7 +163,8 @@ async def register_route(
         # Log más detallado para debuggear 422
         import traceback
         logger.error(f'Register traceback: {traceback.format_exc()}')
-        raise HTTPException(status_code=400, detail=error_str or "Error al registrar")
+        detail = (error_str or "Error al registrar") if _debug_enabled() else "register_failed"
+        raise HTTPException(status_code=400, detail=detail)
 
 
 @router.post("/login")
@@ -171,4 +181,5 @@ async def login_route(
         return result
     except Exception as e:
         logger.error(f'{{"event": "login_error", "error": "{str(e)}"}}', exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e) or "Error al iniciar sesión")
+        detail = (str(e) or "Error al iniciar sesión") if _debug_enabled() else "login_failed"
+        raise HTTPException(status_code=400, detail=detail)
