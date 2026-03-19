@@ -47,10 +47,10 @@ class DatabaseConfig:
     primary_url: str
     readonly_url: Optional[str] = None
     analytics_url: Optional[str] = None
-    primary_pool_size: int = 2  # Reducción extrema para NHost free tier/shared
-    primary_max_overflow: int = 0  # Sin overflow para evitar sobrepasar límites de conexiones
-    readonly_pool_size: int = 1
-    readonly_max_overflow: int = 0
+    primary_pool_size: int = 20  # Aumentado para soportar carga multiusuario real
+    primary_max_overflow: int = 10  # Permitir overflow controlado para picos de carga
+    readonly_pool_size: int = 5
+    readonly_max_overflow: int = 5
     pool_timeout: int = 30
     pool_recycle: int = 120  # Reciclar cada 2 min para limpiar conexiones muertas
     query_timeout: int = 30
