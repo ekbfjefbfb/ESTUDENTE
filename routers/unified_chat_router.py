@@ -1042,27 +1042,58 @@ async def get_ai_response_with_streaming(
     full_text = ""
 
     try:
-        # Obtener el stream de la IA
+        overall_timeout_s = float(os.getenv("WS_LLM_STREAM_OVERALL_TIMEOUT_S", "120") or "120")
+        per_chunk_timeout_s = float(os.getenv("WS_LLM_STREAM_CHUNK_TIMEOUT_S", "25") or "25")
+    except Exception:
+        overall_timeout_s = 120.0
+        per_chunk_timeout_s = 25.0
+
+    stream_started_at = time.monotonic()
+    first_token_at: Optional[float] = None
+
+    try:
         stream_generator = await chat_with_ai(
             messages=messages,
             user=user_id,
             fast_reasoning=True,
-            stream=True  # Streaming real
+            stream=True,
         )
-        
-        # Iterar sobre cada chunk del stream (contrato: solo type=token)
-        async for chunk in stream_generator:
+
+        aiter = stream_generator.__aiter__()
+        while True:
+            elapsed = time.monotonic() - stream_started_at
+            if elapsed > overall_timeout_s:
+                raise asyncio.TimeoutError(f"overall_timeout_s_exceeded:{overall_timeout_s}")
+
+            try:
+                chunk = await asyncio.wait_for(aiter.__anext__(), timeout=per_chunk_timeout_s)
+            except StopAsyncIteration:
+                break
+
             if not chunk:
                 continue
+
+            if first_token_at is None:
+                first_token_at = time.monotonic()
+                logger.info(
+                    f"llm_ws_first_token user_id={user_id} latency_ms={int((first_token_at-stream_started_at)*1000)}"
+                )
+
             full_text += chunk
             await _ws_send_json(
                 websocket,
                 {
                     "type": "token",
                     "content": chunk,
+                    "token": chunk,
                 },
             )
-        
+
+    except asyncio.TimeoutError as e:
+        logger.error(
+            f"llm_ws_stream_timeout user_id={user_id} elapsed_ms={int((time.monotonic()-stream_started_at)*1000)} err={e}"
+        )
+        raise
     except Exception as e:
         logger.error(f"Streaming error: {e}")
         raise
