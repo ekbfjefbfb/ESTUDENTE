@@ -162,9 +162,10 @@ class ChatResponse(BaseModel):
     response: str
     user_id: str
     timestamp: str
-    context: Dict[str, Any]
+    context: Optional[Dict[str, Any]] = None
     message_id: Optional[str] = None
     actions: Optional[List[Dict[str, Any]]] = None
+    sources: Optional[List[Dict[str, Any]]] = None
 
 class VoiceChatResponse(BaseModel):
     success: bool
@@ -728,7 +729,14 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
                     context["tasks_upcoming"] = []
                     context["key_points_recent"] = []
                 else:
-                    raise
+                    # Defensive rollback: evita que la transacción quede abortada y rompa el resto del contexto.
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
+                    context["tasks_today"] = []
+                    context["tasks_upcoming"] = []
+                    context["key_points_recent"] = []
             
             try:
                 stmt_sessions = select(RecordingSession).where(
@@ -753,7 +761,11 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
                         pass
                     context["recent_sessions"] = []
                 else:
-                    raise
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
+                    context["recent_sessions"] = []
     except Exception as e:
         logger.error(f"Error al obtener contexto de usuario: {e}")
         
@@ -1013,6 +1025,89 @@ async def unified_chat_message(
         
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
+
+        # Web search (Tavily -> Serper -> DDG) cuando aplique (incluye petición de imágenes)
+        ddg_sources: List[Dict[str, Any]] = []
+        if _should_web_search(user_id=user_id, message=request.message):
+            from services.ddg_search_service import ddg_search_service
+            from services.tavily_search_service import tavily_search_service
+            from services.serper_search_service import serper_search_service
+
+            ddg_meta: Dict[str, Any] = {"status": "skipped"}
+            tavily_sources: List[Dict[str, Any]] = []
+            tavily_meta: Dict[str, Any] = {"status": "disabled"}
+            if tavily_search_service.enabled():
+                try:
+                    tavily_sources, tavily_meta = await tavily_search_service.search_with_meta(
+                        query=request.message.strip(),
+                        user_id=str(user_id),
+                        include_images=_user_requested_images(request.message),
+                    )
+                except Exception:
+                    tavily_sources = []
+                    tavily_meta = {"status": "failed"}
+
+            if tavily_sources:
+                ddg_sources = list(tavily_sources)
+                user_context = dict(user_context)
+                user_context["web_search_results"] = list(ddg_sources or [])[:5]
+                if _user_requested_images(request.message):
+                    user_context["web_search_images_requested"] = True
+            else:
+                serper_meta: Dict[str, Any] = {"status": "disabled"}
+                if serper_search_service.enabled():
+                    try:
+                        ddg_sources, serper_meta = await serper_search_service.search_with_meta(
+                            query=request.message.strip(),
+                            user_id=str(user_id),
+                            include_images=_user_requested_images(request.message),
+                        )
+                    except Exception:
+                        ddg_sources = []
+                        serper_meta = {"status": "failed"}
+
+                if not ddg_sources:
+                    try:
+                        ddg_sources, ddg_meta = await ddg_search_service.search_with_meta(request.message.strip())
+                    except Exception:
+                        ddg_sources = []
+                        ddg_meta = {"status": "failed"}
+
+                if ddg_sources:
+                    user_context = dict(user_context)
+                    user_context["web_search_results"] = list(ddg_sources or [])[:5]
+                    if _user_requested_images(request.message):
+                        user_context["web_search_images_requested"] = True
+                else:
+                    status_val = None
+                    if isinstance(tavily_meta, dict) and tavily_meta.get("status") not in (None, "ok"):
+                        status_val = tavily_meta.get("status")
+                    if status_val is None and isinstance(serper_meta, dict) and serper_meta.get("status") not in (None, "ok"):
+                        status_val = serper_meta.get("status")
+                    if status_val is None and isinstance(ddg_meta, dict) and ddg_meta.get("status") not in (None, "ok", "cache_hit"):
+                        status_val = ddg_meta.get("status")
+                    if status_val is not None:
+                        user_context = dict(user_context)
+                        user_context["web_search_status"] = str(status_val or "failed")
+
+        # Priorizar thumbnails si el usuario pidió imágenes
+        sources: List[Dict[str, Any]] = []
+        if isinstance(ddg_sources, list) and ddg_sources:
+            combined_sources = list(ddg_sources)
+            max_sources = 5 if _user_requested_images(request.message) else 3
+            if _user_requested_images(request.message):
+                prioritized: List[Dict[str, Any]] = []
+                remainder: List[Dict[str, Any]] = []
+                for s in list(combined_sources):
+                    if not isinstance(s, dict):
+                        continue
+                    if str(s.get("image") or "").strip():
+                        prioritized.append(s)
+                    else:
+                        remainder.append(s)
+                sources = (prioritized + remainder)[:max_sources]
+            else:
+                sources = list(combined_sources)[:max_sources]
 
         # HTTP: usar modo no-streaming (más estable que emular WS con MockWebSocket)
         context_prompt = build_context_prompt(user_context)
@@ -1307,8 +1402,57 @@ async def unified_chat_message_json(
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
 
-        # HTTP JSON: usar modo no-streaming (más estable que emular WS con MockWebSocket)
-        messages = [{"role": "user", "content": request.message}]
+        # HTTP JSON: usar modo no-streaming + mismo prompt adaptativo que WS/HTTP
+        context_prompt = build_context_prompt(user_context)
+        user_full_name = str(user_context.get("user_full_name") or "").strip()
+        user_name_line = f"El usuario se llama {user_full_name}. Dirígete a él/ella por su nombre.\n" if user_full_name else ""
+        msg_low = str(request.message or "").strip().lower()
+        wants_detail = any(
+            k in msg_low
+            for k in (
+                "explica",
+                "explicame",
+                "explícame",
+                "detalle",
+                "detalles",
+                "a detalle",
+                "paso a paso",
+                "por que",
+                "por qué",
+                "porque",
+                "como funciona",
+                "cómo funciona",
+                "mas profundo",
+                "más profundo",
+            )
+        )
+        images_requested = _user_requested_images(request.message)
+        images_line = (
+            "El usuario pidió IMÁGENES. Si hay thumbnails en el contexto, descríbelas y sugiere 3-5 opciones (una línea cada una).\n"
+            if images_requested
+            else ""
+        )
+        system_content = (
+            "Eres la Extensión Cognitiva del usuario.\n"
+            + user_name_line
+            + images_line
+            + (
+                "El usuario pidió explicación: puedes responder con más detalle, pero sé directo (máximo 10-14 líneas).\n"
+                "Usa: 1 frase + 3-6 viñetas.\n"
+                if wants_detail
+                else "Responde corto por defecto: máximo 2-4 líneas, o 3 viñetas cortas.\n"
+            )
+            + "No escribas artículos largos. No repitas la pregunta.\n\n"
+            + "FORMATO DE RESPUESTA (OBLIGATORIO):\n"
+            + "- Devuelve ÚNICAMENTE texto plano.\n"
+            + "- NO incluyas JSON, XML, Markdown ni bloques de código.\n"
+        )
+        if context_prompt:
+            system_content += "\n\n" + context_prompt
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": request.message},
+        ]
         ai_text = await chat_with_ai(messages=messages, user=user_id, fast_reasoning=True, stream=False)
         structured = _sanitize_structured_data({"response": ai_text, "tasks": [], "plan": [], "actions": [], "is_stream": False})
         
@@ -1337,7 +1481,8 @@ async def unified_chat_message_json(
             actions=[
                 {"type": "tasks", "data": structured["tasks"]},
                 {"type": "plan", "data": structured["plan"]}
-            ]
+            ],
+            sources=sources if sources else None,
         )
         
     except RuntimeError as e:
