@@ -75,6 +75,23 @@ def _user_requested_images(message: str) -> bool:
     return bool(re.search(r"\b(imagen|imagenes|imágenes|foto|fotos|pictures|images)\b", msg))
 
 
+def _should_include_images_in_search(message: str) -> bool:
+    """Heurística: pedir imágenes aunque el usuario no diga literalmente 'imágenes'."""
+    msg = str(message or "").strip()
+    if not msg:
+        return False
+    lower = msg.lower()
+    if _user_requested_images(lower):
+        return True
+    # Intención visual implícita
+    if re.search(r"\b(c[óo]mo se ve|ver fotos|ver imagen|muestra(?:me)?|galer[ií]a|portada|logo|dise[ñn]o|captura|screenshot|wallpaper|fondo de pantalla)\b", lower):
+        return True
+    # Dominios donde la UI casi siempre se beneficia de imágenes
+    if re.search(r"\b(hotel|hoteles|restaurante|restaurantes|resort|airbnb|producto|comprar|modelo|zapatillas|tenis|celular|m[oó]vil|laptop|pc|carro|auto|coche)\b", lower):
+        return True
+    return False
+
+
 _last_auto_web_search_at: Dict[str, float] = {}
 
 
@@ -1152,6 +1169,8 @@ async def unified_chat_message(
             from services.tavily_search_service import tavily_search_service
             from services.serper_search_service import serper_search_service
 
+            include_images = _should_include_images_in_search(message)
+
             ddg_meta: Dict[str, Any] = {"status": "skipped"}
             tavily_sources: List[Dict[str, Any]] = []
             tavily_meta: Dict[str, Any] = {"status": "disabled"}
@@ -1160,7 +1179,7 @@ async def unified_chat_message(
                     tavily_sources, tavily_meta = await tavily_search_service.search_with_meta(
                         query=message.strip(),
                         user_id=str(user_id),
-                        include_images=_user_requested_images(message),
+                        include_images=include_images,
                     )
                 except Exception:
                     tavily_sources = []
@@ -1173,7 +1192,7 @@ async def unified_chat_message(
                 )
                 user_context = dict(user_context)
                 user_context["web_search_results"] = list(ddg_sources or [])[:5]
-                if _user_requested_images(message):
+                if include_images:
                     user_context["web_search_images_requested"] = True
             else:
                 serper_meta: Dict[str, Any] = {"status": "disabled"}
@@ -1182,7 +1201,7 @@ async def unified_chat_message(
                         ddg_sources, serper_meta = await serper_search_service.search_with_meta(
                             query=message.strip(),
                             user_id=str(user_id),
-                            include_images=_user_requested_images(message),
+                            include_images=include_images,
                         )
                     except Exception:
                         ddg_sources = []
@@ -1207,7 +1226,7 @@ async def unified_chat_message(
                 if ddg_sources:
                     user_context = dict(user_context)
                     user_context["web_search_results"] = list(ddg_sources or [])[:5]
-                    if _user_requested_images(message):
+                    if include_images:
                         user_context["web_search_images_requested"] = True
                 else:
                     status_val = None
@@ -1945,6 +1964,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 ddg_meta = {"status": "skipped"}
                 ws_t0 = time.monotonic()
 
+                include_images = _should_include_images_in_search(user_message)
+
                 # 1) Tavily (primario) con rotación por user_id
                 tavily_sources: List[Dict[str, str]] = []
                 tavily_meta: Dict[str, Any] = {"status": "disabled"}
@@ -1953,7 +1974,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                         tavily_sources, tavily_meta = await tavily_search_service.search_with_meta(
                             query=user_message.strip(),
                             user_id=str(user_id),
-                            include_images=_user_requested_images(user_message),
+                            include_images=include_images,
                         )
                     except Exception:
                         tavily_sources = []
@@ -1966,7 +1987,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                     )
                     user_context = dict(user_context)
                     user_context["web_search_results"] = list(ddg_sources or [])[:5]
-                    if _user_requested_images(user_message):
+                    if include_images:
                         user_context["web_search_images_requested"] = True
                 else:
                     # 2) Serper (secundario) con rotación por user_id
@@ -1976,7 +1997,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                             ddg_sources, serper_meta = await serper_search_service.search_with_meta(
                                 query=user_message.strip(),
                                 user_id=str(user_id),
-                                include_images=_user_requested_images(user_message),
+                                include_images=include_images,
                             )
                         except Exception:
                             ddg_sources = []
@@ -2002,7 +2023,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 if ddg_sources:
                     user_context = dict(user_context)
                     user_context["web_search_results"] = list(ddg_sources or [])[:5]
-                    if _user_requested_images(user_message):
+                    if include_images:
                         user_context["web_search_images_requested"] = True
                 else:
                     # no enviar error crudo al cliente; solo un estado
@@ -2026,6 +2047,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                         video_id=yt_video_id,
                         snippet=str(yt.get("text") or "")[:400],
                     )
+                    if isinstance(yt_source, dict) and "style" not in yt_source:
+                        yt_source["style"] = "video"
 
             if browser_mcp_service.enabled() and not yt_video_id:
                 url = browser_mcp_service.extract_first_url(user_message)
@@ -2040,6 +2063,46 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                             title=str(extracted.get("title") or ""),
                             snippet=str(extracted.get("text") or "")[:400],
                         )
+
+            # Media primero: mandar galería (imágenes/videos) antes de streamear texto
+            try:
+                preview_sources: List[Dict[str, Any]] = []
+                if isinstance(ddg_sources, list) and ddg_sources:
+                    preview_sources = list(ddg_sources)
+                combined_preview: List[Dict[str, Any]] = []
+                if isinstance(yt_source, dict):
+                    combined_preview.append(yt_source)
+                if isinstance(web_source, dict):
+                    combined_preview.append(web_source)
+                combined_preview.extend(list(preview_sources or []))
+
+                max_sources_preview = 5 if _should_include_images_in_search(user_message) else 3
+                if _should_include_images_in_search(user_message):
+                    prioritized_preview: List[Dict[str, Any]] = []
+                    remainder_preview: List[Dict[str, Any]] = []
+                    for s in list(combined_preview):
+                        if not isinstance(s, dict):
+                            continue
+                        if str(s.get("image") or "").strip():
+                            prioritized_preview.append(s)
+                        else:
+                            remainder_preview.append(s)
+                    preview_sources = (prioritized_preview + remainder_preview)[:max_sources_preview]
+                else:
+                    preview_sources = list(combined_preview)[:max_sources_preview]
+
+                rich_preview = _build_rich_response(text="", memory_id=None, sources=preview_sources)
+                if rich_preview is not None:
+                    await _ws_send_json(
+                        websocket,
+                        {
+                            "type": "rich",
+                            "sources": preview_sources,
+                            "rich_response": rich_preview.model_dump(),
+                        },
+                    )
+            except Exception as e:
+                logger.warning(f"ws_rich_preview_failed user_id={user_id}: {e}")
 
             # 1) Streaming Groq -> type=token
             try:
@@ -2080,8 +2143,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             if web_source:
                 combined_sources.append(web_source)
             combined_sources.extend(list(sources or []))
-            max_sources = 5 if _user_requested_images(user_message) else 3
-            if _user_requested_images(user_message):
+            max_sources = 5 if _should_include_images_in_search(user_message) else 3
+            if _should_include_images_in_search(user_message):
                 prioritized = []
                 remainder = []
                 for s in list(combined_sources):
