@@ -642,6 +642,7 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
     # REDEPLOY 2026-03-12: Fixed enum values - using lowercase 'task' and 'done'
     """Obtiene contexto completo del usuario: tareas + sesiones recientes"""
     from sqlalchemy import and_, select
+    from models.models import User
     from models.models import SessionItem, RecordingSession
     
     context = {
@@ -659,7 +660,16 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
             end_week = today + timedelta(days=7)
             
             try:
-                # Tareas de hoy - use lowercase string literals directly
+                try:
+                    stmt_user = select(User).where(User.id == user_id).limit(1)
+                    result_user = await db.execute(stmt_user)
+                    user_row = result_user.scalar_one_or_none()
+                    if user_row is not None:
+                        context["user_full_name"] = str(getattr(user_row, "full_name", "") or "").strip()
+                except Exception:
+                    pass
+
+                # Tareas de hoy - use lowercase string literals
                 stmt_tasks_today = select(SessionItem).where(
                     and_(
                         SessionItem.user_id == user_id,
@@ -766,6 +776,10 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
 def build_context_prompt(user_context: Dict[str, Any]) -> str:
     """Construye el prompt de contexto para la IA"""
     prompt_parts = []
+
+    user_full_name = str(user_context.get("user_full_name") or "").strip()
+    if user_full_name:
+        prompt_parts.append(f"👤 USUARIO: {user_full_name}")
     
     if user_context.get("tasks_today"):
         prompt_parts.append("📋 TAREAS DE HOY:")
@@ -818,12 +832,12 @@ def build_context_prompt(user_context: Dict[str, Any]) -> str:
     yt_transcript = str(user_context.get("youtube_transcript") or "").strip()
     if yt_transcript:
         prompt_parts.append("\n🎥 TRANSCRIPCIÓN YOUTUBE (extracto):")
-        prompt_parts.append(yt_transcript[:1200])
+        prompt_parts.append(yt_transcript[:500])
 
     web_extract = str(user_context.get("web_extract") or "").strip()
     if web_extract:
         prompt_parts.append("\n🌐 EXTRACTO WEB (texto visible):")
-        prompt_parts.append(web_extract[:1200])
+        prompt_parts.append(web_extract[:500])
 
     web_search_results = user_context.get("web_search_results")
     if isinstance(web_search_results, list) and web_search_results:
@@ -869,14 +883,20 @@ async def get_ai_response_with_streaming(
     from services.groq_ai_service import chat_with_ai, sanitize_ai_text
     
     context_prompt = build_context_prompt(user_context)
+
+    user_full_name = str(user_context.get("user_full_name") or "").strip()
+    user_name_line = f"El usuario se llama {user_full_name}. Dirígete a él/ella por su nombre.\n" if user_full_name else ""
     
     # Prompt que fuerza texto plano (sin JSON) para respetar el contrato WS
     system_content = (
-        "Eres la Extensión Cognitiva del usuario. Respuestas de 1-3 oraciones máximo.\n\n"
+        "Eres la Extensión Cognitiva del usuario.\n"
+        + user_name_line
+        + "Responde MUY CORTO: máximo 2-4 líneas, o 3 viñetas cortas.\n"
+        "No escribas artículos largos. No repitas la pregunta.\n\n"
         "ESTILO:\n"
         "• Cero saludos innecesarios. Cero relleno.\n"
         "• Acción inmediata: el usuario habla, tú ejecutas.\n"
-        "• Usa emojis relevantes (✅ 📚 ⚠️ 🎯) cuando aporten valor.\n"
+        "• Usa emojis solo si son 1 y aportan valor.\n"
         "• Tono: confidente, proactivo, sin disculpas.\n\n"
         "TUS PODERES SOBRE LA BASE DE DATOS:\n"
         "• Crear tareas automáticamente con título, fecha y prioridad.\n"
@@ -969,7 +989,29 @@ async def unified_chat_message(
         user_context = await get_user_context_for_chat(user_id)
 
         # HTTP: usar modo no-streaming (más estable que emular WS con MockWebSocket)
-        messages = [{"role": "user", "content": message}]
+        context_prompt = build_context_prompt(user_context)
+        user_full_name = str(user_context.get("user_full_name") or "").strip()
+        user_name_line = f"El usuario se llama {user_full_name}. Dirígete a él/ella por su nombre.\n" if user_full_name else ""
+        system_content = (
+            "Eres la Extensión Cognitiva del usuario.\n"
+            + user_name_line
+            + "Responde MUY CORTO: máximo 2-4 líneas, o 3 viñetas cortas.\n"
+            "No escribas artículos largos. No repitas la pregunta.\n\n"
+            "ESTILO:\n"
+            "• Cero saludos innecesarios. Cero relleno.\n"
+            "• Acción inmediata: el usuario habla, tú ejecutas.\n"
+            "• Usa emojis solo si son 1 y aportan valor.\n"
+            "• Tono: confidente, proactivo, sin disculpas.\n\n"
+            "FORMATO DE RESPUESTA (OBLIGATORIO):\n"
+            "- Devuelve ÚNICAMENTE texto plano.\n"
+            "- NO incluyas JSON, XML, Markdown ni bloques de código.\n"
+        )
+        if context_prompt:
+            system_content += "\n\n" + context_prompt
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": message},
+        ]
         ai_text = await chat_with_ai(messages=messages, user=user_id, fast_reasoning=True, stream=False)
         structured = _sanitize_structured_data({"response": ai_text, "tasks": [], "plan": [], "actions": [], "is_stream": False})
         
