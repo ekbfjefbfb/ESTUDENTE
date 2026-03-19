@@ -335,6 +335,24 @@ def _host_label(url: str) -> str:
         return ""
 
 
+def _is_supported_image_url(url: Optional[str]) -> bool:
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    try:
+        p = urlparse(raw)
+        if p.scheme not in {"http", "https"}:
+            return False
+        path = (p.path or "").lower()
+        # Si no hay extensión, no lo bloqueamos (muchos CDNs sirven jpg sin extensión)
+        if "." not in path.rsplit("/", 1)[-1]:
+            return True
+        ext = path.rsplit(".", 1)[-1]
+        return ext in {"jpg", "jpeg", "png", "webp", "gif"}
+    except Exception:
+        return False
+
+
 def _build_rich_response(*, text: str, memory_id: Optional[str], sources: Optional[List[Dict[str, Any]]]) -> Optional[RichResponse]:
     if not sources:
         return None
@@ -347,7 +365,8 @@ def _build_rich_response(*, text: str, memory_id: Optional[str], sources: Option
         if not url:
             continue
         title = str(s.get("title") or s.get("name") or s.get("snippet") or "").strip() or url
-        image_url = str(s.get("image") or s.get("image_url") or "").strip() or None
+        image_candidate = str(s.get("image") or s.get("image_url") or "").strip() or None
+        image_url = image_candidate if _is_supported_image_url(image_candidate) else None
         source_label = str(s.get("source") or "").strip() or None
         if not source_label:
             host = _host_label(url)
