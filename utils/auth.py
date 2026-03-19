@@ -5,6 +5,7 @@ import logging
 from typing import Optional, Dict, Any, TYPE_CHECKING
 from datetime import datetime, timedelta
 import time
+import os
 from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,6 +91,24 @@ async def get_redis_client():
         _redis_unavailable_until = now + 60.0
         return None
 
+
+def _jwt_expired_grace_seconds() -> int:
+    try:
+        return int(os.getenv("JWT_EXPIRED_GRACE_SECONDS", "300"))
+    except Exception:
+        return 300
+
+
+async def _is_blacklisted_token(token: str) -> bool:
+    try:
+        redis_conn = await get_redis_client()
+        if not redis_conn:
+            return False
+        val = await redis_conn.get(f"blacklist:{token}")
+        return val is not None
+    except Exception:
+        return False
+
 async def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
     """
     Crea token de acceso JWT
@@ -131,6 +150,12 @@ async def verify_token(token: str, *, allow_expired_grace: bool = False) -> Dict
     Verifica y decodifica token JWT
     """
     try:
+        if await _is_blacklisted_token(token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="token_revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         # Intentar decodificación estándar
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         return payload
@@ -144,7 +169,7 @@ async def verify_token(token: str, *, allow_expired_grace: bool = False) -> Dict
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # Si el token expiró, permitimos un margen de 24 horas solo para WebSockets
+        # Si el token expiró, permitimos un margen corto solo para WebSockets
         # (para evitar interrupciones en conexiones activas mientras el frontend refresca)
         try:
             # Decodificar sin verificar expiración para obtener el user_id
@@ -154,14 +179,25 @@ async def verify_token(token: str, *, allow_expired_grace: bool = False) -> Dict
                 algorithms=[JWT_ALGORITHM],
                 options={"verify_exp": False}
             )
+
+            if await _is_blacklisted_token(token):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="token_revoked",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
             # Verificar qué tan viejo es el token
             exp = payload.get("exp")
             now = datetime.utcnow().timestamp()
-            if exp and (now - exp) < 86400:  # 24 horas de gracia
-                logger.info(f"Using expired token within grace period for user {payload.get('sub')} (expired {int(now - exp)}s ago)")
+            grace_s = _jwt_expired_grace_seconds()
+            if exp and (now - exp) < grace_s:
+                logger.info(
+                    f"Using expired token within grace period for user {payload.get('sub')} (expired {int(now - exp)}s ago)"
+                )
                 return payload
             elif exp:
-                logger.warning(f"Token expired {int(now - exp)}s ago, exceeds 24h grace period")
+                logger.warning(f"Token expired {int(now - exp)}s ago, exceeds grace period")
         except Exception:
             pass
             
