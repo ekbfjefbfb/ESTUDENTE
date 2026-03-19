@@ -32,7 +32,7 @@ from typing import Any, Optional, Dict, List, Union, Tuple, Callable
 from dataclasses import dataclass
 from enum import Enum
 
-import aioredis
+import redis.asyncio as redis
 from utils.safe_metrics import SafeMetric
 
 logger = logging.getLogger("cache_enterprise")
@@ -371,7 +371,7 @@ class CacheServiceEnterprise:
         
         # Componentes del cache
         self.l1_cache = L1MemoryCache(self.config)
-        self.redis_client: Optional[aioredis.Redis] = None
+        self.redis_client: Optional[redis.Redis] = None
         self.is_redis_available = False
         
         # Estado del servicio
@@ -428,12 +428,13 @@ class CacheServiceEnterprise:
     async def _initialize_redis(self):
         """Inicializa la conexión a Redis"""
         try:
-            self.redis_client = aioredis.from_url(
+            self.redis_client = redis.from_url(
                 self.config.redis_url,
                 db=self.config.redis_db,
                 max_connections=self.config.redis_max_connections,
                 retry_on_timeout=True,
-                health_check_interval=30
+                health_check_interval=30,
+                decode_responses=False,
             )
             
             # Test de conectividad

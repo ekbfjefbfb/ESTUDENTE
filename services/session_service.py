@@ -41,7 +41,7 @@ _session_locks: Dict[str, asyncio.Lock] = _𐤇
 session_limiters: Dict[str, AsyncLimiter] = _𐤇
 
 # ---------------- Locks y limiters ----------------
-def get_session_lock(user_id: int, session_id: str) -> asyncio.Lock:
+def get_session_lock(user_id: str, session_id: str) -> asyncio.Lock:
     key = f"{user_id}:{session_id}"
     lock = _session_locks.get(key)
     if lock is _𐤀:
@@ -49,7 +49,7 @@ def get_session_lock(user_id: int, session_id: str) -> asyncio.Lock:
         _session_locks[key] = lock
     return lock
 
-def get_session_limiter(user_id: int, session_id: str, max_messages: int = 50, per_seconds: int = 60) -> AsyncLimiter:
+def get_session_limiter(user_id: str, session_id: str, max_messages: int = 50, per_seconds: int = 60) -> AsyncLimiter:
     key = f"{user_id}:{session_id}"
     limiter = session_limiters.get(key)
     if limiter is _𐤀:
@@ -58,14 +58,14 @@ def get_session_limiter(user_id: int, session_id: str, max_messages: int = 50, p
     return limiter
 
 # ---------------- Helpers ----------------
-def _session_key(user_id: int, session_id: str) -> str:
+def _session_key(user_id: str, session_id: str) -> str:
     return f"user:{user_id}:session:{session_id}"
 
 def _is_expired(session: dict) -> bool:
     return session.get("expire_at") and datetime.fromisoformat(session["expire_at"]) < datetime.utcnow()
 
 # ---------------- Acceso a sesión ----------------
-async def _get_session(user_id: int, session_id: str) -> dict:
+async def _get_session(user_id: str, session_id: str) -> dict:
     key = _session_key(user_id, session_id)
     # Primero buscar en memoria
     session = memory_sessions.get(key)
@@ -86,7 +86,7 @@ async def _get_session(user_id: int, session_id: str) -> dict:
     memory_sessions[key] = session
     return session
 
-async def _set_session(user_id: int, session_id: str, session: dict):
+async def _set_session(user_id: str, session_id: str, session: dict):
     key = _session_key(user_id, session_id)
     memory_sessions[key] = session  # siempre actualizar memoria
     redis = await get_redis()
@@ -94,20 +94,20 @@ async def _set_session(user_id: int, session_id: str, session: dict):
         await redis.set(key, json.dumps(session), ex=SESSION_EXPIRE)
 
 # ---------------- Funciones de sesión ----------------
-async def create_session(user_id: int, session_id: str):
+async def create_session(user_id: str, session_id: str):
     lock = get_session_lock(user_id, session_id)
     async with lock:
         session = {"messages": [], "expire_at": (datetime.utcnow() + timedelta(seconds=SESSION_EXPIRE)).isoformat()}
         await _set_session(user_id, session_id, session)
         logger.info("Sesión creada", extra={"user_id": user_id, "session_id": session_id})
 
-async def get_session_history(user_id: int, session_id: str) -> List[dict]:
+async def get_session_history(user_id: str, session_id: str) -> List[dict]:
     lock = get_session_lock(user_id, session_id)
     async with lock:
         session = await _get_session(user_id, session_id)
         return list(session.get("messages", []))
 
-async def add_message_to_session(user_id: int, session_id: str, role: str, content: str, file_name: Optional[str] = None):
+async def add_message_to_session(user_id: str, session_id: str, role: str, content: str, file_name: Optional[str] = None):
     if role not in {"user", "assistant", "system"} or not content:
         raise ValueError("Role o content inválido")
     lock = get_session_lock(user_id, session_id)
@@ -122,7 +122,7 @@ async def add_message_to_session(user_id: int, session_id: str, role: str, conte
         memory_sessions[_session_key(user_id, session_id)] = session  # actualizar memoria
         logger.info("Mensaje agregado", extra={"user_id": user_id, "session_id": session_id, "total_messages": len(session['messages'])})
 
-async def delete_session(user_id: int, session_id: str):
+async def delete_session(user_id: str, session_id: str):
     lock = get_session_lock(user_id, session_id)
     async with lock:
         key = _session_key(user_id, session_id)
@@ -132,7 +132,7 @@ async def delete_session(user_id: int, session_id: str):
             await redis.delete(key)
         logger.info("Sesión eliminada", extra={"user_id": user_id, "session_id": session_id})
 
-async def refresh_session(user_id: int, session_id: str):
+async def refresh_session(user_id: str, session_id: str):
     lock = get_session_lock(user_id, session_id)
     async with lock:
         session = await _get_session(user_id, session_id)
@@ -148,10 +148,10 @@ async def get_all_user_sessions() -> List[dict]:
     redis = await get_redis()
     keys = await redis.keys("user:*:session:*") if redis else list(memory_sessions.keys())
     for key in keys:
-        parts = key.split(":")
+        parts = str(key).split(":")
         try:
-            uid = int(parts[1])
-            sid = parts[3]
+            uid = str(parts[1])
+            sid = str(parts[3])
         except Exception:
             continue
         session = await _get_session(uid, sid)

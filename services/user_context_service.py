@@ -107,31 +107,34 @@ class UserContextService:
             # 2. Buscar por keywords que coincidan con class_name
             # 3. Buscar por filename que contenga palabras de class_name
 
-            from sqlalchemy import or_, desc
+            from sqlalchemy import or_, desc, select
 
             # Normalizar class_name para búsqueda
             search_terms = class_name.lower().split()
 
-            query = session.query(UserDocumentIndex).filter(
-                UserDocumentIndex.user_id == user_id,
-                UserDocumentIndex.is_deleted_on_device == False,
-                or_(
-                    UserDocumentIndex.related_class.ilike(f"%{class_name}%"),
-                    UserDocumentIndex.document_type.in_(["syllabus", "notes"]),
-                    *[
-                        or_(
-                            UserDocumentIndex.filename.ilike(f"%{term}%"),
-                            UserDocumentIndex.keywords.ilike(f"%{term}%")
-                        )
-                        for term in search_terms if len(term) > 3
-                    ]
+            stmt = (
+                select(UserDocumentIndex)
+                .where(
+                    UserDocumentIndex.user_id == user_id,
+                    UserDocumentIndex.is_deleted_on_device == False,
+                    or_(
+                        UserDocumentIndex.related_class.ilike(f"%{class_name}%"),
+                        UserDocumentIndex.document_type.in_(["syllabus", "notes"]),
+                        *[
+                            or_(
+                                UserDocumentIndex.filename.ilike(f"%{term}%"),
+                                UserDocumentIndex.keywords.ilike(f"%{term}%"),
+                            )
+                            for term in search_terms
+                            if len(term) > 3
+                        ],
+                    ),
                 )
-            ).order_by(
-                # Priorizar documentos más recientes
-                desc(UserDocumentIndex.last_sync)
-            ).limit(limit)
+                .order_by(desc(UserDocumentIndex.last_sync))
+                .limit(limit)
+            )
 
-            result = await session.execute(query)
+            result = await session.execute(stmt)
             documents = result.scalars().all()
 
             logger.info(f"📄 Encontrados {len(documents)} documentos para '{class_name}'")
