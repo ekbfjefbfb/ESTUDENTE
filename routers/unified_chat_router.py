@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
@@ -29,6 +30,20 @@ _WS_TAIL_WINDOW_MS = 4500
 logger = logging.getLogger("unified_chat_router")
 
 router = APIRouter(prefix="/unified-chat", tags=["Chat IA"])
+
+
+def _new_request_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+def _safe_meta(meta: Any) -> Dict[str, Any]:
+    if not isinstance(meta, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for k in ("status", "attempt", "key_index", "fallback", "attempts"):
+        if k in meta:
+            out[k] = meta.get(k)
+    return out
 
 
 def _debug_enabled() -> bool:
@@ -1001,6 +1016,11 @@ async def unified_chat_message(
     
     try:
         user_id = user["user_id"]
+        request_id = _new_request_id()
+        t0 = time.monotonic()
+        logger.info(
+            f"chat_http_start request_id={request_id} user_id={user_id} message_len={len(message or '')} images={_user_requested_images(message)} web_search={_should_web_search(user_id=user_id, message=message)}"
+        )
         
         # Pareto 80/20: Intentar obtener respuesta del cache semántico
         from services.embeddings_service import embeddings_service
@@ -1028,7 +1048,8 @@ async def unified_chat_message(
 
         # Web search (Tavily -> Serper -> DDG) cuando aplique (incluye petición de imágenes)
         ddg_sources: List[Dict[str, Any]] = []
-        if _should_web_search(user_id=user_id, message=request.message):
+        if _should_web_search(user_id=user_id, message=message):
+            ws_t0 = time.monotonic()
             from services.ddg_search_service import ddg_search_service
             from services.tavily_search_service import tavily_search_service
             from services.serper_search_service import serper_search_service
@@ -1039,9 +1060,9 @@ async def unified_chat_message(
             if tavily_search_service.enabled():
                 try:
                     tavily_sources, tavily_meta = await tavily_search_service.search_with_meta(
-                        query=request.message.strip(),
+                        query=message.strip(),
                         user_id=str(user_id),
-                        include_images=_user_requested_images(request.message),
+                        include_images=_user_requested_images(message),
                     )
                 except Exception:
                     tavily_sources = []
@@ -1049,34 +1070,46 @@ async def unified_chat_message(
 
             if tavily_sources:
                 ddg_sources = list(tavily_sources)
+                logger.info(
+                    f"web_search_provider request_id={request_id} user_id={user_id} provider=tavily meta={_safe_meta(tavily_meta)} results={len(ddg_sources)} duration_ms={int((time.monotonic()-ws_t0)*1000)}"
+                )
                 user_context = dict(user_context)
                 user_context["web_search_results"] = list(ddg_sources or [])[:5]
-                if _user_requested_images(request.message):
+                if _user_requested_images(message):
                     user_context["web_search_images_requested"] = True
             else:
                 serper_meta: Dict[str, Any] = {"status": "disabled"}
                 if serper_search_service.enabled():
                     try:
                         ddg_sources, serper_meta = await serper_search_service.search_with_meta(
-                            query=request.message.strip(),
+                            query=message.strip(),
                             user_id=str(user_id),
-                            include_images=_user_requested_images(request.message),
+                            include_images=_user_requested_images(message),
                         )
                     except Exception:
                         ddg_sources = []
                         serper_meta = {"status": "failed"}
 
+                if ddg_sources:
+                    logger.info(
+                        f"web_search_provider request_id={request_id} user_id={user_id} provider=serper meta={_safe_meta(serper_meta)} results={len(ddg_sources)} duration_ms={int((time.monotonic()-ws_t0)*1000)}"
+                    )
+
                 if not ddg_sources:
                     try:
-                        ddg_sources, ddg_meta = await ddg_search_service.search_with_meta(request.message.strip())
+                        ddg_sources, ddg_meta = await ddg_search_service.search_with_meta(message.strip())
                     except Exception:
                         ddg_sources = []
                         ddg_meta = {"status": "failed"}
 
+                    logger.info(
+                        f"web_search_provider request_id={request_id} user_id={user_id} provider=ddg meta={_safe_meta(ddg_meta)} results={len(ddg_sources)} duration_ms={int((time.monotonic()-ws_t0)*1000)}"
+                    )
+
                 if ddg_sources:
                     user_context = dict(user_context)
                     user_context["web_search_results"] = list(ddg_sources or [])[:5]
-                    if _user_requested_images(request.message):
+                    if _user_requested_images(message):
                         user_context["web_search_images_requested"] = True
                 else:
                     status_val = None
@@ -1094,8 +1127,8 @@ async def unified_chat_message(
         sources: List[Dict[str, Any]] = []
         if isinstance(ddg_sources, list) and ddg_sources:
             combined_sources = list(ddg_sources)
-            max_sources = 5 if _user_requested_images(request.message) else 3
-            if _user_requested_images(request.message):
+            max_sources = 5 if _user_requested_images(message) else 3
+            if _user_requested_images(message):
                 prioritized: List[Dict[str, Any]] = []
                 remainder: List[Dict[str, Any]] = []
                 for s in list(combined_sources):
@@ -1108,6 +1141,10 @@ async def unified_chat_message(
                 sources = (prioritized + remainder)[:max_sources]
             else:
                 sources = list(combined_sources)[:max_sources]
+
+        logger.info(
+            f"chat_http_llm_start request_id={request_id} user_id={user_id} sources={len(sources)} web_results={len(list(user_context.get('web_search_results') or []))}"
+        )
 
         # HTTP: usar modo no-streaming (más estable que emular WS con MockWebSocket)
         context_prompt = build_context_prompt(user_context)
@@ -1160,6 +1197,10 @@ async def unified_chat_message(
         ]
         ai_text = await chat_with_ai(messages=messages, user=user_id, fast_reasoning=True, stream=False)
         structured = _sanitize_structured_data({"response": ai_text, "tasks": [], "plan": [], "actions": [], "is_stream": False})
+
+        logger.info(
+            f"chat_http_done request_id={request_id} user_id={user_id} duration_ms={int((time.monotonic()-t0)*1000)} response_len={len(structured.get('response') or '')}"
+        )
         
         # Guardar progreso del usuario en background para no bloquear la respuesta
         asyncio.create_task(save_user_progress(user_id, message, structured))
@@ -1378,6 +1419,11 @@ async def unified_chat_message_json(
     
     try:
         user_id = user["user_id"]
+        request_id = _new_request_id()
+        t0 = time.monotonic()
+        logger.info(
+            f"chat_http_json_start request_id={request_id} user_id={user_id} message_len={len(request.message or '')} images={_user_requested_images(request.message)} web_search={_should_web_search(user_id=user_id, message=request.message)} session_id={str(request.session_id or '')}"
+        )
         
         # Pareto 80/20: Intentar obtener respuesta del cache semántico
         from services.embeddings_service import embeddings_service
@@ -1559,8 +1605,8 @@ async def chat_info():
             "context_threshold_percent": 85,
             "max_audio_size_mb": 10
         },
-        "timestamp": datetime.utcnow().isoformat()
     }
+
 
 @router.websocket("/ws/{user_id}")
 async def unified_chat_websocket(websocket: WebSocket, user_id: str):
@@ -1667,6 +1713,10 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             start_ts = datetime.utcnow()
 
             user_message = str(message_data.get("message", "") or "")
+            request_id = _new_request_id()
+            logger.info(
+                f"chat_ws_start request_id={request_id} user_id={user_id} message_len={len(user_message or '')} images={_user_requested_images(user_message)} web_search={_should_web_search(user_id=user_id, message=user_message)}"
+            )
             messages = [{"role": "user", "content": user_message}]
             should_refresh_context(user_id, messages)
 
@@ -1679,6 +1729,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             if _should_web_search(user_id=user_id, message=user_message):
                 await _ws_send_status(websocket, "Buscando en la web...")
                 ddg_meta = {"status": "skipped"}
+                ws_t0 = time.monotonic()
 
                 # 1) Tavily (primario) con rotación por user_id
                 tavily_sources: List[Dict[str, str]] = []
@@ -1696,6 +1747,9 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
 
                 if tavily_sources:
                     ddg_sources = list(tavily_sources)
+                    logger.info(
+                        f"web_search_provider request_id={request_id} user_id={user_id} provider=tavily meta={_safe_meta(tavily_meta)} results={len(ddg_sources)} duration_ms={int((time.monotonic()-ws_t0)*1000)}"
+                    )
                     user_context = dict(user_context)
                     user_context["web_search_results"] = list(ddg_sources or [])[:5]
                     if _user_requested_images(user_message):
@@ -1714,6 +1768,11 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                             ddg_sources = []
                             serper_meta = {"status": "failed"}
 
+                    if ddg_sources:
+                        logger.info(
+                            f"web_search_provider request_id={request_id} user_id={user_id} provider=serper meta={_safe_meta(serper_meta)} results={len(ddg_sources)} duration_ms={int((time.monotonic()-ws_t0)*1000)}"
+                        )
+
                     # 3) DDG fallback
                     if not ddg_sources:
                         try:
@@ -1721,6 +1780,10 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                         except Exception:
                             ddg_sources = []
                             ddg_meta = {"status": "failed"}
+
+                        logger.info(
+                            f"web_search_provider request_id={request_id} user_id={user_id} provider=ddg meta={_safe_meta(ddg_meta)} results={len(ddg_sources)} duration_ms={int((time.monotonic()-ws_t0)*1000)}"
+                        )
 
                 if ddg_sources:
                     user_context = dict(user_context)
@@ -1787,6 +1850,9 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 continue
 
             text = str(ai_result.get("text") or "")
+            logger.info(
+                f"chat_ws_done request_id={request_id} user_id={user_id} latency_ms={int((datetime.utcnow()-start_ts).total_seconds()*1000)} response_len={len(text or '')} sources={len(list(ddg_sources or []))}"
+            )
 
             # 2) MCP-like búsqueda (DuckDuckGo) -> sources
             # MVP: usar el mismo mensaje como query; si quieres heurística, se ajusta aquí.
