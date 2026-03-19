@@ -1262,11 +1262,12 @@ async def unified_chat_message_json(
                 "error": str(e),
             }
         )
+        detail_error = str(e) if _debug_enabled() else "internal_error"
         raise HTTPException(
             status_code=500,
             detail={
                 "success": False,
-                "error": str(e),
+                "error": detail_error,
                 "error_code": "CHAT_ERROR",
                 "timestamp": datetime.utcnow().isoformat()
             }
