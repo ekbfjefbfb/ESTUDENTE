@@ -163,6 +163,14 @@ async def lifespan(app: FastAPI):
     
     # 🚀 Ejecutar todo en paralelo (3x más rápido que v3.0)
     await asyncio.gather(*startup_tasks, return_exceptions=True)
+
+    # Background tasks (fail-open)
+    try:
+        from services.session_service import periodic_tasks
+
+        app.state.session_periodic_task = asyncio.create_task(periodic_tasks())
+    except Exception as e:
+        logger.warning(f"⚠️ session_service periodic task not started: {e}")
     
     logger.info(f"✅ {APP_NAME} v4.0 started successfully - Ready for production!")
     
@@ -170,6 +178,13 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info(f"🛑 Shutting down {APP_NAME}")
+
+    try:
+        task = getattr(app.state, "session_periodic_task", None)
+        if task is not None:
+            task.cancel()
+    except Exception:
+        pass
     
     # Cerrar conexiones
     try:

@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from services.redis_service import get_cache, set_cache
+from services.redis_service import get_redis
 
 logger = logging.getLogger("hub_memory_service")
 
@@ -50,12 +51,26 @@ class HubMemoryService:
         # Maintain recent list as cached array (simple + compatible with existing redis_service helpers).
         try:
             recent_key = self._recent_key(str(user_id))
-            recent = await get_cache(recent_key, default=[])
-            if not isinstance(recent, list):
-                recent = []
-            recent.insert(0, memory_id)
-            recent = recent[: self.recent_limit]
-            await set_cache(recent_key, recent, ttl=self.ttl_seconds)
+            redis = await get_redis()
+            if redis is not None:
+                try:
+                    await redis.lpush(recent_key, memory_id)
+                    await redis.ltrim(recent_key, 0, max(self.recent_limit - 1, 0))
+                    await redis.expire(recent_key, self.ttl_seconds)
+                except Exception:
+                    recent = await get_cache(recent_key, default=[])
+                    if not isinstance(recent, list):
+                        recent = []
+                    recent.insert(0, memory_id)
+                    recent = recent[: self.recent_limit]
+                    await set_cache(recent_key, recent, ttl=self.ttl_seconds)
+            else:
+                recent = await get_cache(recent_key, default=[])
+                if not isinstance(recent, list):
+                    recent = []
+                recent.insert(0, memory_id)
+                recent = recent[: self.recent_limit]
+                await set_cache(recent_key, recent, ttl=self.ttl_seconds)
         except Exception as e:
             logger.warning("hub_memory_recent_update_failed", extra={"error": str(e)})
 
@@ -70,7 +85,16 @@ class HubMemoryService:
 
     async def get_recent(self, *, user_id: str, limit: int = 20) -> List[str]:
         try:
-            recent = await get_cache(self._recent_key(str(user_id)), default=[])
+            recent_key = self._recent_key(str(user_id))
+            redis = await get_redis()
+            if redis is not None:
+                try:
+                    items = await redis.lrange(recent_key, 0, max(int(limit) - 1, 0))
+                    return [str(x) for x in (items or [])]
+                except Exception:
+                    pass
+
+            recent = await get_cache(recent_key, default=[])
             if not isinstance(recent, list):
                 return []
             return [str(x) for x in recent[:limit]]
