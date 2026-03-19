@@ -400,7 +400,7 @@ def _ws_status_enabled() -> bool:
     return str(raw).strip() in {"1", "true", "True"}
 
 
-async def _ws_send_status(websocket: WebSocket, content: str) -> None:
+async def _ws_send_status(websocket: WebSocket, content: str, *, request_id: Optional[str] = None) -> None:
     if not _ws_status_enabled():
         return
     await _ws_send_json(
@@ -408,8 +408,10 @@ async def _ws_send_status(websocket: WebSocket, content: str) -> None:
         {
             "type": "status",
             "content": str(content or "")[:200],
+            **({"request_id": str(request_id)} if request_id else {}),
         },
     )
+
 
 async def _ws_heartbeat(websocket: WebSocket):
     """Tarea en background para enviar pings y mantener la conexión activa."""
@@ -1007,7 +1009,9 @@ async def get_ai_response_with_streaming(
     user_id: str,
     message: str,
     user_context: Dict[str, Any],
-    websocket: WebSocket
+    websocket: WebSocket,
+    *,
+    request_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Streaming REAL: Envía tokens uno por uno al WebSocket."""
     from services.groq_ai_service import chat_with_ai, sanitize_ai_text
@@ -1113,6 +1117,7 @@ async def get_ai_response_with_streaming(
                         "type": "token",
                         "content": chunk,
                         "token": chunk,
+                        **({"request_id": str(request_id)} if request_id else {}),
                     },
                 )
 
@@ -1970,7 +1975,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
 
             ddg_sources = []
             if _should_web_search(user_id=user_id, message=user_message):
-                await _ws_send_status(websocket, "Buscando en la web...")
+                await _ws_send_status(websocket, "Buscando en la web...", request_id=request_id)
                 ddg_meta = {"status": "skipped"}
                 ws_t0 = time.monotonic()
 
@@ -2048,7 +2053,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                         user_context = dict(user_context)
                         user_context["web_search_status"] = str(status_val or "failed")
             if yt_video_id:
-                await _ws_send_status(websocket, "Leyendo transcripción de YouTube...")
+                await _ws_send_status(websocket, "Leyendo transcripción de YouTube...", request_id=request_id)
                 yt = await youtube_transcript_service.fetch_transcript_text(video_id=yt_video_id)
                 if isinstance(yt, dict) and str(yt.get("text") or "").strip():
                     user_context = dict(user_context)
@@ -2063,7 +2068,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             if browser_mcp_service.enabled() and not yt_video_id:
                 url = browser_mcp_service.extract_first_url(user_message)
                 if url:
-                    await _ws_send_status(websocket, "Leyendo página web...")
+                    await _ws_send_status(websocket, "Leyendo página web...", request_id=request_id)
                     extracted = await browser_mcp_service.fetch_page_extract(url=url)
                     if isinstance(extracted, dict) and str(extracted.get("text") or "").strip():
                         user_context = dict(user_context)
@@ -2107,6 +2112,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                         websocket,
                         {
                             "type": "rich",
+                            "request_id": str(request_id),
                             "sources": preview_sources,
                             "rich_response": rich_preview.model_dump(),
                         },
@@ -2116,12 +2122,13 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
 
             # 1) Streaming Groq -> type=token
             try:
-                await _ws_send_status(websocket, "Generando respuesta...")
+                await _ws_send_status(websocket, "Generando respuesta...", request_id=request_id)
                 ai_result = await get_ai_response_with_streaming(
                     user_id,
                     user_message,
                     user_context,
                     websocket,
+                    request_id=request_id,
                 )
             except Exception as e:
                 logger.exception(f"WebSocket streaming error user_id={user_id}: {e}")
@@ -2131,6 +2138,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                     {
                         "type": "error",
                         "message": "llm_error",
+                        "request_id": str(request_id),
                         **({"debug": debug} if debug else {}),
                     },
                 )
@@ -2197,6 +2205,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 websocket,
                 {
                     "type": "complete",
+                    "request_id": str(request_id),
                     "text": text,
                     "memory_id": memory_id,
                     "sources": sources,
