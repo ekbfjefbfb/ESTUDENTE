@@ -156,6 +156,7 @@ class RecordingSessionService:
                     await db_session.execute(
                         delete(SessionItem).where(
                             SessionItem.session_id == session_id,
+                            SessionItem.user_id == user_id,
                             SessionItem.source == "ai"
                         )
                     )

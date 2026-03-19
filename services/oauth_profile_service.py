@@ -426,7 +426,7 @@ class OAuthProfileService:
     
     async def _update_user_profile_in_db(
         self,
-        user_id: int,
+        user_id: str,
         profile: Dict[str, Any]
     ):
         """Actualiza la DB con información del perfil OAuth"""
@@ -461,7 +461,7 @@ class OAuthProfileService:
                 # Ejecutar update
                 stmt = (
                     update(User)
-                    .where(User.id == user_id)
+                    .where(User.id == str(user_id))
                     .values(**update_data)
                 )
                 await session.execute(stmt)
@@ -482,7 +482,7 @@ class OAuthProfileService:
     
     async def auto_configure_agents_for_user(
         self,
-        user_id: int,
+        user_id: str,
         provider: str,
         access_token: str
     ) -> List[Dict[str, Any]]:
