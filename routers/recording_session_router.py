@@ -155,7 +155,10 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
                         # Iniciar una sesión programada automáticamente
                         scheduled_id = data.get("scheduled_id")
                         from services.chat_intent_extractor import chat_intent_extractor
-                        session = await chat_intent_extractor.execute_scheduled_recording(scheduled_id)
+                        session = await chat_intent_extractor.execute_scheduled_recording(
+                            scheduled_id,
+                            requesting_user_id=str(user_id),
+                        )
                         if session:
                             session_id = session.id
                             await websocket.send_json({

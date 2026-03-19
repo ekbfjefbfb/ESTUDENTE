@@ -37,6 +37,7 @@ reportlab==4.2.5
 
 # Web search
 aiolimiter==1.1.0
+ddgs==9.11.4
 duckduckgo-search==6.3.7
 
 # YouTube transcript
@@ -52,7 +53,6 @@ numpy==1.26.4
 prometheus-client==0.20.0
 redis==4.6.0
 tenacity==8.2.3
-aioredis==2.0.1
 json-log-formatter==1.0
 sentry-sdk==2.17.0
 

@@ -222,13 +222,16 @@ EJEMPLOS:
         logger.info(f"✅ ScheduledRecording creada: {scheduled.id} - {scheduled.class_name} @ {scheduled.scheduled_at}")
         return scheduled
 
-    async def execute_scheduled_recording(self, scheduled_id: str) -> Optional[RecordingSession]:
+    async def execute_scheduled_recording(self, scheduled_id: str, *, requesting_user_id: str) -> Optional[RecordingSession]:
         """
         Ejecuta una grabación programada creando una RecordingSession real.
         """
         async with get_primary_session() as session:
             scheduled = await session.get(ScheduledRecording, scheduled_id)
             if not scheduled or scheduled.status != "pending":
+                return None
+
+            if str(scheduled.user_id) != str(requesting_user_id):
                 return None
 
             # Iniciar la sesión unificada
