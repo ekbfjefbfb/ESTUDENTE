@@ -12,6 +12,7 @@ import re
 import time
 import uuid
 from datetime import datetime, date, timedelta
+from urllib.parse import urlparse
 from typing import List, Optional, Dict, Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Depends, HTTPException, Request
@@ -172,6 +173,22 @@ class ChatMessageRequest(BaseModel):
     files: Optional[List[str]] = None
     session_id: Optional[str] = None
 
+
+class RichGalleryItem(BaseModel):
+    title: str
+    source: Optional[str] = None
+    url: str
+    image_url: Optional[str] = None
+    style: Optional[str] = None
+
+
+class RichResponse(BaseModel):
+    type: str = "rich_response"
+    text: str
+    memory_id: Optional[str] = None
+    gallery: Optional[List[RichGalleryItem]] = None
+    suggestions: Optional[List[str]] = None
+
 class ChatResponse(BaseModel):
     success: bool
     response: str
@@ -181,6 +198,7 @@ class ChatResponse(BaseModel):
     message_id: Optional[str] = None
     actions: Optional[List[Dict[str, Any]]] = None
     sources: Optional[List[Dict[str, Any]]] = None
+    rich_response: Optional[RichResponse] = None
 
 class VoiceChatResponse(BaseModel):
     success: bool
@@ -288,6 +306,55 @@ async def _ws_send_json(websocket: WebSocket, payload: Dict[str, Any]) -> None:
 
         logger.error(f"Error sending WebSocket JSON: {e}")
         raise
+
+
+def _host_label(url: str) -> str:
+    try:
+        host = (urlparse(url).netloc or "").strip()
+        if host.startswith("www."):
+            host = host[4:]
+        return host or ""
+    except Exception:
+        return ""
+
+
+def _build_rich_response(*, text: str, memory_id: Optional[str], sources: Optional[List[Dict[str, Any]]]) -> Optional[RichResponse]:
+    if not sources:
+        return None
+
+    gallery: List[RichGalleryItem] = []
+    for s in sources:
+        if not isinstance(s, dict):
+            continue
+        url = str(s.get("url") or "").strip()
+        if not url:
+            continue
+        title = str(s.get("title") or s.get("name") or s.get("snippet") or "").strip() or url
+        image_url = str(s.get("image") or s.get("image_url") or "").strip() or None
+        source_label = str(s.get("source") or "").strip() or None
+        if not source_label:
+            host = _host_label(url)
+            source_label = host or None
+        style = str(s.get("style") or "").strip() or None
+        gallery.append(
+            RichGalleryItem(
+                title=title,
+                source=source_label,
+                url=url,
+                image_url=image_url,
+                style=style,
+            )
+        )
+
+    if not gallery:
+        return None
+
+    return RichResponse(
+        text=str(text or "").strip(),
+        memory_id=str(memory_id) if memory_id else None,
+        gallery=gallery,
+        suggestions=None,
+    )
 
 
 def _ws_status_enabled() -> bool:
@@ -1285,7 +1352,8 @@ async def unified_chat_message(
         logger.info(
             f"chat_http_json_done request_id={request_id} user_id={user_id} duration_ms={int((time.monotonic()-t0)*1000)} response_len={len(structured.get('response') or '')} sources={len(list(sources or []))}"
         )
-        
+
+        message_id = f"msg_{datetime.utcnow().timestamp()}"
         return ChatResponse(
             success=True,
             response=structured["response"],
@@ -1298,11 +1366,17 @@ async def unified_chat_message(
                 "tasks_count": len(user_context.get("tasks_today", [])),
                 "upcoming_tasks_count": len(user_context.get("tasks_upcoming", []))
             },
-            message_id=f"msg_{datetime.utcnow().timestamp()}",
+            message_id=message_id,
             actions=[
                 {"type": "tasks", "data": structured["tasks"]},
                 {"type": "plan", "data": structured["plan"]}
-            ]
+            ],
+            sources=sources if sources else None,
+            rich_response=_build_rich_response(
+                text=str(structured.get("response") or ""),
+                memory_id=message_id,
+                sources=sources if sources else None,
+            ),
         )
         
     except RuntimeError as e:
@@ -1613,7 +1687,8 @@ async def unified_chat_message_json(
             await embeddings_service.add_to_semantic_cache(request.message, structured["response"])
         
         context_info = get_context_info(user_id)
-        
+
+        message_id = f"msg_{datetime.utcnow().timestamp()}"
         return ChatResponse(
             success=True,
             response=structured["response"],
@@ -1626,12 +1701,17 @@ async def unified_chat_message_json(
                 "session_id": request.session_id,
                 "tasks_count": len(user_context.get("tasks_today", []))
             },
-            message_id=f"msg_{datetime.utcnow().timestamp()}",
+            message_id=message_id,
             actions=[
                 {"type": "tasks", "data": structured["tasks"]},
                 {"type": "plan", "data": structured["plan"]}
             ],
             sources=sources if sources else None,
+            rich_response=_build_rich_response(
+                text=str(structured.get("response") or ""),
+                memory_id=message_id,
+                sources=sources if sources else None,
+            ),
         )
         
     except RuntimeError as e:
@@ -2008,6 +2088,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             asyncio.create_task(_persist_memory())
 
             # 4) Mensaje final (contrato estricto: type=complete)
+            rich_response = _build_rich_response(text=text, memory_id=memory_id, sources=sources)
             await _ws_send_json(
                 websocket,
                 {
@@ -2015,6 +2096,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                     "text": text,
                     "memory_id": memory_id,
                     "sources": sources,
+                    "rich_response": rich_response.model_dump() if rich_response else None,
                     "debug": debug,
                 },
             )
