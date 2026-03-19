@@ -49,6 +49,70 @@ def _user_requested_images(message: str) -> bool:
         return False
     return bool(re.search(r"\b(imagen|imagenes|imágenes|foto|fotos|pictures|images)\b", msg))
 
+
+_last_auto_web_search_at: Dict[str, float] = {}
+
+
+def _auto_web_search_enabled() -> bool:
+    raw = os.getenv("AUTO_WEB_SEARCH_ENABLED")
+    if raw is None:
+        return True
+    return str(raw).strip() in {"1", "true", "True"}
+
+
+def _auto_web_search_cooldown_s() -> int:
+    try:
+        return int(os.getenv("AUTO_WEB_SEARCH_COOLDOWN_S", "25"))
+    except Exception:
+        return 25
+
+
+def _heuristic_web_search_intent(message: str) -> bool:
+    msg = str(message or "").strip()
+    if not msg:
+        return False
+    lower = msg.lower()
+
+    if _user_requested_web_search(lower) or _user_requested_images(lower):
+        return True
+
+    score = 0
+    if "?" in msg:
+        score += 1
+
+    if re.search(r"\b(hoy|ayer|ultima|última|ultimas|últimas|noticia|noticias|actualiz|ahora|este año|este mes|202\d)\b", lower):
+        score += 2
+    if re.search(r"\b(qué pasó|que paso|pas[oó] con|incendio|se quem[oó]|accidente|terremoto|hurac[aá]n|explosi[oó]n)\b", lower):
+        score += 2
+
+    if re.search(r"\b(precio|cu[aá]nto cuesta|costo|tarifa|horario|direcci[oó]n|d[oó]nde queda|tel[eé]fono|reservar|disponibilidad)\b", lower):
+        score += 2
+    if re.search(r"\b(fuente|fuentes|link|enlace|seg[uú]n|verifica|confirmar)\b", lower):
+        score += 2
+
+    if len(lower) <= 80 and re.search(r"\b(hotel|restaurante|aeropuerto|universidad|clima|vuelos)\b", lower):
+        score += 1
+
+    return score >= 3
+
+
+def _should_web_search(*, user_id: str, message: str) -> bool:
+    if not _auto_web_search_enabled():
+        return _user_requested_web_search(message) or _user_requested_images(message)
+
+    if _user_requested_web_search(message) or _user_requested_images(message):
+        return True
+
+    if not _heuristic_web_search_intent(message):
+        return False
+
+    now = datetime.utcnow().timestamp()
+    last = float(_last_auto_web_search_at.get(str(user_id)) or 0.0)
+    if now - last < _auto_web_search_cooldown_s():
+        return False
+    _last_auto_web_search_at[str(user_id)] = now
+    return True
+
 # =========================
 # SCHEMAS
 # =========================
@@ -1315,7 +1379,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             user_context = await get_user_context_for_chat(user_id)
 
             ddg_sources = []
-            if _user_requested_web_search(user_message):
+            if _should_web_search(user_id=user_id, message=user_message):
                 await _ws_send_status(websocket, "Buscando en la web...")
                 try:
                     ddg_sources = await ddg_search_service.search(user_message.strip())
