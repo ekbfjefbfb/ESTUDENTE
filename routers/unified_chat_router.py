@@ -113,6 +113,32 @@ def _should_web_search(*, user_id: str, message: str) -> bool:
     _last_auto_web_search_at[str(user_id)] = now
     return True
 
+
+def _semantic_cache_enabled() -> bool:
+    raw = os.getenv("SEMANTIC_CACHE_ENABLED")
+    if raw is None:
+        return False
+    return str(raw).strip() in {"1", "true", "True"}
+
+
+def _should_use_semantic_cache(message: str) -> bool:
+    msg = str(message or "").strip()
+    if not msg:
+        return False
+    if not _semantic_cache_enabled():
+        return False
+
+    lower = msg.lower()
+    if _heuristic_web_search_intent(lower) or _user_requested_web_search(lower) or _user_requested_images(lower):
+        return False
+
+    if re.search(r"\b(hoy|ayer|ultima|última|ultimas|últimas|noticia|noticias|actualiz|ahora|202\d)\b", lower):
+        return False
+    if re.search(r"\b(precio|cu[aá]nto cuesta|costo|tarifa|horario|direcci[oó]n|d[oó]nde queda|disponibilidad)\b", lower):
+        return False
+
+    return True
+
 # =========================
 # SCHEMAS
 # =========================
@@ -914,7 +940,9 @@ async def unified_chat_message(
         
         # Pareto 80/20: Intentar obtener respuesta del cache semántico
         from services.embeddings_service import embeddings_service
-        cached_response = await embeddings_service.get_cached_response(message)
+        cached_response = None
+        if _should_use_semantic_cache(message):
+            cached_response = await embeddings_service.get_cached_response(message)
         
         if cached_response and not stream:
             # Si hay cache hit, retornamos inmediatamente (latencia < 50ms)
@@ -1132,8 +1160,8 @@ async def voice_message_http(
     mock_ws = MockWebSocket()
     structured = await get_ai_response_with_streaming(user_id, transcribed, user_context, mock_ws)
     
-    response_text = structured.get("response") if isinstance(structured, dict) else str(structured)
-
+    response_text = structured.get("text") if isinstance(structured, dict) else str(structured)
+    
     audio_uri = await text_to_speech_groq(response_text, voice=voice, language=language)
 
     return VoiceChatResponse(
@@ -1159,7 +1187,9 @@ async def unified_chat_message_json(
         
         # Pareto 80/20: Intentar obtener respuesta del cache semántico
         from services.embeddings_service import embeddings_service
-        cached_response = await embeddings_service.get_cached_response(request.message)
+        cached_response = None
+        if _should_use_semantic_cache(request.message):
+            cached_response = await embeddings_service.get_cached_response(request.message)
         if cached_response:
             context_info = get_context_info(user_id)
             return ChatResponse(
