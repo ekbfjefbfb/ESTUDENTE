@@ -1060,15 +1060,15 @@ async def get_ai_response_with_streaming(
 
     try:
         overall_timeout_s = float(os.getenv("WS_LLM_STREAM_OVERALL_TIMEOUT_S", "120") or "120")
-        per_chunk_timeout_s = float(os.getenv("WS_LLM_STREAM_CHUNK_TIMEOUT_S", "25") or "25")
     except Exception:
         overall_timeout_s = 120.0
-        per_chunk_timeout_s = 25.0
 
     stream_started_at = time.monotonic()
     first_token_at: Optional[float] = None
 
     try:
+        import anyio
+
         stream_generator = await chat_with_ai(
             messages=messages,
             user=user_id,
@@ -1076,35 +1076,26 @@ async def get_ai_response_with_streaming(
             stream=True,
         )
 
-        aiter = stream_generator.__aiter__()
-        while True:
-            elapsed = time.monotonic() - stream_started_at
-            if elapsed > overall_timeout_s:
-                raise asyncio.TimeoutError(f"overall_timeout_s_exceeded:{overall_timeout_s}")
+        with anyio.fail_after(overall_timeout_s):
+            async for chunk in stream_generator:
+                if not chunk:
+                    continue
 
-            try:
-                chunk = await asyncio.wait_for(aiter.__anext__(), timeout=per_chunk_timeout_s)
-            except StopAsyncIteration:
-                break
+                if first_token_at is None:
+                    first_token_at = time.monotonic()
+                    logger.info(
+                        f"llm_ws_first_token user_id={user_id} latency_ms={int((first_token_at-stream_started_at)*1000)}"
+                    )
 
-            if not chunk:
-                continue
-
-            if first_token_at is None:
-                first_token_at = time.monotonic()
-                logger.info(
-                    f"llm_ws_first_token user_id={user_id} latency_ms={int((first_token_at-stream_started_at)*1000)}"
+                full_text += chunk
+                await _ws_send_json(
+                    websocket,
+                    {
+                        "type": "token",
+                        "content": chunk,
+                        "token": chunk,
+                    },
                 )
-
-            full_text += chunk
-            await _ws_send_json(
-                websocket,
-                {
-                    "type": "token",
-                    "content": chunk,
-                    "token": chunk,
-                },
-            )
 
     except asyncio.TimeoutError as e:
         logger.error(
