@@ -1281,6 +1281,10 @@ async def unified_chat_message(
                         logger.error(f"❌ Fallo al iniciar ejecución silenciosa ({action_type}): {e}")
 
         context_info = get_context_info(user_id)
+
+        logger.info(
+            f"chat_http_json_done request_id={request_id} user_id={user_id} duration_ms={int((time.monotonic()-t0)*1000)} response_len={len(structured.get('response') or '')} sources={len(list(sources or []))}"
+        )
         
         return ChatResponse(
             success=True,
@@ -1447,6 +1451,105 @@ async def unified_chat_message_json(
         
         # Obtener contexto del usuario
         user_context = await get_user_context_for_chat(user_id)
+
+        # `sources` must always be defined for the response contract
+        sources: List[Dict[str, Any]] = []
+
+        # Web search (Tavily -> Serper -> DDG) cuando aplique (incluye petición de imágenes)
+        ddg_sources: List[Dict[str, Any]] = []
+        if _should_web_search(user_id=user_id, message=request.message):
+            ws_t0 = time.monotonic()
+            from services.ddg_search_service import ddg_search_service
+            from services.tavily_search_service import tavily_search_service
+            from services.serper_search_service import serper_search_service
+
+            ddg_meta: Dict[str, Any] = {"status": "skipped"}
+            tavily_sources: List[Dict[str, Any]] = []
+            tavily_meta: Dict[str, Any] = {"status": "disabled"}
+            serper_meta: Dict[str, Any] = {"status": "disabled"}
+
+            if tavily_search_service.enabled():
+                try:
+                    tavily_sources, tavily_meta = await tavily_search_service.search_with_meta(
+                        query=str(request.message or "").strip(),
+                        user_id=str(user_id),
+                        include_images=_user_requested_images(request.message),
+                    )
+                except Exception:
+                    tavily_sources = []
+                    tavily_meta = {"status": "failed"}
+
+            if tavily_sources:
+                ddg_sources = list(tavily_sources)
+                logger.info(
+                    f"web_search_provider request_id={request_id} user_id={user_id} provider=tavily meta={_safe_meta(tavily_meta)} results={len(ddg_sources)} duration_ms={int((time.monotonic()-ws_t0)*1000)}"
+                )
+            else:
+                if serper_search_service.enabled():
+                    try:
+                        ddg_sources, serper_meta = await serper_search_service.search_with_meta(
+                            query=str(request.message or "").strip(),
+                            user_id=str(user_id),
+                            include_images=_user_requested_images(request.message),
+                        )
+                    except Exception:
+                        ddg_sources = []
+                        serper_meta = {"status": "failed"}
+
+                if ddg_sources:
+                    logger.info(
+                        f"web_search_provider request_id={request_id} user_id={user_id} provider=serper meta={_safe_meta(serper_meta)} results={len(ddg_sources)} duration_ms={int((time.monotonic()-ws_t0)*1000)}"
+                    )
+
+                if not ddg_sources:
+                    try:
+                        ddg_sources, ddg_meta = await ddg_search_service.search_with_meta(
+                            str(request.message or "").strip(),
+                            prefer_images=_user_requested_images(request.message),
+                        )
+                    except TypeError:
+                        ddg_sources, ddg_meta = await ddg_search_service.search_with_meta(
+                            str(request.message or "").strip()
+                        )
+                    except Exception:
+                        ddg_sources = []
+                        ddg_meta = {"status": "failed"}
+
+                    logger.info(
+                        f"web_search_provider request_id={request_id} user_id={user_id} provider=ddg meta={_safe_meta(ddg_meta)} results={len(ddg_sources)} duration_ms={int((time.monotonic()-ws_t0)*1000)}"
+                    )
+
+            if ddg_sources:
+                user_context = dict(user_context)
+                user_context["web_search_results"] = list(ddg_sources or [])[:5]
+                if _user_requested_images(request.message):
+                    user_context["web_search_images_requested"] = True
+
+                max_sources = 5 if _user_requested_images(request.message) else 3
+                if _user_requested_images(request.message):
+                    prioritized: List[Dict[str, Any]] = []
+                    remainder: List[Dict[str, Any]] = []
+                    for s in list(ddg_sources):
+                        if not isinstance(s, dict):
+                            continue
+                        if str(s.get("image") or "").strip():
+                            prioritized.append(s)
+                        else:
+                            remainder.append(s)
+                    sources = (prioritized + remainder)[:max_sources]
+                else:
+                    sources = list(ddg_sources)[:max_sources]
+            else:
+                status_val = None
+                if isinstance(tavily_meta, dict) and tavily_meta.get("status") not in (None, "ok"):
+                    status_val = tavily_meta.get("status")
+                if status_val is None and isinstance(serper_meta, dict) and serper_meta.get("status") not in (None, "ok"):
+                    status_val = serper_meta.get("status")
+                if status_val is None and isinstance(ddg_meta, dict) and ddg_meta.get("status") not in (None, "ok", "cache_hit"):
+                    status_val = ddg_meta.get("status")
+                if status_val is not None:
+                    user_context = dict(user_context)
+                    user_context["web_search_status"] = str(status_val or "failed")
 
         # HTTP JSON: usar modo no-streaming + mismo prompt adaptativo que WS/HTTP
         context_prompt = build_context_prompt(user_context)
