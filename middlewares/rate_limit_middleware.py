@@ -3,7 +3,6 @@ import os
 import logging
 import json
 from jose import jwt
-import aioredis
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -56,20 +55,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, redis_url: str = REDIS_URL):
         super().__init__(app)
         self.redis_url = redis_url
-        self.redis = None
 
     async def _get_redis(self):
         try:
-            if not self.redis:
-                self.redis = await aioredis.from_url(self.redis_url, decode_responses=True)
+            from services.redis_service import get_redis as get_redis_enterprise
+
+            redis_client = await get_redis_enterprise()
+            if redis_client is None:
+                return None
             try:
-                await self.redis.ping()
+                await redis_client.ping()
             except Exception:
-                self.redis = None
-            return self.redis
+                return None
+            return redis_client
         except Exception as e:
             logger.error({"event": "redis_connect_error", "error": str(e)})
-            self.redis = None
             return None
 
     def _get_user_id_from_jwt(self, request: Request):
@@ -180,9 +180,4 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 raise
             raise
 
-    async def __del__(self):
-        if self.redis:
-            try:
-                self.redis.close()
-            except Exception:
-                pass
+

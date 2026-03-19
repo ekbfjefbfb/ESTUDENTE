@@ -267,21 +267,11 @@ class PreValidationMiddleware(BaseHTTPMiddleware):
             # Verificar estado reciente del rate limit
             cached_status = await smart_cache.get("rate_limit_status", f"{user_id}:minute")
             
+            # Este middleware NO debe bloquear por rate limit para evitar doble enforcement.
+            # La fuente de verdad es RateLimitMiddleware.
             if cached_status:
-                # Si está en caché y no está bloqueado, permitir
-                if not cached_status.get("blocked", False):
-                    return {"allowed": True, "cached": True, "data": cached_status}
-                else:
-                    return {"allowed": False, "reason": "rate_limit_cached", "data": cached_status}
-            
-            # No está en caché, hacer verificación completa
-            can_proceed, rate_info = await anti_abuse_service.check_rate_limit(user_id)
-            
-            return {
-                "allowed": can_proceed,
-                "reason": "fresh_check" if can_proceed else rate_info.get("reason", "rate_limited"),
-                "data": rate_info
-            }
+                return {"allowed": True, "cached": True, "data": cached_status}
+            return {"allowed": True, "reason": "disabled_prevalidation_rate_limit"}
             
         except Exception as e:
             logger.error({

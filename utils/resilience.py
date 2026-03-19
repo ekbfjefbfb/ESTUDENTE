@@ -4,7 +4,6 @@ import time
 from functools import wraps
 from typing import Callable, Any, Dict
 from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
-import aioredis
 import os
 
 # ---------------- Logger JSON ----------------
@@ -17,22 +16,17 @@ if not logger.handlers:
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
 
 # ---------------- Redis ----------------
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-_redis: aioredis.Redis = None
-_redis_lock = asyncio.Lock()
+# Fuente única de Redis: services.redis_service (pool enterprise).
 
-async def get_redis() -> aioredis.Redis:
-    global _redis
-    async with _redis_lock:
-        if _redis:
-            return _redis
-        _redis = aioredis.from_url(REDIS_URL, decode_responses=True)
-        try:
-            await _redis.ping()
-        except Exception:
-            logger.warning("[Resilience] Redis no disponible, fail-open activado")
-            _redis = None
-        return _redis
+
+async def get_redis():
+    try:
+        from services.redis_service import get_redis as get_redis_enterprise
+
+        return await get_redis_enterprise()
+    except Exception:
+        logger.warning("[Resilience] Redis no disponible, fail-open activado")
+        return None
 
 # ---------------- Circuit Breaker ----------------
 _circuit_breakers: Dict[str, "CircuitBreaker"] = {}
