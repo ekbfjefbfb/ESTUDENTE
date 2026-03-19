@@ -89,7 +89,6 @@ async def _extract_topics(*, client: GroqClient, transcript: str) -> List[str]:
         s = str(t).strip()
         if s:
             topics.append(s[:120])
-    # dedupe
     seen = set()
     out: List[str] = []
     for t in topics:
@@ -106,8 +105,9 @@ async def _extract_topics(*, client: GroqClient, transcript: str) -> List[str]:
 @router.post("/from-transcript", response_model=NoteOut)
 async def create_note_from_transcript(
     payload: CreateClassNoteRequest,
-    _user=Depends(get_current_user),
+    user=Depends(get_current_user),
 ):
+    user_id = user["user_id"]
     title_hint = (payload.title_hint or "").strip()
 
     client = GroqClient()
@@ -156,7 +156,6 @@ async def create_note_from_transcript(
         note_id = note_row.id
         created_at = note_row.created_at.isoformat()
 
-        # patch ids from DB
         tasks_out = []
         for tr in task_rows:
             tasks_out.append(
@@ -181,11 +180,11 @@ async def create_note_from_transcript(
     )
 
 
-@router.get("/{note_id}", respons_model=NoteOut)
-asynucer_id = user["user_id"]
-    s def get_note(note_id: str, _user=Depends(get_current_user)):
-    storage = await _get_storage(user_id=user_id, )
-    got = await storage.get_note(note_id=note_id)
+@router.get("/{note_id}", response_model=NoteOut)
+async def get_note(note_id: str, user=Depends(get_current_user)):
+    user_id = user["user_id"]
+    storage = await _get_storage()
+    got = await storage.get_note(user_id=user_id, note_id=note_id)
     if not got:
         raise HTTPException(status_code=404, detail="note_not_found")
     note_row, task_rows = got
@@ -202,7 +201,6 @@ asynucer_id = user["user_id"]
             )
         )
 
-    # topics are not persisted yet
     return NoteOut(
         id=note_row.id,
         title=note_row.title,
@@ -218,21 +216,18 @@ asynucer_id = user["user_id"]
 @router.put("/{note_id}", response_model=NoteOut)
 async def update_note(
     note_id: str,
-    ayload: UpdateNoteRequest,
-    _user=Depends(get_current_user),
+    payload: UpdateNoteRequest,
+    user=Depends(get_current_user),
 ):
-    user_id = user["u"er_id"]
-    s""Actualiza una nota existente"""
+    user_id = user["user_id"]
     storage = await _get_storage()
-    
-    # Verificar que existeuser_id=user_id, 
-    got = await storage.get_note(note_id=note_id)
+
+    got = await storage.get_note(user_id=user_id, note_id=note_id)
     if not got:
         raise HTTPException(status_code=404, detail="note_not_found")
-    
-    # Actualizar
-        user_id=user_id,
+
     updated = await storage.update_note(
+        user_id=user_id,
         note_id=note_id,
         title=payload.title,
         transcript=payload.transcript,
@@ -241,9 +236,8 @@ async def update_note(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="note_not_found")
-    
-    # Obtener tareas asociadas
-    _, task_rows = await storage.get_note(note_id=note_id)
+
+    _, task_rows = await storage.get_note(user_id=user_id, note_id=note_id)
     tasks_out: List[TaskOut] = []
     for tr in task_rows:
         tasks_out.append(
@@ -255,7 +249,7 @@ async def update_note(
                 priority=tr.priority,
             )
         )
-    
+
     return NoteOut(
         id=updated.id,
         title=updated.title,
@@ -271,12 +265,18 @@ async def update_note(
 @router.get("", response_model=ListNotesResponse)
 async def list_notes(
     limit: int = 20,
-    ffset: int = 0,
-    _user=Depends(get_current_user),
-  ):user_id=uer["user_id"]
-    s
-    storage = await _get_storage()user_id=user_id, 
-    rows = await storage.list_notes(from_ts=None, to_ts=None, limit=min(limit, 100), offset=max(offset, 0))
+    offset: int = 0,
+    user=Depends(get_current_user),
+):
+    user_id = user["user_id"]
+    storage = await _get_storage()
+    rows = await storage.list_notes(
+        user_id=user_id,
+        from_ts=None,
+        to_ts=None,
+        limit=min(limit, 100),
+        offset=max(offset, 0),
+    )
     out: List[NoteOut] = []
     for r in rows:
         out.append(
@@ -296,13 +296,12 @@ async def list_notes(
 
 @router.delete("/{note_id}")
 async def delete_note(
-    ote_id: str,
-    _user=Depends(get_current_user),
+    note_id: str,
+    user=Depends(get_current_user),
 ):
-    u"er_id = user["user_id"]
-    s""Elimina una nota y sus tareas asociadas"""
-    storage = await _get_storage()user_id=user_id, 
-    deleted = await storage.delete_note(note_id=note_id)
+    user_id = user["user_id"]
+    storage = await _get_storage()
+    deleted = await storage.delete_note(user_id=user_id, note_id=note_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="note_not_found")
     return {"success": True, "message": "Nota eliminada", "note_id": note_id}
@@ -314,10 +313,10 @@ async def list_tasks(
     only_with_due_date: bool = False,
     due_before: Optional[str] = None,
     limit: int = 50,
-    ffset: int = 0,
-  
-    user_id = user["user_id"]  _user=Depends(get_current_user),
+    offset: int = 0,
+    user=Depends(get_current_user),
 ):
+    user_id = user["user_id"]
     storage = await _get_storage()
 
     due_dt: Optional[datetime] = None
@@ -327,8 +326,8 @@ async def list_tasks(
         except Exception:
             raise HTTPException(status_code=400, detail="invalid_due_before")
 
-        user_id=user_id,
     rows = await storage.list_tasks(
+        user_id=user_id,
         only_pending=only_pending,
         only_with_due_date=only_with_due_date,
         due_before=due_dt,
