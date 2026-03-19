@@ -18,6 +18,7 @@ BASE_TIMEOUT_MAP = {
     "/auth": 5.0,
     "/assistant": 30.0,
     "/vision": 30.0,
+    "/api/unified-chat": 60.0,
     "/unified-chat": 60.0,
     "/documents": 45.0,
 }
@@ -73,6 +74,10 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         return PLAN_TIMEOUT_MULTIPLIER["demo"]
 
     def _get_base_timeout(self, path: str):
+        # Render/Proxy deployments usually mount the API under '/api'.
+        # Normalize so our prefix map matches consistently.
+        if path.startswith("/api/"):
+            path = path[4:]
         for prefix, t in BASE_TIMEOUT_MAP.items():
             if path.startswith(prefix):
                 return t

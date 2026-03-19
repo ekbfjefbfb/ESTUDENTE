@@ -118,6 +118,26 @@ class PreValidationMiddleware(BaseHTTPMiddleware):
             self._log_request(request, response, time.time() - start_time, "success")
             return response
             
+        except HTTPException as e:
+            # HTTPException is an expected control-flow signal (e.g. 401/403/429/504).
+            # Returning a clean JSON response avoids noisy ASGI tracebacks and EndOfStream.
+            logger.warning(
+                {
+                    "event": "prevalidation_http_exception",
+                    "path": request.url.path,
+                    "method": request.method,
+                    "status_code": e.status_code,
+                    "duration": time.time() - start_time,
+                }
+            )
+            return JSONResponse(
+                status_code=e.status_code,
+                content={
+                    "detail": e.detail,
+                    "timestamp": time.time(),
+                },
+            )
+
         except Exception as e:
             # Capturar errores de stream cerrado (cliente desconectado)
             error_msg = str(e)
