@@ -100,6 +100,12 @@ class AuthService:
 
             session = await get_db_session()
             async with session:
+                email = (email or "").strip().lower()
+                if not email:
+                    raise Exception("Email inválido")
+                if not password or len(str(password)) < 8:
+                    raise Exception("Password inválido")
+
                 # Usar SQL directo para evitar columnas faltantes - solo columnas que existen
                 result = await session.execute(
                     text("SELECT id, email, username, is_active FROM users WHERE email = :email"),
@@ -109,31 +115,32 @@ class AuthService:
                 if row is not None:
                     raise Exception("El email ya está registrado")
 
-                username = email.split("@")[0][:30] if email and "@" in email else f"user_{uuid.uuid4().hex[:8]}"
-                
-                # Verificar si username existe
-                result2 = await session.execute(
-                    text("SELECT id FROM users WHERE username = :username"),
-                    {"username": username}
-                )
-                if result2.first():
-                    username = f"{username}_{uuid.uuid4().hex[:6]}"
+                username = await self._generate_unique_username(session, email=email)
+
+                hashed_password = self._hash_password(str(password))
                 
                 # Insertar usuario con SQL directo - solo columnas que existen
                 user_id = str(uuid.uuid4())
-                await session.execute(
-                    text("""INSERT INTO users (id, username, email, is_active, created_at) 
-                           VALUES (:id, :username, :email, true, NOW())"""),
-                    {
-                        "id": user_id,
-                        "username": username,
-                        "email": email
-                    }
-                )
+                try:
+                    await session.execute(
+                        text(
+                            """INSERT INTO users (id, username, email, hashed_password, is_active, created_at)
+                               VALUES (:id, :username, :email, :hashed_password, true, NOW())"""
+                        ),
+                        {
+                            "id": user_id,
+                            "username": username,
+                            "email": email,
+                            "hashed_password": hashed_password,
+                        },
+                    )
+                except Exception as e:
+                    # Si la DB aún no tiene la columna hashed_password, fallar claro.
+                    msg = str(e)
+                    if "hashed_password" in msg or "column" in msg:
+                        raise Exception("db_schema_missing_hashed_password")
+                    raise
                 await session.commit()
-                
-                # Guardar password hash en una tabla separada o en memory para demo
-                # Por ahora, no podemos guardar el hash porque la columna no existe
 
             access_token = await create_access_token({"sub": user_id})
             refresh_token = await create_refresh_token({"sub": user_id})
@@ -165,9 +172,15 @@ class AuthService:
 
             session = await get_db_session()
             async with session:
+                email = (email or "").strip().lower()
+                if not email:
+                    raise Exception("Credenciales inválidas")
+                if not password:
+                    raise Exception("Credenciales inválidas")
+
                 # Usar SQL directo para evitar columnas faltantes
                 result = await session.execute(
-                    text("SELECT id, email, username, is_active FROM users WHERE email = :email"),
+                    text("SELECT id, email, username, is_active, hashed_password FROM users WHERE email = :email"),
                     {"email": email}
                 )
                 row = result.first()
@@ -175,11 +188,16 @@ class AuthService:
                 if row is None:
                     raise Exception("Credenciales inválidas")
                 
-                user_id, user_email, username, is_active = row
+                user_id, user_email, username, is_active, hashed_password = row
                 
                 if not is_active:
                     raise Exception("Credenciales inválidas")
-                # Nota: No podemos verificar password porque hashed_password no existe en la DB actual
+
+                if not hashed_password:
+                    raise Exception("user_has_no_password")
+
+                if not self._verify_password(str(password), str(hashed_password)):
+                    raise Exception("Credenciales inválidas")
 
             access_token = await create_access_token({"sub": str(user_id)})
             refresh_token = await create_refresh_token({"sub": str(user_id)})
