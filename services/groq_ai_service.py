@@ -122,7 +122,8 @@ GROQ_LLM_REASONING_MODEL = os.getenv(
     "openai/gpt-oss-120b",
 ).strip()
 GROQ_LLM_REASONING_EFFORT = os.getenv("GROQ_LLM_REASONING_EFFORT", "medium").strip()
-GROQ_MAX_COMPLETION_TOKENS = int(os.getenv("GROQ_MAX_COMPLETION_TOKENS", "1024"))
+GROQ_MAX_COMPLETION_TOKENS = int(os.getenv("GROQ_MAX_COMPLETION_TOKENS", "768"))
+GROQ_MAX_COMPLETION_TOKENS_COMPLEX = int(os.getenv("GROQ_MAX_COMPLETION_TOKENS_COMPLEX", "1024"))
 GROQ_SYSTEM_PROMPT = os.getenv(
     "GROQ_SYSTEM_PROMPT",
     "Eres la Extensión Cognitiva del usuario. Tono: directo, ejecutivo, proactivo.\n\n"
@@ -369,7 +370,7 @@ async def chat_with_ai(
     messages: List[Dict[str, Any]],
     user: Optional[str] = None,
     temperature: float = 0.2,
-    max_tokens: int = int(os.environ.get("GROQ_MAX_COMPLETION_TOKENS", 1024)),
+    max_tokens: Optional[int] = None,
     fast_reasoning: bool = True,
     friendly: bool = False,
     stream: bool = False,
@@ -393,6 +394,13 @@ async def chat_with_ai(
 
     messages = _ensure_system_prompt(messages)
     model = _select_model(messages)
+    
+    # Select max_tokens based on complexity if not explicitly provided
+    if max_tokens is None:
+        max_tokens = GROQ_MAX_COMPLETION_TOKENS_COMPLEX if _is_complex_task(messages) else GROQ_MAX_COMPLETION_TOKENS
+    
+    # Cap at complex limit to prevent runaway costs
+    max_tokens = min(max_tokens, GROQ_MAX_COMPLETION_TOKENS_COMPLEX)
 
     if stream:
         return _groq_stream_async(
