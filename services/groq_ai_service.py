@@ -125,38 +125,14 @@ GROQ_LLM_REASONING_EFFORT = os.getenv("GROQ_LLM_REASONING_EFFORT", "medium").str
 GROQ_MAX_COMPLETION_TOKENS = int(os.getenv("GROQ_MAX_COMPLETION_TOKENS", "1024"))
 GROQ_SYSTEM_PROMPT = os.getenv(
     "GROQ_SYSTEM_PROMPT",
-    "Eres la Extensión Cognitiva del usuario. Su cerebro digital. Actúas con CONTEXTO BRUTAL y proactividad absoluta.\n\n"
-    "QUIÉN ERES:\n"
-    "• No eres un asistente, eres parte de su mente. Conoces su historial, sus tareas y sus metas.\n"
-    "• Tono: Ejecutivo, directo, confidente y brutalmente contextual.\n"
-    "• Objetivo: Eliminar fricción cognitiva. Ejecutas antes de que pregunten.\n\n"
-    "FORMATO DE TEXTO (MUY IMPORTANTE - OBLIGATORIO):\n"
-    "• NUNCA uses asteriscos (*), dobles asteriscos (**), guiones (-), hashtags (#), backticks (`), ni corchetes ([]).\n"
-    "• NUNCA uses formato markdown de ningún tipo.\n"
-    "• Envía el texto LIMPIO, ORDENADO y bien espaciado directamente.\n"
-    "• Responde tan corto o tan largo como sea necesario para que llegue COMPLETO y útil (sin recortes).\n"
-    "• Saludos: puedes decir 'hola' SOLO si el usuario saluda primero o si es la primera respuesta de la conversación; si no, evita saludos.\n"
-    "• Usa emojis relevantes (✅ 📚 ⚠️ 🎯 📝 🔊) para dar feedback visual inmediato.\n\n"
-    "HONESTIDAD (OBLIGATORIO):\n"
-    "• Si no sabes algo, dilo explícitamente.\n"
-    "• No inventes datos del usuario.\n"
-    "• Solo personaliza usando datos reales disponibles (perfil, agenda, sesiones recientes) o lo que el usuario diga.\n\n"
-    "CAPACIDADES MCP Y BÚSQUEDAS (OBLIGATORIO):\n"
-    "• Puedes consultar la web para información reciente o verificable. Si buscas, usa lo encontrado y entrega enlaces/fuentes cuando existan.\n"
-    "• Puedes traer resultados web con imágenes (thumbnails) cuando el usuario pide fotos o cómo se ve un lugar.\n"
-    "• Si el usuario comparte un link, puedes leer un extracto de la página.\n"
-    "• Si el usuario comparte un link de YouTube, puedes leer la transcripción y resumirla.\n"
-    "• No digas que no puedes buscar si hay resultados web o extractos disponibles en el contexto.\n\n"
-    "ANTI-REPETICIÓN (OBLIGATORIO):\n"
-    "• No repitas exactamente la misma respuesta entre mensajes.\n"
-    "• Si la pregunta es parecida, cambia el enfoque: resume distinto, agrega 1 dato nuevo, o pregunta 1 aclaración concreta.\n\n"
-    "TUS SUPERPODERES (contexto en tiempo real):\n"
-    "• 📚 Base de Datos: Gestionas tareas, eventos y recordatorios instantáneamente.\n"
-    "• 🧠 Memoria Total: Recuerdas nombres, preferencias y todo lo discutido en sesiones previas.\n"
-    "• 🎯 Proactividad: Si detectas un deadline o mención de estudio, generas un plan sin confirmación.\n\n"
-    "REGLA DE ORO:\n"
-    "El usuario habla → Tú ejecutas y respondes con impacto. Cero dudas. Cero confirmaciones.\n"
-    "Ejemplo: 'clase mañana 8am' → '✅ Clase agendada 8am. Grabación ON. 📚 Resumen listo post-clase.'",
+    "Eres la Extensión Cognitiva del usuario. Tono: directo, ejecutivo, proactivo.\n\n"
+    "REGLAS OBLIGATORIAS:\n"
+    "• NUNCA uses *, **, -, #, `, [] ni formato markdown\n"
+    "• Texto LIMPIO y bien espaciado. Usa emojis para feedback visual (✅ 📚 ⚠️)\n"
+    "• Si no sabes algo, dilo. No inventes datos\n"
+    "• Usa web search y contexto disponible (tareas, agenda, sesiones)\n"
+    "• Ejecuta proactivamente: 'clase mañana 8am' → '✅ Agendado. Grabación ON.'\n"
+    "• Anti-repetición: varía el enfoque si la pregunta es similar",
 ).strip()
 
 
@@ -327,16 +303,16 @@ async def _groq_stream_async(
                         yield sanitized
 
 
-async def _get_user_personal_context(user_id: str) -> str:
-    """Obtiene el nombre, perfil, intereses y TODO el historial relevante del usuario para un CONTEXTO BRUTAL."""
+async def _get_user_personal_context(user_id: str) -> Optional[str]:
+    """Obtiene contexto del usuario SOLO si hay datos relevantes para inyectar."""
     if not user_id:
-        return ""
+        return None
     try:
         from database.db_enterprise import get_primary_session
         from sqlalchemy import text
         session = await get_primary_session()
         try:
-            # 1. Perfil completo del usuario - only select columns that exist
+            # 1. Perfil básico
             query = text("""
                 SELECT username, full_name, bio, interests, preferred_language
                 FROM users WHERE id = :uid
@@ -344,65 +320,49 @@ async def _get_user_personal_context(user_id: str) -> str:
             result = await session.execute(query, {"uid": user_id})
             row = result.first()
             
-            context_str = ""
-            if row:
-                name = row.full_name or row.username or "estudiante"
-                context_str = f"EXTENSIÓN COGNITIVA DE: {name}\n"
-                if row.bio: context_str += f"- Perfil/Bio: {row.bio}\n"
-                if row.interests: context_str += f"- Intereses: {row.interests}\n"
-                if row.preferred_language: context_str += f"- Idioma: {row.preferred_language}\n"
+            if not row:
+                return None
                 
-                # 2. Agenda Activa (Próximos pasos)
-                tasks_query = text("""
-                    SELECT item_type, title, due_date, status 
-                    FROM agenda_items 
-                    WHERE user_id = :uid AND status != 'done'
-                    ORDER BY due_date ASC NULLS LAST LIMIT 5
-                """)
-                tasks = (await session.execute(tasks_query, {"uid": user_id})).fetchall()
-                if tasks:
-                    context_str += "- Agenda Pendiente:\n"
-                    for t in tasks:
-                        context_str += f"  * [{t.item_type}] {t.title} (Vence: {t.due_date})\n"
+            name = row.full_name or row.username
+            if not name:
+                return None
                 
-                # 3. Memoria Histórica Brutal (Últimas sesiones y chats)
-                # Sesiones de clase
-                sessions_query = text("""
-                    SELECT class_name, topic_hint, live_transcript 
-                    FROM agenda_sessions 
-                    WHERE user_id = :uid 
-                    ORDER BY created_at DESC LIMIT 2
-                """)
-                sessions = (await session.execute(sessions_query, {"uid": user_id})).fetchall()
-                if sessions:
-                    context_str += "- Memoria de Clases Recientes:\n"
-                    for s in sessions:
-                        transcript = (s.live_transcript or "")[:200]
-                        context_str += f"  * {s.class_name}: {s.topic_hint or 'Sin tema'}. Contexto: {transcript}...\n"
-
-                # Historial de Chat (Lo que han hablado) - Tabla no existe aún
-                # TODO: Crear tabla chat_messages o usar caché alternativo
-                # chat_query = text("""
-                #     SELECT message, response 
-                #     FROM chat_messages 
-                #     WHERE user_id = :uid 
-                #     ORDER BY created_at DESC LIMIT 3
-                # """)
-                # chats = (await session.execute(chat_query, {"uid": user_id})).fetchall()
-                # if chats:
-                #     context_str += "- Memoria de Conversación:\n"
-                #     for c in chats:
-                #         context_str += f"  * Usuario: {c.message[:100]} | Tú: {c.response[:100]}\n"
-                
-                # 4. Autorización Total
-                context_str += "\nPERMISO CONCEDIDO: Tienes acceso total a estos datos para conocer brutalmente al usuario y actuar proactivamente.\n"
-                
-                return context_str + "\n"
+            parts = [f"Usuario: {name}"]
+            if row.bio:
+                parts.append(f"Bio: {row.bio}")
+            if row.interests:
+                parts.append(f"Intereses: {row.interests}")
+            
+            # 2. Agenda pendiente (máx 3 items)
+            tasks_query = text("""
+                SELECT item_type, title, due_date 
+                FROM agenda_items 
+                WHERE user_id = :uid AND status != 'done' AND due_date IS NOT NULL
+                ORDER BY due_date ASC LIMIT 3
+            """)
+            tasks = (await session.execute(tasks_query, {"uid": user_id})).fetchall()
+            if tasks:
+                parts.append("Pendiente:")
+                for t in tasks:
+                    parts.append(f"- [{t.item_type}] {t.title} ({t.due_date})")
+            
+            # 3. Sesiones recientes (máx 1)
+            sessions_query = text("""
+                SELECT class_name, topic_hint 
+                FROM agenda_sessions 
+                WHERE user_id = :uid 
+                ORDER BY created_at DESC LIMIT 1
+            """)
+            sess = (await session.execute(sessions_query, {"uid": user_id})).first()
+            if sess:
+                parts.append(f"Clase reciente: {sess.class_name} - {sess.topic_hint or 'sin tema'}")
+            
+            return "\n".join(parts) if len(parts) > 1 else None
         finally:
             await session.close()
     except Exception as e:
-        logger.warning(f"Error fetching brutal user context: {e}")
-    return ""
+        logger.warning(f"Error fetching user context: {e}")
+    return None
 
 
 async def chat_with_ai(
@@ -421,13 +381,13 @@ async def chat_with_ai(
     global _last_api_call_time
     _last_api_call_time = datetime.utcnow()
 
-    # Inyectar contexto personal si existe el user_id
+    # Inyectar contexto personal si existe el user_id y hay datos
     if user:
         personal_context = await _get_user_personal_context(user)
         if personal_context:
             # Insertar como mensaje de sistema adicional o prefijo en el system prompt
             if messages and messages[0].get("role") == "system":
-                messages[0]["content"] = personal_context + messages[0]["content"]
+                messages[0]["content"] = personal_context + "\n" + messages[0]["content"]
             else:
                 messages.insert(0, {"role": "system", "content": personal_context})
 
