@@ -353,6 +353,95 @@ def _is_supported_image_url(url: Optional[str]) -> bool:
         return False
 
 
+def _image_content_type_check_enabled() -> bool:
+    raw = os.getenv("IMAGE_CONTENT_TYPE_CHECK_ENABLED")
+    if raw is None:
+        return True
+    return str(raw).strip() in {"1", "true", "True"}
+
+
+def _image_content_type_check_timeout_s() -> float:
+    try:
+        return float(os.getenv("IMAGE_CONTENT_TYPE_CHECK_TIMEOUT_S", "1.8"))
+    except Exception:
+        return 1.8
+
+
+def _image_content_type_cache_ttl_s() -> int:
+    try:
+        return int(os.getenv("IMAGE_CONTENT_TYPE_CACHE_TTL_S", "86400"))
+    except Exception:
+        return 86400
+
+
+_image_ct_cache: Dict[str, Dict[str, Any]] = {}
+_image_ct_sem = asyncio.Semaphore(int(os.getenv("IMAGE_CONTENT_TYPE_CHECK_CONCURRENCY", "6")))
+
+
+async def _is_supported_image_by_content_type(url: Optional[str]) -> bool:
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    if not _image_content_type_check_enabled():
+        return _is_supported_image_url(raw)
+    if not _is_supported_image_url(raw):
+        return False
+
+    now = time.monotonic()
+    cached = _image_ct_cache.get(raw)
+    if isinstance(cached, dict):
+        ts = float(cached.get("ts") or 0.0)
+        ok = cached.get("ok")
+        if ok is not None and (now - ts) <= float(_image_content_type_cache_ttl_s()):
+            return bool(ok)
+
+    timeout_s = _image_content_type_check_timeout_s()
+
+    try:
+        import httpx
+    except Exception:
+        # Sin httpx, no hay verificación de Content-Type
+        ok = True
+        _image_ct_cache[raw] = {"ts": now, "ok": ok}
+        return ok
+
+    async with _image_ct_sem:
+        try:
+            async with httpx.AsyncClient(timeout=timeout_s, follow_redirects=True) as client:
+                resp = await client.head(raw, headers={"Accept": "image/*"})
+                if resp.status_code == 405 or resp.status_code == 403 or resp.status_code >= 500:
+                    resp = await client.get(raw, headers={"Range": "bytes=0-2047", "Accept": "image/*"})
+
+                ct = str(resp.headers.get("content-type") or "").lower().split(";")[0].strip()
+                ok = ct in {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"}
+                _image_ct_cache[raw] = {"ts": now, "ok": ok, "ct": ct, "status": int(resp.status_code)}
+                return bool(ok)
+        except Exception:
+            ok = True
+            _image_ct_cache[raw] = {"ts": now, "ok": ok}
+            return ok
+
+
+async def _sanitize_sources_images(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not sources:
+        return []
+    out: List[Dict[str, Any]] = []
+    for s in sources:
+        if not isinstance(s, dict):
+            continue
+        img = str(s.get("image") or s.get("image_url") or "").strip()
+        if img:
+            ok = await _is_supported_image_by_content_type(img)
+            if not ok:
+                s = dict(s)
+                if "image" in s:
+                    s["image"] = ""
+                if "image_url" in s:
+                    s["image_url"] = ""
+        out.append(s)
+    return out
+
+
 def _build_rich_response(*, text: str, memory_id: Optional[str], sources: Optional[List[Dict[str, Any]]]) -> Optional[RichResponse]:
     if not sources:
         return None
@@ -1419,6 +1508,8 @@ async def unified_chat_message(
         )
 
         message_id = f"msg_{datetime.utcnow().timestamp()}"
+        sources = await _sanitize_sources_images(list(sources or []))
+        rich = _build_rich_response(text=str(structured.get("response") or ""), memory_id=message_id, sources=sources)
         return ChatResponse(
             success=True,
             response=structured["response"],
@@ -1437,11 +1528,7 @@ async def unified_chat_message(
                 {"type": "plan", "data": structured["plan"]}
             ],
             sources=sources if sources else None,
-            rich_response=_build_rich_response(
-                text=str(structured.get("response") or ""),
-                memory_id=message_id,
-                sources=sources if sources else None,
-            ),
+            rich_response=rich,
         )
         
     except RuntimeError as e:
@@ -1754,6 +1841,8 @@ async def unified_chat_message_json(
         context_info = get_context_info(user_id)
 
         message_id = f"msg_{datetime.utcnow().timestamp()}"
+        sources = await _sanitize_sources_images(list(sources or []))
+        rich = _build_rich_response(text=str(structured.get("response") or ""), memory_id=message_id, sources=sources)
         return ChatResponse(
             success=True,
             response=structured["response"],
@@ -1772,11 +1861,7 @@ async def unified_chat_message_json(
                 {"type": "plan", "data": structured["plan"]}
             ],
             sources=sources if sources else None,
-            rich_response=_build_rich_response(
-                text=str(structured.get("response") or ""),
-                memory_id=message_id,
-                sources=sources if sources else None,
-            ),
+            rich_response=rich,
         )
         
     except RuntimeError as e:
@@ -2106,6 +2191,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 else:
                     preview_sources = list(combined_preview)[:max_sources_preview]
 
+                preview_sources = await _sanitize_sources_images(list(preview_sources or []))
+
                 rich_preview = _build_rich_response(text="", memory_id=None, sources=preview_sources)
                 if rich_preview is not None:
                     await _ws_send_json(
@@ -2175,6 +2262,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 sources = (prioritized + remainder)[:max_sources]
             else:
                 sources = list(combined_sources)[:max_sources]
+
+            sources = await _sanitize_sources_images(list(sources or []))
 
             # 3) Guardar memoria en Redis -> memory_id
             latency_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
