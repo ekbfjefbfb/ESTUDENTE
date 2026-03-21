@@ -61,10 +61,13 @@ class PreValidationMiddleware(BaseHTTPMiddleware):
         
         # Rutas que no requieren validación (públicas)
         self.public_routes = {
+            "/",
+            "/api/health",
             "/health",
             "/metrics",
             "/docs",
             "/openapi.json",
+            "/api/csrf-token",
             "/api/auth/login",
             "/api/auth/register",
             "/api/auth/refresh"
@@ -254,7 +257,7 @@ class PreValidationMiddleware(BaseHTTPMiddleware):
             
             async def validate_token():
                 try:
-                    payload = decode_access_token(token)
+                    payload = await decode_access_token(token)
                     if payload and "sub" in payload:
                         return {
                             "valid": True,

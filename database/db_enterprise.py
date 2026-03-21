@@ -143,6 +143,7 @@ class DatabaseEnterpriseManager:
         self.metrics = DatabaseMetrics()
         self.query_cache: Dict[str, Any] = {}
         self.initialized = False
+        self._heartbeat_task: Optional[asyncio.Task] = None
     
     async def _heartbeat_loop(self):
         """Loop de heartbeat para evitar que la DB se duerma (Keep-Alive)"""
@@ -206,9 +207,10 @@ class DatabaseEnterpriseManager:
                 
                 self.initialized = True
                 logger.info("✅ Database Enterprise Manager inicializado")
-                
+
                 # Iniciar Heartbeat en background
-                asyncio.create_task(self._heartbeat_loop())
+                if self._heartbeat_task is None or self._heartbeat_task.done():
+                    self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
                 break
                 
             except Exception as e:
@@ -255,6 +257,7 @@ class DatabaseEnterpriseManager:
             max_overflow=max_overflow,
             pool_timeout=self.config.pool_timeout,
             pool_recycle=self.config.pool_recycle,
+            pool_pre_ping=self.config.pool_pre_ping,
             echo=False,
             future=True
         )
@@ -490,10 +493,10 @@ def create_database_config() -> DatabaseConfig:
         primary_url=primary_url,
         readonly_url=readonly_url,
         analytics_url=analytics_url,
-        primary_pool_size=int(os.getenv("DB_PRIMARY_POOL_SIZE", "2")),
-        primary_max_overflow=int(os.getenv("DB_PRIMARY_MAX_OVERFLOW", "0")),
-        readonly_pool_size=int(os.getenv("DB_READONLY_POOL_SIZE", "1")),
-        readonly_max_overflow=int(os.getenv("DB_READONLY_MAX_OVERFLOW", "0")),
+        primary_pool_size=int(os.getenv("DB_PRIMARY_POOL_SIZE", "20")),
+        primary_max_overflow=int(os.getenv("DB_PRIMARY_MAX_OVERFLOW", "10")),
+        readonly_pool_size=int(os.getenv("DB_READONLY_POOL_SIZE", "5")),
+        readonly_max_overflow=int(os.getenv("DB_READONLY_MAX_OVERFLOW", "5")),
         pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "30")),
         pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "120")),
         query_timeout=int(os.getenv("DB_QUERY_TIMEOUT", "30")),

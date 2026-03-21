@@ -21,6 +21,8 @@ SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production")
 
 if not SECRET_KEY and ENVIRONMENT == "production":
     raise ValueError("No se ha definido SECRET_KEY en el entorno de producción.")
+if ENVIRONMENT == "production" and SECRET_KEY == "dev-secret-key-change-in-production":
+    raise ValueError("SECRET_KEY no puede usar el valor por defecto en producción.")
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
@@ -65,7 +67,9 @@ CORS_ORIGINS = [
     for origin in os.getenv("CORS_ORIGINS", "*").split(",")
     if origin.strip()
 ] or ["*"]
-CORS_CREDENTIALS = True
+CORS_CREDENTIALS = os.getenv("CORS_CREDENTIALS", "true").lower() in ("true", "1", "t")
+if "*" in CORS_ORIGINS:
+    CORS_CREDENTIALS = False
 CORS_METHODS = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
 CORS_HEADERS = ["*"]
 

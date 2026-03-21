@@ -14,6 +14,7 @@ logger = logging.getLogger("config_validator")
 REQUIRED_PRODUCTION_VARS = {
     # Core
     "SECRET_KEY": "Clave secreta para JWT y encriptación",
+    "JWT_SECRET_KEY": "Clave secreta para firmar JWT (distinta a SECRET_KEY)",
     "DATABASE_URL": "URL de la base de datos PostgreSQL",
     
     # LLM
@@ -96,6 +97,29 @@ def validate_production_config() -> Dict[str, Any]:
             errors.append(f"❌ {var_name} has invalid/default value. Must be set to real credentials.")
         else:
             logger.info(f"✅ {var_name}: configured")
+
+    # CORS: en producción no permitir wildcard
+    cors_origins_raw = str(os.getenv("CORS_ORIGINS", "")).strip()
+    if not cors_origins_raw:
+        errors.append("❌ Missing required variable: CORS_ORIGINS (Allowed origins for CORS)")
+    else:
+        origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+        if "*" in origins:
+            errors.append("❌ CORS_ORIGINS cannot include '*' in production")
+
+    # OAuth: si está habilitado, exigir credenciales del provider
+    oauth_enabled = str(os.getenv("OAUTH_ENABLED") or "").strip().lower() in {"1", "true", "t", "yes"}
+    if oauth_enabled:
+        if not os.getenv("GOOGLE_CLIENT_ID") or not os.getenv("GOOGLE_CLIENT_SECRET"):
+            warnings.append("⚠️ OAUTH_ENABLED=true but GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are not configured")
+        if not os.getenv("APPLE_CLIENT_ID") or not os.getenv("APPLE_CLIENT_SECRET"):
+            warnings.append("⚠️ OAUTH_ENABLED=true but APPLE_CLIENT_ID/APPLE_CLIENT_SECRET are not configured")
+
+    # JWT secret no debe ser igual a SECRET_KEY (reduce blast radius)
+    secret_key = os.getenv("SECRET_KEY")
+    jwt_secret_key = os.getenv("JWT_SECRET_KEY")
+    if secret_key and jwt_secret_key and secret_key == jwt_secret_key:
+        warnings.append("⚠️ JWT_SECRET_KEY should be different from SECRET_KEY in production")
     
     # Validar variables recomendadas
     for var_name, description in RECOMMENDED_VARS.items():

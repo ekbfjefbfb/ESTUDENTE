@@ -123,6 +123,8 @@ async def lifespan(app: FastAPI):
             "t",
             "yes",
         )
+        if os.getenv("ENFORCE_PROD_CONFIG_VALIDATION") is None:
+            enforce_validation = True
         
         if not validation["valid"]:
             logger.error("❌ Production configuration validation FAILED")
