@@ -1,0 +1,105 @@
+name: Deploy
+
+on:
+  push:
+    branches: ["main"]
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+
+    steps:
+      - name: Trigger Render deploy (staging)
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_STAGING_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "Missing secret RENDER_STAGING_DEPLOY_HOOK_URL" >&2
+            exit 1
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+
+      - name: Wait for staging health
+        env:
+          HEALTH_URL: ${{ secrets.STAGING_HEALTH_URL }}
+        run: |
+          if [ -z "$HEALTH_URL" ]; then
+            echo "Missing secret STAGING_HEALTH_URL" >&2
+            exit 1
+          fi
+          echo "Polling health: $HEALTH_URL"
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || true)
+            if [ "$code" = "200" ]; then
+              echo "Staging healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Staging health check failed" >&2
+          exit 1
+
+      - name: Notify (Slack) staging
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            exit 0
+          fi
+          payload='{"text":"Deploy to STAGING failed for '${{ github.repository }}' @ '${{ github.sha }}'."}'
+          curl -fsS -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" || true
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: [deploy-staging]
+    timeout-minutes: 20
+    environment: production
+
+    steps:
+      - name: Trigger Render deploy (production)
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_PROD_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "Missing secret RENDER_PROD_DEPLOY_HOOK_URL" >&2
+            exit 1
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+
+      - name: Wait for production health
+        env:
+          HEALTH_URL: ${{ secrets.PROD_HEALTH_URL }}
+        run: |
+          if [ -z "$HEALTH_URL" ]; then
+            echo "Missing secret PROD_HEALTH_URL" >&2
+            exit 1
+          fi
+          echo "Polling health: $HEALTH_URL"
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || true)
+            if [ "$code" = "200" ]; then
+              echo "Production healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Production health check failed" >&2
+          exit 1
+
+      - name: Notify (Slack) production
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            exit 0
+          fi
+          payload='{"text":"Deploy to PRODUCTION failed for '${{ github.repository }}' @ '${{ github.sha }}'. Check Render dashboard for rollback."}'
+          curl -fsS -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" || true
