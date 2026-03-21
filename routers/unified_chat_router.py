@@ -32,6 +32,9 @@ _MAX_MESSAGE_CHARS = 8000
 _USER_CONTEXT_CACHE: Dict[str, Dict[str, Any]] = {}
 _USER_CONTEXT_CACHE_TTL_S = float(os.getenv("USER_CONTEXT_CACHE_TTL_S", "20"))
 
+_USER_WS_CONNECTION_LOCKS: Dict[str, asyncio.Lock] = {}
+_USER_WS_TURN_LOCKS: Dict[str, asyncio.Lock] = {}
+
 logger = logging.getLogger("unified_chat_router")
 
 router = APIRouter(prefix="/unified-chat", tags=["Chat IA"])
@@ -2036,6 +2039,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
     """WebSocket para chat en tiempo real con monitoreo de contexto"""
 
     heartbeat_task: Optional[asyncio.Task[Any]] = None
+    conn_lock: Optional[asyncio.Lock] = None
     try:
         await websocket.accept()
         logger.info(f"WebSocket accepted for user_id={user_id}")
@@ -2071,6 +2075,23 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             )
             await websocket.close(code=1008)
             return
+
+        # Hardening P0: permitir solo 1 conexión WS activa por usuario
+        conn_lock = _USER_WS_CONNECTION_LOCKS.get(str(user_id))
+        if conn_lock is None:
+            conn_lock = asyncio.Lock()
+            _USER_WS_CONNECTION_LOCKS[str(user_id)] = conn_lock
+        if conn_lock.locked():
+            await _ws_send_json(
+                websocket,
+                {
+                    "type": "error",
+                    "message": "ws_already_connected",
+                },
+            )
+            await websocket.close(code=1013)
+            return
+        await conn_lock.acquire()
 
         max_text_len = _MAX_MESSAGE_CHARS
         logger.info(f"WebSocket connected successfully for user_id={user_id}, waiting for messages")
@@ -2450,6 +2471,12 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
         except Exception:
             pass
     finally:
+        if conn_lock is not None:
+            try:
+                if conn_lock.locked():
+                    conn_lock.release()
+            except Exception:
+                pass
         if heartbeat_task is not None:
             heartbeat_task.cancel()
             logger.debug(f"Heartbeat task cancelled for user_id={user_id}")
