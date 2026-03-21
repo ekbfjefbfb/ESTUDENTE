@@ -29,6 +29,9 @@ _WS_PARTIAL_INTERVAL_MS = 400
 _WS_TAIL_WINDOW_MS = 4500
 _MAX_MESSAGE_CHARS = 8000
 
+_USER_CONTEXT_CACHE: Dict[str, Dict[str, Any]] = {}
+_USER_CONTEXT_CACHE_TTL_S = float(os.getenv("USER_CONTEXT_CACHE_TTL_S", "20"))
+
 logger = logging.getLogger("unified_chat_router")
 
 router = APIRouter(prefix="/unified-chat", tags=["Chat IA"])
@@ -325,7 +328,11 @@ async def _ws_send_json(websocket: WebSocket, payload: Dict[str, Any]) -> None:
 
         if websocket.client_state != WebSocketState.CONNECTED:
             return
-        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        timeout_s = float(os.getenv("WS_SEND_TIMEOUT_S", "3"))
+        await asyncio.wait_for(
+            websocket.send_text(json.dumps(payload, ensure_ascii=False)),
+            timeout=timeout_s,
+        )
     except Exception as e:
         try:
             from websockets.exceptions import ConnectionClosed
@@ -341,6 +348,13 @@ async def _ws_send_json(websocket: WebSocket, payload: Dict[str, Any]) -> None:
             WebSocketDisconnect = None
 
         if WebSocketDisconnect is not None and isinstance(e, WebSocketDisconnect):
+            return
+
+        if isinstance(e, asyncio.TimeoutError):
+            try:
+                await websocket.close(code=1011)
+            except Exception:
+                pass
             return
 
         logger.error(f"Error sending WebSocket JSON: {e}")
@@ -396,8 +410,31 @@ def _image_content_type_cache_ttl_s() -> int:
         return 86400
 
 
+def _image_content_type_cache_max_entries() -> int:
+    try:
+        return int(os.getenv("IMAGE_CONTENT_TYPE_CACHE_MAX_ENTRIES", "2000"))
+    except Exception:
+        return 2000
+
+
 _image_ct_cache: Dict[str, Dict[str, Any]] = {}
 _image_ct_sem = asyncio.Semaphore(int(os.getenv("IMAGE_CONTENT_TYPE_CHECK_CONCURRENCY", "6")))
+
+
+def _prune_image_ct_cache_if_needed() -> None:
+    max_entries = _image_content_type_cache_max_entries()
+    if max_entries <= 0:
+        return
+    if len(_image_ct_cache) <= max_entries:
+        return
+    try:
+        items = list(_image_ct_cache.items())
+        items.sort(key=lambda kv: float((kv[1] or {}).get("ts") or 0.0))
+        to_remove = max(1, len(_image_ct_cache) - max_entries)
+        for k, _ in items[:to_remove]:
+            _image_ct_cache.pop(k, None)
+    except Exception:
+        _image_ct_cache.clear()
 
 
 async def _is_supported_image_by_content_type(url: Optional[str]) -> bool:
@@ -425,6 +462,7 @@ async def _is_supported_image_by_content_type(url: Optional[str]) -> bool:
         # Sin httpx, no hay verificación de Content-Type
         ok = True
         _image_ct_cache[raw] = {"ts": now, "ok": ok}
+        _prune_image_ct_cache_if_needed()
         return ok
 
     async with _image_ct_sem:
@@ -437,10 +475,12 @@ async def _is_supported_image_by_content_type(url: Optional[str]) -> bool:
                 ct = str(resp.headers.get("content-type") or "").lower().split(";")[0].strip()
                 ok = ct in {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"}
                 _image_ct_cache[raw] = {"ts": now, "ok": ok, "ct": ct, "status": int(resp.status_code)}
+                _prune_image_ct_cache_if_needed()
                 return bool(ok)
         except Exception:
             ok = True
             _image_ct_cache[raw] = {"ts": now, "ok": ok}
+            _prune_image_ct_cache_if_needed()
             return ok
 
 
@@ -1006,7 +1046,19 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
 
 async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
     """Contexto requerido por chat (HTTP y WebSocket)."""
-    context = await _get_user_full_context(user_id)
+    now = time.monotonic()
+    cached = _USER_CONTEXT_CACHE.get(user_id)
+    if isinstance(cached, dict):
+        ts = cached.get("ts")
+        ctx = cached.get("ctx")
+        if isinstance(ts, (int, float)) and isinstance(ctx, dict) and (now - float(ts)) <= _USER_CONTEXT_CACHE_TTL_S:
+            context = dict(ctx)
+        else:
+            context = await _get_user_full_context(user_id)
+            _USER_CONTEXT_CACHE[user_id] = {"ts": now, "ctx": context}
+    else:
+        context = await _get_user_full_context(user_id)
+        _USER_CONTEXT_CACHE[user_id] = {"ts": now, "ctx": context}
 
     # Enriquecer con progreso en memoria si existe
     progress = _user_progress.get(user_id)
