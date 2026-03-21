@@ -110,8 +110,17 @@ async def oauth_login(
     db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     logger.info(f'{{"event": "oauth_login_attempt", "provider": "{data.provider}", "ip": "{request.client.host}"}}')
-    if os.getenv("ENVIRONMENT", "production").lower() == "production":
-        raise HTTPException(status_code=503, detail="oauth_disabled_in_production")
+    env = os.getenv("ENVIRONMENT", "production").lower()
+    oauth_enabled = str(os.getenv("OAUTH_ENABLED") or "").strip().lower() in {"1", "true", "t", "yes"}
+    if env == "production" and not oauth_enabled:
+        raise HTTPException(status_code=503, detail="oauth_disabled")
+
+    if data.provider == "google":
+        if not os.getenv("GOOGLE_CLIENT_ID") or not os.getenv("GOOGLE_CLIENT_SECRET"):
+            raise HTTPException(status_code=503, detail="oauth_google_not_configured")
+    if data.provider == "apple":
+        if not os.getenv("APPLE_CLIENT_ID") or not os.getenv("APPLE_CLIENT_SECRET"):
+            raise HTTPException(status_code=503, detail="oauth_apple_not_configured")
     try:
         provider = sanitize_input(data.provider)
         id_token = sanitize_input(data.id_token)

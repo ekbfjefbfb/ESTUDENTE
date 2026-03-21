@@ -315,7 +315,7 @@ class BackgroundTaskService:
     async def _cleanup_cache(self, pattern: str):
         """Limpia caché por patrón."""
         try:
-            deleted_count = await smart_cache.invalidate_pattern(pattern)
+            deleted_count = await smart_cache.clear_by_pattern(pattern)
             logger.info({
                 "event": "cache_cleanup_completed",
                 "pattern": pattern,
