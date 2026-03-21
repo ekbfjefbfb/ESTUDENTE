@@ -11,11 +11,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Importar el servicio enterprise existente
+cache_service_enterprise: Any = None
 try:
     from services.cache_service_enterprise import (
-        get_cache_service,
-        CacheServiceEnterprise,
-        generate_cache_key
+        cache_service_enterprise,
     )
     CACHE_ENTERPRISE_AVAILABLE = True
 except ImportError:
@@ -39,7 +38,7 @@ class SmartCacheStub:
         key: str, 
         value: Any, 
         ttl: int = 3600,
-        tags: list = None
+        tags: Optional[list[Any]] = None
     ) -> bool:
         """Guarda valor en cache"""
         try:
@@ -109,8 +108,9 @@ class SmartCache:
     """
     
     def __init__(self):
-        if CACHE_ENTERPRISE_AVAILABLE:
-            self.cache_service = get_cache_service()
+        self.cache_service: Any = None
+        if CACHE_ENTERPRISE_AVAILABLE and cache_service_enterprise is not None:
+            self.cache_service = cache_service_enterprise
             logger.info("SmartCache initialized with CacheServiceEnterprise")
         else:
             self.cache_service = SmartCacheStub()
@@ -148,7 +148,7 @@ class SmartCache:
         key: str, 
         value: Any, 
         ttl: int = 3600,
-        tags: list = None
+        tags: Optional[list[Any]] = None
     ) -> bool:
         """
         Guarda valor en cache con optimización automática
@@ -232,7 +232,7 @@ class SmartCache:
         key: str,
         factory: Callable,
         ttl: int = 3600,
-        tags: list = None
+        tags: Optional[list[Any]] = None
     ) -> Any:
         """
         Obtiene del cache o ejecuta factory si no existe

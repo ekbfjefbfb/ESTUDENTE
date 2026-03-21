@@ -13,20 +13,21 @@ import time
 import uuid
 from datetime import datetime, date, timedelta
 from urllib.parse import urlparse
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, cast
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Depends, HTTPException, Request
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Depends, HTTPException
 from pydantic import BaseModel
 
 from services.groq_ai_service import chat_with_ai, should_refresh_context, get_context_info, sanitize_ai_text
 from services.groq_voice_service import transcribe_audio_groq, text_to_speech_groq
 from utils.auth import get_current_user, verify_token
-from models.models import SessionItem, RecordingSession
+from models.models import SessionItem, RecordingSession, RecordingSessionType
 from sqlalchemy import select, and_
 
-_WS_MAX_AUDIO_BYTES = 30 * 1024 * 1024
+_WS_MAX_AUDIO_BYTES = 10 * 1024 * 1024
 _WS_PARTIAL_INTERVAL_MS = 400
 _WS_TAIL_WINDOW_MS = 4500
+_MAX_MESSAGE_CHARS = 8000
 
 logger = logging.getLogger("unified_chat_router")
 
@@ -54,6 +55,19 @@ def _debug_enabled() -> bool:
         return bool(CONFIG_DEBUG)
     except Exception:
         return str(os.getenv("DEBUG") or "").strip() in {"1", "true", "True"}
+
+
+def _client_error_message(error: Exception) -> str:
+    return str(error) if _debug_enabled() else "internal_error"
+
+
+def _normalize_message_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="message_empty")
+    if len(text) > _MAX_MESSAGE_CHARS:
+        raise HTTPException(status_code=400, detail=f"message_too_long_max_{_MAX_MESSAGE_CHARS}")
+    return text
 
 
 def _user_requested_web_search(message: str) -> bool:
@@ -206,6 +220,7 @@ class RichResponse(BaseModel):
     gallery: Optional[List[RichGalleryItem]] = None
     suggestions: Optional[List[str]] = None
 
+
 class ChatResponse(BaseModel):
     success: bool
     response: str
@@ -217,6 +232,7 @@ class ChatResponse(BaseModel):
     sources: Optional[List[Dict[str, Any]]] = None
     rich_response: Optional[RichResponse] = None
 
+
 class VoiceChatResponse(BaseModel):
     success: bool
     transcribed: str
@@ -226,15 +242,18 @@ class VoiceChatResponse(BaseModel):
     timestamp: str
     message_id: Optional[str] = None
 
+
 class ContextResponse(BaseModel):
     user_id: str
     usage_percent: float
     messages_count: int
     last_check: Optional[str] = None
 
+
 class STTRequest(BaseModel):
     """Request para Speech-to-Text"""
     language: Optional[str] = "es"
+
 
 class STTResponse(BaseModel):
     """Response de Speech-to-Text"""
@@ -244,12 +263,14 @@ class STTResponse(BaseModel):
     duration_ms: Optional[int] = None
     timestamp: str
 
+
 class TTSRequest(BaseModel):
     """Request para Text-to-Speech"""
     text: str
     voice: Optional[str] = "male_1"
     speed: Optional[float] = 1.0
     language: Optional[str] = "es"
+
 
 class TTSResponse(BaseModel):
     """Response de Text-to-Speech"""
@@ -258,6 +279,7 @@ class TTSResponse(BaseModel):
     text: str
     voice: str
     timestamp: str
+
 
 class ErrorResponse(BaseModel):
     success: bool = False
@@ -589,6 +611,7 @@ def _sanitize_structured_data(structured_data: Any) -> Dict[str, Any]:
     is_stream = bool(structured_data.get("is_stream", False))
     return {"tasks": tasks, "plan": plan, "response": response, "is_stream": is_stream}
 
+
 async def save_user_progress(user_id: str, message: str, structured_data: Dict[str, Any]):
     """Guarda el progreso del usuario en memoria y persiste en DB (en producción usar Redis/DB)"""
     structured_data = _sanitize_structured_data(structured_data)
@@ -626,8 +649,6 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
     # Persistir en Base de Datos
     try:
         from database.db_enterprise import get_primary_session
-        from models.models import SessionItem, RecordingSession, RecordingSessionType
-        from sqlalchemy import select, and_
         
         db = await get_primary_session()
         async with db:
@@ -660,7 +681,8 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
                 if date_str:
                     try:
                         due_date_val = datetime.fromisoformat(date_str)
-                    except (ValueError, TypeError): pass
+                    except (ValueError, TypeError):
+                        pass
 
                 new_task = SessionItem(
                     user_id=user_id,
@@ -687,12 +709,10 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
             if action_type == "schedule_class":
                 logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Agendando clase/evento - {action_data}")
                 try:
-                    from models.models import SessionItem
                     from database.db_enterprise import get_primary_session
                     db = await get_primary_session()
                     async with db:
                         # Buscar sesión de chat asistente unificada
-                        from models.models import RecordingSession, RecordingSessionType
                         stmt_session = select(RecordingSession).where(
                             and_(
                                 RecordingSession.user_id == user_id,
@@ -718,7 +738,8 @@ async def save_user_progress(user_id: str, message: str, structured_data: Dict[s
                         if date_str:
                             try:
                                 start_time_val = datetime.fromisoformat(date_str)
-                            except (ValueError, TypeError): pass
+                            except (ValueError, TypeError):
+                                pass
 
                         new_event = SessionItem(
                             user_id=user_id,
@@ -847,7 +868,8 @@ async def get_progress_stats(user=Depends(get_current_user)):
 # =========================
 # FUNCIONES DE CONTEXTO
 # =========================
- 
+
+
 async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
     # REDEPLOY 2026-03-12: Fixed enum values - using lowercase 'task' and 'done'
     """Obtiene contexto completo del usuario: tareas + sesiones recientes"""
@@ -855,11 +877,12 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
     from models.models import User
     from models.models import SessionItem, RecordingSession
     
-    context = {
+    context: Dict[str, Any] = {
         "tasks_today": [],
         "tasks_upcoming": [],
         "recent_sessions": [],
-        "key_points_recent": []
+        "key_points_recent": [],
+        "user_full_name": "",
     }
     
     try:
@@ -977,8 +1000,7 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
                     context["recent_sessions"] = []
     except Exception as e:
         logger.error(f"Error al obtener contexto de usuario: {e}")
-        
-    
+
     return context
 
 
@@ -1098,13 +1120,11 @@ async def get_ai_response_with_streaming(
     user_id: str,
     message: str,
     user_context: Dict[str, Any],
-    websocket: WebSocket,
+    websocket: Any,
     *,
     request_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Streaming REAL: Envía tokens uno por uno al WebSocket."""
-    from services.groq_ai_service import chat_with_ai, sanitize_ai_text
-    
     context_prompt = build_context_prompt(user_context)
 
     user_full_name = str(user_context.get("user_full_name") or "").strip()
@@ -1232,13 +1252,15 @@ async def unified_chat_message(
     stream: bool = False,
 ):
     """Chat con IA - incluye contexto de tareas y grabaciones"""
-    
+    user_id = "unknown"
     try:
+        message = _normalize_message_text(message)
         user_id = user["user_id"]
         request_id = _new_request_id()
         t0 = time.monotonic()
+        should_web_search = _should_web_search(user_id=user_id, message=message)
         logger.info(
-            f"chat_http_start request_id={request_id} user_id={user_id} message_len={len(message or '')} images={_user_requested_images(message)} web_search={_should_web_search(user_id=user_id, message=message)}"
+            f"chat_http_start request_id={request_id} user_id={user_id} message_len={len(message or '')} images={_user_requested_images(message)} web_search={should_web_search}"
         )
         
         # Pareto 80/20: Intentar obtener respuesta del cache semántico
@@ -1267,7 +1289,7 @@ async def unified_chat_message(
 
         # Web search (Tavily -> Serper -> DDG) cuando aplique (incluye petición de imágenes)
         ddg_sources: List[Dict[str, Any]] = []
-        if _should_web_search(user_id=user_id, message=message):
+        if should_web_search:
             ws_t0 = time.monotonic()
             from services.ddg_search_service import ddg_search_service
             from services.tavily_search_service import tavily_search_service
@@ -1439,7 +1461,6 @@ async def unified_chat_message(
                 if action_type == "schedule_class":
                     logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Agendando clase/evento - {action_data}")
                     try:
-                        from models.models import SessionItem, RecordingSession, RecordingSessionType
                         from database.db_enterprise import get_primary_session
                         db = await get_primary_session()
                         async with db:
@@ -1469,7 +1490,8 @@ async def unified_chat_message(
                                 try:
                                     date_str = action_data["start_time"].replace("Z", "").split(".")[0]
                                     start_time_val = datetime.fromisoformat(date_str)
-                                except (ValueError, TypeError): pass
+                                except (ValueError, TypeError):
+                                    pass
 
                             new_event = SessionItem(
                                 user_id=user_id,
@@ -1531,6 +1553,8 @@ async def unified_chat_message(
             rich_response=rich,
         )
         
+    except HTTPException:
+        raise
     except RuntimeError as e:
         if "GROQ_API_KEY" in str(e):
             raise HTTPException(status_code=503, detail="llm_unavailable_missing_groq_api_key")
@@ -1541,7 +1565,7 @@ async def unified_chat_message(
             status_code=500,
             detail={
                 "success": False,
-                "error": str(e),
+                "error": _client_error_message(e),
                 "error_code": "CHAT_ERROR",
                 "timestamp": datetime.utcnow().isoformat()
             }
@@ -1608,24 +1632,33 @@ async def voice_message_http(
     class MockWebSocket:
         def __init__(self):
             self.full_text = ""
+
         async def send_text(self, text):
             try:
                 data = json.loads(text)
                 if data["type"] == "token":
                     self.full_text += data["content"]
-            except: pass
+            except Exception:
+                pass
+
         async def send_json(self, data):
             if data.get("type") == "token":
                 self.full_text += data.get("content", "")
+
         @property
         def client_state(self):
             from starlette.websockets import WebSocketState
             return type('State', (), {'CONNECTED': WebSocketState.CONNECTED})
             
     mock_ws = MockWebSocket()
-    structured = await get_ai_response_with_streaming(user_id, transcribed, user_context, mock_ws)
-    
-    response_text = structured.get("text") if isinstance(structured, dict) else str(structured)
+    structured = await get_ai_response_with_streaming(
+        user_id,
+        transcribed,
+        user_context,
+        cast(WebSocket, mock_ws),
+    )
+
+    response_text = str(structured.get("text") or "") if isinstance(structured, dict) else str(structured or "")
     
     audio_uri = await text_to_speech_groq(response_text, voice=voice, language=language)
 
@@ -1649,17 +1682,18 @@ async def unified_chat_message_json(
     
     try:
         user_id = user["user_id"]
+        normalized_message = _normalize_message_text(request.message)
         request_id = _new_request_id()
-        t0 = time.monotonic()
+        should_web_search = _should_web_search(user_id=user_id, message=normalized_message)
         logger.info(
-            f"chat_http_json_start request_id={request_id} user_id={user_id} message_len={len(request.message or '')} images={_user_requested_images(request.message)} web_search={_should_web_search(user_id=user_id, message=request.message)} session_id={str(request.session_id or '')}"
+            f"chat_http_json_start request_id={request_id} user_id={user_id} message_len={len(normalized_message or '')} images={_user_requested_images(normalized_message)} web_search={should_web_search} session_id={str(request.session_id or '')}"
         )
         
         # Pareto 80/20: Intentar obtener respuesta del cache semántico
         from services.embeddings_service import embeddings_service
         cached_response = None
-        if _should_use_semantic_cache(request.message):
-            cached_response = await embeddings_service.get_cached_response(request.message)
+        if _should_use_semantic_cache(normalized_message):
+            cached_response = await embeddings_service.get_cached_response(normalized_message)
         if cached_response:
             context_info = get_context_info(user_id)
             return ChatResponse(
@@ -1683,7 +1717,7 @@ async def unified_chat_message_json(
 
         # Web search (Tavily -> Serper -> DDG) cuando aplique (incluye petición de imágenes)
         ddg_sources: List[Dict[str, Any]] = []
-        if _should_web_search(user_id=user_id, message=request.message):
+        if should_web_search:
             ws_t0 = time.monotonic()
             from services.ddg_search_service import ddg_search_service
             from services.tavily_search_service import tavily_search_service
@@ -1697,9 +1731,9 @@ async def unified_chat_message_json(
             if tavily_search_service.enabled():
                 try:
                     tavily_sources, tavily_meta = await tavily_search_service.search_with_meta(
-                        query=str(request.message or "").strip(),
+                        query=normalized_message,
                         user_id=str(user_id),
-                        include_images=_user_requested_images(request.message),
+                        include_images=_user_requested_images(normalized_message),
                     )
                 except Exception:
                     tavily_sources = []
@@ -1714,9 +1748,9 @@ async def unified_chat_message_json(
                 if serper_search_service.enabled():
                     try:
                         ddg_sources, serper_meta = await serper_search_service.search_with_meta(
-                            query=str(request.message or "").strip(),
+                            query=normalized_message,
                             user_id=str(user_id),
-                            include_images=_user_requested_images(request.message),
+                            include_images=_user_requested_images(normalized_message),
                         )
                     except Exception:
                         ddg_sources = []
@@ -1730,12 +1764,11 @@ async def unified_chat_message_json(
                 if not ddg_sources:
                     try:
                         ddg_sources, ddg_meta = await ddg_search_service.search_with_meta(
-                            str(request.message or "").strip(),
-                            prefer_images=_user_requested_images(request.message),
+                            normalized_message
                         )
                     except TypeError:
                         ddg_sources, ddg_meta = await ddg_search_service.search_with_meta(
-                            str(request.message or "").strip()
+                            normalized_message
                         )
                     except Exception:
                         ddg_sources = []
@@ -1748,11 +1781,11 @@ async def unified_chat_message_json(
             if ddg_sources:
                 user_context = dict(user_context)
                 user_context["web_search_results"] = list(ddg_sources or [])[:5]
-                if _user_requested_images(request.message):
+                if _user_requested_images(normalized_message):
                     user_context["web_search_images_requested"] = True
 
-                max_sources = 5 if _user_requested_images(request.message) else 3
-                if _user_requested_images(request.message):
+                max_sources = 5 if _user_requested_images(normalized_message) else 3
+                if _user_requested_images(normalized_message):
                     prioritized: List[Dict[str, Any]] = []
                     remainder: List[Dict[str, Any]] = []
                     for s in list(ddg_sources):
@@ -1781,7 +1814,7 @@ async def unified_chat_message_json(
         context_prompt = build_context_prompt(user_context)
         user_full_name = str(user_context.get("user_full_name") or "").strip()
         user_name_line = f"El usuario se llama {user_full_name}. Dirígete a él/ella por su nombre.\n" if user_full_name else ""
-        msg_low = str(request.message or "").strip().lower()
+        msg_low = str(normalized_message or "").strip().lower()
         wants_detail = any(
             k in msg_low
             for k in (
@@ -1801,7 +1834,7 @@ async def unified_chat_message_json(
                 "más profundo",
             )
         )
-        images_requested = _user_requested_images(request.message)
+        images_requested = _user_requested_images(normalized_message)
         images_line = (
             "El usuario pidió IMÁGENES. Si hay thumbnails en el contexto, descríbelas y sugiere 3-5 opciones (una línea cada una).\n"
             if images_requested
@@ -1826,17 +1859,17 @@ async def unified_chat_message_json(
             system_content += "\n\n" + context_prompt
         messages = [
             {"role": "system", "content": system_content},
-            {"role": "user", "content": request.message},
+            {"role": "user", "content": normalized_message},
         ]
         ai_text = await chat_with_ai(messages=messages, user=user_id, fast_reasoning=True, stream=False)
         structured = _sanitize_structured_data({"response": ai_text, "tasks": [], "plan": [], "actions": [], "is_stream": False})
         
         # Guardar progreso
-        asyncio.create_task(save_user_progress(user_id, request.message, structured))
+        asyncio.create_task(save_user_progress(user_id, normalized_message, structured))
         
         # Guardar en cache semántico para futuras consultas similares
         if not structured.get("is_stream"):
-            await embeddings_service.add_to_semantic_cache(request.message, structured["response"])
+            await embeddings_service.add_to_semantic_cache(normalized_message, structured["response"])
         
         context_info = get_context_info(user_id)
 
@@ -1864,6 +1897,8 @@ async def unified_chat_message_json(
             rich_response=rich,
         )
         
+    except HTTPException:
+        raise
     except RuntimeError as e:
         if "GROQ_API_KEY" in str(e):
             raise HTTPException(status_code=503, detail="llm_unavailable_missing_groq_api_key")
@@ -1879,7 +1914,7 @@ async def unified_chat_message_json(
                 "error": str(e),
             }
         )
-        detail_error = str(e) if _debug_enabled() else "internal_error"
+        detail_error = _client_error_message(e)
         raise HTTPException(
             status_code=500,
             detail={
@@ -1889,6 +1924,7 @@ async def unified_chat_message_json(
                 "timestamp": datetime.utcnow().isoformat()
             }
         )
+
 
 @router.post("/context/refresh/{user_id}")
 async def refresh_user_context(user_id: str, user: dict = Depends(get_current_user)):
@@ -1905,6 +1941,7 @@ async def refresh_user_context(user_id: str, user: dict = Depends(get_current_us
         "timestamp": datetime.utcnow().isoformat()
     }
 
+
 @router.get("/health")
 async def chat_health():
     """Health check del servicio de chat"""
@@ -1917,6 +1954,7 @@ async def chat_health():
         "git_sha": os.getenv("GIT_SHA", "unknown"),
         "timestamp": datetime.utcnow().isoformat()
     }
+
 
 @router.get("/info")
 async def chat_info():
@@ -1945,10 +1983,10 @@ async def chat_info():
 async def unified_chat_websocket(websocket: WebSocket, user_id: str):
     """WebSocket para chat en tiempo real con monitoreo de contexto"""
 
-    await websocket.accept()
-    logger.info(f"WebSocket accepted for user_id={user_id}")
-
+    heartbeat_task: Optional[asyncio.Task[Any]] = None
     try:
+        await websocket.accept()
+        logger.info(f"WebSocket accepted for user_id={user_id}")
         logger.info(f"Starting auth for user_id={user_id}")
         try:
             token_user_id = await _ws_auth_user_id(websocket)
@@ -1977,14 +2015,20 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 {
                     "type": "error",
                     "message": "forbidden_user_id_mismatch",
-                    "debug": {"token_user_id": str(token_user_id), "path_user_id": str(user_id)},
                 },
             )
             await websocket.close(code=1008)
             return
 
-        max_text_len = 8000
+        max_text_len = _MAX_MESSAGE_CHARS
         logger.info(f"WebSocket connected successfully for user_id={user_id}, waiting for messages")
+
+        from services.ddg_search_service import ddg_search_service
+        from services.tavily_search_service import tavily_search_service
+        from services.serper_search_service import serper_search_service
+        from services.hub_memory_service import hub_memory_service
+        from services.browser_mcp_service import browser_mcp_service
+        from services.youtube_transcript_service import youtube_transcript_service
 
         # Iniciar heartbeat task
         heartbeat_task = asyncio.create_task(_ws_heartbeat(websocket))
@@ -2037,18 +2081,31 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 )
                 continue
 
-            from services.ddg_search_service import ddg_search_service
-            from services.tavily_search_service import tavily_search_service
-            from services.serper_search_service import serper_search_service
-            from services.hub_memory_service import hub_memory_service
-            from services.browser_mcp_service import browser_mcp_service
-            from services.youtube_transcript_service import youtube_transcript_service
             start_ts = datetime.utcnow()
 
-            user_message = str(message_data.get("message", "") or "")
+            user_message = str(message_data.get("message", "") or "").strip()
+            if not user_message:
+                await _ws_send_json(
+                    websocket,
+                    {
+                        "type": "error",
+                        "message": "message_empty",
+                    },
+                )
+                continue
+            if len(user_message) > _MAX_MESSAGE_CHARS:
+                await _ws_send_json(
+                    websocket,
+                    {
+                        "type": "error",
+                        "message": f"message_too_long_max_{_MAX_MESSAGE_CHARS}",
+                    },
+                )
+                continue
             request_id = _new_request_id()
+            should_web_search = _should_web_search(user_id=user_id, message=user_message)
             logger.info(
-                f"chat_ws_start request_id={request_id} user_id={user_id} message_len={len(user_message or '')} images={_user_requested_images(user_message)} web_search={_should_web_search(user_id=user_id, message=user_message)}"
+                f"chat_ws_start request_id={request_id} user_id={user_id} message_len={len(user_message or '')} images={_user_requested_images(user_message)} web_search={should_web_search}"
             )
             messages = [{"role": "user", "content": user_message}]
             should_refresh_context(user_id, messages)
@@ -2059,7 +2116,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             user_context = await get_user_context_for_chat(user_id)
 
             ddg_sources = []
-            if _should_web_search(user_id=user_id, message=user_message):
+            serper_meta: Dict[str, Any] = {"status": "disabled"}
+            if should_web_search:
                 await _ws_send_status(websocket, "Buscando en la web...", request_id=request_id)
                 ddg_meta = {"status": "skipped"}
                 ws_t0 = time.monotonic()
@@ -2091,7 +2149,6 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                         user_context["web_search_images_requested"] = True
                 else:
                     # 2) Serper (secundario) con rotación por user_id
-                    serper_meta: Dict[str, Any] = {"status": "disabled"}
                     if serper_search_service.enabled():
                         try:
                             ddg_sources, serper_meta = await serper_search_service.search_with_meta(
@@ -2267,10 +2324,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
 
             # 3) Guardar memoria en Redis -> memory_id
             latency_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
-            debug = {
-                "latency_ms": latency_ms,
-                "query": query,
-            }
+            memory_debug: Dict[str, Any] = {"latency_ms": latency_ms, "query": query}
             memory_id = str(uuid.uuid4())
 
             async def _persist_memory() -> None:
@@ -2281,7 +2335,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                         text=text,
                         sources=sources,
                         query=query,
-                        debug=debug,
+                        debug=memory_debug,
                     )
                 except Exception as e:
                     logger.warning(f"hub_memory_persist_failed: {e}")
@@ -2299,7 +2353,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                     "memory_id": memory_id,
                     "sources": sources,
                     "rich_response": rich_response.model_dump() if rich_response else None,
-                    "debug": debug,
+                    **({"debug": memory_debug} if _debug_enabled() else {}),
                 },
             )
 
@@ -2344,7 +2398,7 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
         except Exception:
             pass
     finally:
-        if 'heartbeat_task' in locals():
+        if heartbeat_task is not None:
             heartbeat_task.cancel()
             logger.debug(f"Heartbeat task cancelled for user_id={user_id}")
 
@@ -2393,7 +2447,7 @@ async def voice_stream_ws(websocket: WebSocket):
     binary_bytes_received = 0
     
     # Iniciar heartbeat task
-    heartbeat_task = asyncio.create_task(_ws_heartbeat(websocket))
+    heartbeat_task: Optional[asyncio.Task[Any]] = asyncio.create_task(_ws_heartbeat(websocket))
     
     try:
         while True:
@@ -2487,7 +2541,7 @@ async def voice_stream_ws(websocket: WebSocket):
         except Exception:
             pass
     finally:
-        if 'heartbeat_task' in locals():
+        if heartbeat_task is not None:
             heartbeat_task.cancel()
             logger.debug(f"Voice heartbeat task cancelled for user_id={user_id}")
 

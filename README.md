@@ -33,14 +33,14 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ### Auth
 Base: `/api/auth`
 
-- `POST /api/auth/auth/oauth`
+- `POST /api/auth/oauth`
   - **Body (JSON)**
     - `provider`: `"google" | "apple"`
     - `id_token`: string
     - `name` (opcional): string
   - **Response (JSON)**: tokens + objeto `user` (según `services/auth_service.py`).
 
-- `POST /api/auth/auth/refresh`
+- `POST /api/auth/refresh`
   - **Body (JSON)**
     - `refresh_token`: string
   - **Response (JSON)**: nuevo `access_token`.
@@ -64,21 +64,8 @@ Base: `/api/unified-chat`
   - **Output**: texto JSON con respuesta del modelo.
 
 ### Búsqueda web
-Mounted at: `/api/search/smart`
-
-- `POST /api/search/smart/api/search/web`
-  - **Body (JSON)**
-    - `query`: string
-    - `limit` (default 5): int
-    - `language` (default `"es"`): string
-    - `ai_analysis` (default true): bool
-  - **Auth**: `Authorization: Bearer <token>`
-  - **Response (JSON)**
-    - `success`: bool
-    - `query`: string
-    - `search_results`: list
-    - `ai_analysis`: string | null
-    - `total_results`: int
+En esta variante slim, no hay un router HTTP dedicado para búsqueda web.
+La búsqueda se integra dentro de `POST /api/unified-chat/message` y `POST /api/unified-chat/message/json`.
 
 ## Deploy
 Este repo incluye `Procfile` para Render/Heroku:

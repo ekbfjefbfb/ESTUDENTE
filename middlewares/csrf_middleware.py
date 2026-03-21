@@ -129,9 +129,12 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         """
         Genera la firma HMAC del token CSRF
         """
+        key = CSRF_SECRET_KEY
+        if not key:
+            raise RuntimeError("CSRF secret key not configured")
         message = f"{timestamp}:{random_part}"
         signature = hmac.new(
-            CSRF_SECRET_KEY.encode(),
+            key.encode(),
             message.encode(),
             hashlib.sha256
         ).hexdigest()
@@ -145,12 +148,15 @@ def generate_csrf_token() -> str:
     Returns:
         Token CSRF en formato: timestamp:random:signature
     """
+    key = CSRF_SECRET_KEY
+    if not key:
+        raise RuntimeError("CSRF secret key not configured")
     timestamp = str(int(time.time()))
     random_part = secrets.token_urlsafe(32)
     
     message = f"{timestamp}:{random_part}"
     signature = hmac.new(
-        CSRF_SECRET_KEY.encode(),
+        key.encode(),
         message.encode(),
         hashlib.sha256
     ).hexdigest()
@@ -171,8 +177,10 @@ async def get_csrf_token() -> dict:
         async def csrf_token():
             return await get_csrf_token()
     """
+    global CSRF_SECRET_KEY
     if not CSRF_SECRET_KEY:
-        raise RuntimeError("CSRF_SECRET_KEY not initialized")
+        from config import SECRET_KEY
+        CSRF_SECRET_KEY = SECRET_KEY
     
     token = generate_csrf_token()
     return {

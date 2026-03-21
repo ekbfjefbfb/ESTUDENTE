@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -31,6 +31,26 @@ class AvatarUploadResponse(BaseModel):
     profile_picture_url: str
 
 
+def _normalize_str(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _current_user_value(current_user: Any, key: str) -> Optional[str]:
+    if isinstance(current_user, dict):
+        return _normalize_str(current_user.get(key))
+    return _normalize_str(getattr(current_user, key, None))
+
+
+def _current_user_id(current_user: Any) -> str:
+    user_id = _current_user_value(current_user, "user_id") or _current_user_value(current_user, "id")
+    if not user_id:
+        raise HTTPException(status_code=500, detail="invalid_user_context")
+    return user_id
+
+
 def _get_supabase_storage_keys() -> tuple[str, str]:
     url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
     if not url:
@@ -51,13 +71,15 @@ def _get_supabase_storage_keys() -> tuple[str, str]:
 
 
 @router.get("/me", response_model=MeResponse)
-async def get_me(current_user: User = Depends(get_current_user)):
-    user_id = str(current_user.get("user_id") or current_user.get("id")) if isinstance(current_user, dict) else str(current_user.id)
-    username = current_user.get("username") if isinstance(current_user, dict) else current_user.username
-    email = current_user.get("email") if isinstance(current_user, dict) else current_user.email
-    full_name = current_user.get("full_name") if isinstance(current_user, dict) else getattr(current_user, "full_name", None)
-    phone_number = current_user.get("phone_number") if isinstance(current_user, dict) else getattr(current_user, "phone_number", None)
-    profile_picture_url = current_user.get("profile_picture_url") if isinstance(current_user, dict) else getattr(current_user, "profile_picture_url", None)
+async def get_me(current_user: Any = Depends(get_current_user)):
+    user_id = _current_user_id(current_user)
+    username = _current_user_value(current_user, "username")
+    if not username:
+        raise HTTPException(status_code=500, detail="invalid_user_context")
+    email = _current_user_value(current_user, "email")
+    full_name = _current_user_value(current_user, "full_name")
+    phone_number = _current_user_value(current_user, "phone_number")
+    profile_picture_url = _current_user_value(current_user, "profile_picture_url")
     return MeResponse(
         id=user_id,
         username=username,
@@ -87,11 +109,11 @@ class UpdateProfileResponse(BaseModel):
 @router.put("/me", response_model=UpdateProfileResponse)
 async def update_me(
     payload: UpdateProfileRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: Any = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Actualizar datos del perfil del usuario"""
-    user_id = str(current_user.get("user_id") or current_user.get("id")) if isinstance(current_user, dict) else str(current_user.id)
+    user_id = _current_user_id(current_user)
     
     # Validar username único si se está actualizando
     if payload.username is not None:
@@ -114,7 +136,7 @@ async def update_me(
         values["phone_number"] = payload.phone_number
     
     if values:
-        values["updated_at"] = datetime.utcnow()
+        values["updated_at"] = datetime.now(timezone.utc)
         await db.execute(update(User).where(User.id == user_id).values(**values))
         await db.commit()
         if not isinstance(current_user, dict):
@@ -122,19 +144,19 @@ async def update_me(
     
     return UpdateProfileResponse(
         id=user_id,
-        username=(payload.username if payload.username is not None else (current_user.get("username") if isinstance(current_user, dict) else current_user.username)),
-        email=(current_user.get("email") if isinstance(current_user, dict) else current_user.email),
-        full_name=(payload.full_name if payload.full_name is not None else (current_user.get("full_name") if isinstance(current_user, dict) else getattr(current_user, "full_name", None))),
-        phone_number=(payload.phone_number if payload.phone_number is not None else (current_user.get("phone_number") if isinstance(current_user, dict) else getattr(current_user, "phone_number", None))),
-        profile_picture_url=(current_user.get("profile_picture_url") if isinstance(current_user, dict) else getattr(current_user, "profile_picture_url", None)),
-        updated_at=datetime.utcnow().isoformat(),
+        username=(payload.username if payload.username is not None else (_current_user_value(current_user, "username") or "")),
+        email=_current_user_value(current_user, "email"),
+        full_name=(payload.full_name if payload.full_name is not None else _current_user_value(current_user, "full_name")),
+        phone_number=(payload.phone_number if payload.phone_number is not None else _current_user_value(current_user, "phone_number")),
+        profile_picture_url=_current_user_value(current_user, "profile_picture_url"),
+        updated_at=datetime.now(timezone.utc).isoformat(),
     )
 
 
 @router.post("/me/avatar", response_model=AvatarUploadResponse)
 async def upload_avatar(
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    current_user: Any = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     content_type = (file.content_type or "").lower()
@@ -152,8 +174,8 @@ async def upload_avatar(
     bucket = (os.getenv("SUPABASE_AVATAR_BUCKET") or "avatars").strip() or "avatars"
 
     ext = "jpg" if content_type == "image/jpeg" else "png" if content_type == "image/png" else "webp"
-    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    user_id = str(current_user.get("user_id") or current_user.get("id")) if isinstance(current_user, dict) else str(current_user.id)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    user_id = _current_user_id(current_user)
     object_path = f"{user_id}/{ts}.{ext}"
 
     upload_url = f"{supabase_url}/storage/v1/object/{bucket}/{object_path}"

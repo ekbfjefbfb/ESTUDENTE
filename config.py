@@ -27,8 +27,6 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 # =========================
 # Configuración de Base de Datos
 # =========================
-# DATABASE_URL CORRECTA (proyecto NHost):
-# postgresql://postgres:sd19gqbdBMaKV13j@xnjvzbdjqvhkfioochym.db.us-east-1.nhost.run:5432/xnjvzbdjqvhkfioochym
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Fallback a SQLite para desarrollo local
@@ -288,4 +286,3 @@ else:
 
 if VISION_PIPELINE_ENABLED:
     print(f"�️ Vision Pipeline habilitado (device: {VISION_DEVICE})")
-
