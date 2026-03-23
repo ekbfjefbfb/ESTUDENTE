@@ -33,7 +33,7 @@ _USER_CONTEXT_CACHE: Dict[str, Dict[str, Any]] = {}
 _USER_CONTEXT_CACHE_TTL_S = float(os.getenv("USER_CONTEXT_CACHE_TTL_S", "20"))
 
 _USER_WS_CONNECTION_LOCKS: Dict[str, asyncio.Lock] = {}
-_USER_WS_TURN_LOCKS: Dict[str, asyncio.Lock] = {}
+_USER_ACTIVE_WS: Dict[str, WebSocket] = {}
 
 logger = logging.getLogger("unified_chat_router")
 
@@ -42,6 +42,10 @@ router = APIRouter(prefix="/unified-chat", tags=["Chat IA"])
 
 def _new_request_id() -> str:
     return uuid.uuid4().hex[:12]
+
+
+def _ws_replace_existing_enabled() -> bool:
+    return str(os.getenv("WS_REPLACE_EXISTING", "true") or "").strip().lower() in {"1", "true", "t", "yes"}
 
 
 def _safe_meta(meta: Any) -> Dict[str, Any]:
@@ -2046,10 +2050,26 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
         logger.info(f"Starting auth for user_id={user_id}")
         try:
             token_user_id = await _ws_auth_user_id(websocket)
+        except HTTPException as auth_http:
+            detail = getattr(auth_http, "detail", None)
+            if detail in {"token_expired", "token_revoked", "invalid_token", "missing_token"}:
+                await _ws_send_json(
+                    websocket,
+                    {
+                        "type": "error",
+                        "message": str(detail),
+                        "error_code": str(detail),
+                    },
+                )
+                await websocket.close(code=1008)
+                return
+            logger.error(f"WebSocket AUTH FAILED for user_id={user_id}: HTTPException detail={detail}")
+            await _ws_send_json(websocket, {"type": "error", "message": "auth_failed"})
+            await websocket.close(code=1008)
+            return
         except Exception as auth_error:
-            import traceback
             logger.error(
-                f"WebSocket AUTH FAILED for user_id={user_id}: {type(auth_error).__name__}: {auth_error}\n{traceback.format_exc()}"
+                f"WebSocket AUTH FAILED for user_id={user_id}: {type(auth_error).__name__}: {auth_error}"
             )
             debug = {"stack": str(auth_error)} if _debug_enabled() else None
             await _ws_send_json(
@@ -2082,16 +2102,27 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             conn_lock = asyncio.Lock()
             _USER_WS_CONNECTION_LOCKS[str(user_id)] = conn_lock
         if conn_lock.locked():
-            await _ws_send_json(
-                websocket,
-                {
-                    "type": "error",
-                    "message": "ws_already_connected",
-                },
-            )
-            await websocket.close(code=1013)
-            return
+            if _ws_replace_existing_enabled():
+                prev = _USER_ACTIVE_WS.get(str(user_id))
+                if prev is not None:
+                    try:
+                        await asyncio.wait_for(prev.close(code=1012), timeout=1.0)
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.05)
+            else:
+                await _ws_send_json(
+                    websocket,
+                    {
+                        "type": "error",
+                        "message": "ws_already_connected",
+                    },
+                )
+                await websocket.close(code=1013)
+                return
         await conn_lock.acquire()
+
+        _USER_ACTIVE_WS[str(user_id)] = websocket
 
         max_text_len = _MAX_MESSAGE_CHARS
         logger.info(f"WebSocket connected successfully for user_id={user_id}, waiting for messages")
@@ -2477,6 +2508,12 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                     conn_lock.release()
             except Exception:
                 pass
+        try:
+            current = _USER_ACTIVE_WS.get(str(user_id))
+            if current is websocket:
+                _USER_ACTIVE_WS.pop(str(user_id), None)
+        except Exception:
+            pass
         if heartbeat_task is not None:
             heartbeat_task.cancel()
             logger.debug(f"Heartbeat task cancelled for user_id={user_id}")

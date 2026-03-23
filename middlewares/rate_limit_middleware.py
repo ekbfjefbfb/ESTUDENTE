@@ -107,6 +107,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return DEFAULT_PLAN_LIMITS["demo"]
 
     async def dispatch(self, request: Request, call_next):
+        endpoint = request.url.path
+        if endpoint in {"/api/auth/refresh", "/api/auth/login", "/api/auth/register", "/api/auth/oauth"}:
+            return await call_next(request)
         redis_client = await self._get_redis()
 
         ip = request.client.host if request.client else "unknown"
@@ -123,7 +126,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # Fail-open if Redis is not available
             return await call_next(request)
 
-        endpoint = request.url.path
         key = f"rate:{user_id}:{endpoint}"
         max_requests = limits.get("max_requests", 5)
         window_seconds = limits.get("window_seconds", 60)

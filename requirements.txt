@@ -11,6 +11,7 @@ python-multipart==0.0.9
 # Auth
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt<4
 cryptography==41.0.7
 
 # DB

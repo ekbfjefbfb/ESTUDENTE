@@ -55,7 +55,7 @@ AUTH_PROCESSING_TIME = Histogram(
     "Authentication processing time"
 )
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt", "pbkdf2_sha256"], deprecated="auto")
 
 class AuthService:
     """Servicio de autenticación empresarial con OAuth múltiple"""
@@ -65,7 +65,17 @@ class AuthService:
         self.session_timeout = 3600  # 1 hora
 
     def _hash_password(self, password: str) -> str:
-        return pwd_context.hash(password)
+        pwd = str(password or "")
+        try:
+            if len(pwd.encode("utf-8")) > 72:
+                return pwd_context.hash(pwd, scheme="pbkdf2_sha256")
+        except Exception:
+            return pwd_context.hash(pwd, scheme="pbkdf2_sha256")
+
+        try:
+            return pwd_context.hash(pwd, scheme="bcrypt")
+        except Exception:
+            return pwd_context.hash(pwd, scheme="pbkdf2_sha256")
 
     def _verify_password(self, plain_password: str, hashed_password: str) -> bool:
         try:

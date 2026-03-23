@@ -4,7 +4,7 @@ import logging
 import re
 from fastapi import APIRouter, Depends, Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional
 from jose import jwt, JWTError
 
@@ -73,7 +73,6 @@ class RegisterSchema(BaseModel):
             raise ValueError("Email inválido")
         return v
 
-
 class LoginSchema(BaseModel):
     email: str = Field(..., min_length=5, max_length=100)
     password: str = Field(..., min_length=8, max_length=200)
@@ -85,16 +84,24 @@ class LoginSchema(BaseModel):
             raise ValueError("Email inválido")
         return v
 
-
 class RefreshSchema(BaseModel):
     refresh_token: str = Field(..., min_length=10, max_length=2000, description="Refresh token JWT")
+    refreshToken: Optional[str] = Field(None, min_length=10, max_length=2000, description="Alias para refresh_token")
+    token: Optional[str] = Field(None, min_length=10, max_length=2000, description="Alias para refresh_token")
+
+    @model_validator(mode="before")
+    def normalize_refresh_token(cls, values):
+        if isinstance(values, dict):
+            rt = values.get("refresh_token") or values.get("refreshToken") or values.get("token")
+            if rt and not values.get("refresh_token"):
+                values = dict(values)
+                values["refresh_token"] = rt
+        return values
 
     @field_validator("refresh_token")
-    def validate_jwt(cls, v: str) -> str:
-        try:
-            jwt.decode(v, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        except JWTError:
-            raise ValueError("Token inválido o expirado")
+    def validate_refresh_token_format(cls, v: str) -> str:
+        if len(str(v).split(".")) != 3:
+            raise ValueError("Token inválido")
         return v
 
 # ---------------- Seguridad Input ----------------
