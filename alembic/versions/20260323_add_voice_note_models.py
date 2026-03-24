@@ -69,15 +69,15 @@ def upgrade():
         sa.Column('device_id', sa.String(100), nullable=False),
         sa.Column('title', sa.String(200), nullable=True),
         sa.Column('language', sa.String(10), nullable=False, server_default='es'),
-        sa.Column('status', sa.Enum(
+        sa.Column('status', postgresql.ENUM(
             'draft', 'uploading', 'uploaded', 'queued', 
             'transcribing', 'processing', 'completed', 
             'error', 'cancelled',
-            name='voicenotestatus'
+            name='voicenotestatus', create_type=False
         ), nullable=False, server_default='draft', index=True),
-        sa.Column('upload_strategy', sa.Enum(
+        sa.Column('upload_strategy', postgresql.ENUM(
             'streaming', 'resumable', 'bulk',
-            name='voicenoteuploadstrategy'
+            name='voicenoteuploadstrategy', create_type=False
         ), nullable=False, server_default='resumable'),
         sa.Column('total_duration_ms', sa.Integer, nullable=True),
         sa.Column('total_chunks_expected', sa.Integer, nullable=False),
@@ -127,9 +127,9 @@ def upgrade():
         sa.Column('byte_offset', sa.BigInteger, nullable=False),
         sa.Column('byte_length', sa.Integer, nullable=False),
         sa.Column('checksum_sha256', sa.String(64), nullable=False),
-        sa.Column('status', sa.Enum(
+        sa.Column('status', postgresql.ENUM(
             'pending', 'received', 'verified', 'failed',
-            name='audiochunkstatus'
+            name='audiochunkstatus', create_type=False
         ), nullable=False, server_default='pending'),
         sa.Column('storage_path', sa.String(500), nullable=True),
         sa.Column('received_at', sa.DateTime(timezone=True), nullable=True),
@@ -149,13 +149,13 @@ def upgrade():
         'voice_note_processing_jobs',
         sa.Column('id', sa.String(36), nullable=False),
         sa.Column('voice_note_id', sa.String(36), sa.ForeignKey('voice_notes.id', ondelete='CASCADE'), nullable=False),
-        sa.Column('job_type', sa.Enum(
+        sa.Column('job_type', postgresql.ENUM(
             'transcription', 'summarization', 'extraction', 'full_pipeline',
-            name='processingjobtype'
+            name='processingjobtype', create_type=False
         ), nullable=False, index=True),
-        sa.Column('status', sa.Enum(
+        sa.Column('status', postgresql.ENUM(
             'pending', 'running', 'completed', 'failed', 'retrying',
-            name='processingjobstatus'
+            name='processingjobstatus', create_type=False
         ), nullable=False, server_default='pending', index=True),
         sa.Column('audio_checksum', sa.String(64), nullable=False),
         sa.Column('params_hash', sa.String(64), nullable=False),
