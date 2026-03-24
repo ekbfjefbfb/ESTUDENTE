@@ -85,24 +85,38 @@ class LoginSchema(BaseModel):
         return v
 
 class RefreshSchema(BaseModel):
-    refresh_token: str = Field(..., min_length=10, max_length=2000, description="Refresh token JWT")
-    refreshToken: Optional[str] = Field(None, min_length=10, max_length=2000, description="Alias para refresh_token")
-    token: Optional[str] = Field(None, min_length=10, max_length=2000, description="Alias para refresh_token")
-
+    """Schema ultra-permisivo para refresh - acepta cualquier formato de payload"""
+    # Campos comunes que pueden enviar clientes móviles
+    refresh_token: Optional[str] = Field(None, max_length=5000)
+    refreshToken: Optional[str] = Field(None, max_length=5000)
+    token: Optional[str] = Field(None, max_length=5000)
+    access_token: Optional[str] = Field(None, max_length=5000)
+    refresh: Optional[str] = Field(None, max_length=5000)
+    
     @model_validator(mode="before")
-    def normalize_refresh_token(cls, values):
-        if isinstance(values, dict):
-            rt = values.get("refresh_token") or values.get("refreshToken") or values.get("token")
-            if rt and not values.get("refresh_token"):
-                values = dict(values)
-                values["refresh_token"] = rt
+    def extract_refresh_token(cls, values):
+        """Extrae el refresh token de cualquier campo posible"""
+        if not isinstance(values, dict):
+            return values
+        
+        # Buscar en todos los campos posibles
+        candidates = [
+            values.get("refresh_token"),
+            values.get("refreshToken"),
+            values.get("token"),
+            values.get("access_token"),
+            values.get("refresh"),
+        ]
+        
+        # Usar el primer valor no-vacío
+        for candidate in candidates:
+            if candidate and isinstance(candidate, str) and len(candidate) > 10:
+                values["refresh_token"] = candidate.strip()
+                return values
+        
+        # Si llegamos aquí sin token, dejarlo pasar (validación manual en endpoint)
+        values["refresh_token"] = values.get("refresh_token") or ""
         return values
-
-    @field_validator("refresh_token")
-    def validate_refresh_token_format(cls, v: str) -> str:
-        if len(str(v).split(".")) != 3:
-            raise ValueError("Token inválido")
-        return v
 
 # ---------------- Seguridad Input ----------------
 def sanitize_input(value: str) -> str:
@@ -148,10 +162,19 @@ async def refresh_token_route(
 ) -> dict:
     logger.info(f'{{"event": "refresh_token_attempt", "ip": "{request.client.host}"}}')
     try:
-        refresh_token = sanitize_input(data.refresh_token)
+        # Validación manual del token
+        refresh_token = (data.refresh_token or "").strip()
+        if not refresh_token or len(refresh_token) < 10:
+            logger.warning(f'{{"event": "refresh_token_missing", "ip": "{request.client.host}"}}')
+            raise HTTPException(status_code=400, detail="refresh_token_required")
+        
+        # Sanitizar y procesar
+        refresh_token = sanitize_input(refresh_token)
         result = await refresh_access_token_service(refresh_token)
         logger.info(f'{{"event": "refresh_token_success", "ip": "{request.client.host}"}}')
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f'{{"event": "refresh_token_error", "error": "{str(e)}"}}', exc_info=True)
         raise HTTPException(status_code=400, detail="Error al refrescar token")

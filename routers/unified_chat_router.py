@@ -35,6 +35,13 @@ _USER_CONTEXT_CACHE_TTL_S = float(os.getenv("USER_CONTEXT_CACHE_TTL_S", "20"))
 _USER_WS_CONNECTION_LOCKS: Dict[str, asyncio.Lock] = {}
 _USER_ACTIVE_WS: Dict[str, WebSocket] = {}
 
+# Rate limiting para prevenir reconnection loops en móviles
+_WS_AUTH_FAILURE_TRACKER: Dict[str, List[float]] = {}
+_WS_MAX_AUTH_FAILURES = 5  # Máximo de fallos en ventana
+_WS_AUTH_FAILURE_WINDOW_S = 60  # Ventana de tiempo en segundos
+_WS_BACKOFF_MIN_S = 2  # Mínimo backoff
+_WS_BACKOFF_MAX_S = 30  # Máximo backoff
+
 logger = logging.getLogger("unified_chat_router")
 
 router = APIRouter(prefix="/unified-chat", tags=["Chat IA"])
@@ -46,6 +53,40 @@ def _new_request_id() -> str:
 
 def _ws_replace_existing_enabled() -> bool:
     return str(os.getenv("WS_REPLACE_EXISTING", "true") or "").strip().lower() in {"1", "true", "t", "yes"}
+
+
+def _track_ws_auth_failure(user_id: str) -> int:
+    """Track auth failure and return failure count in window"""
+    now = time.monotonic()
+    if user_id not in _WS_AUTH_FAILURE_TRACKER:
+        _WS_AUTH_FAILURE_TRACKER[user_id] = []
+    
+    # Limpiar entradas antiguas
+    _WS_AUTH_FAILURE_TRACKER[user_id] = [
+        ts for ts in _WS_AUTH_FAILURE_TRACKER[user_id]
+        if (now - ts) < _WS_AUTH_FAILURE_WINDOW_S
+    ]
+    
+    # Agregar nuevo failure
+    _WS_AUTH_FAILURE_TRACKER[user_id].append(now)
+    
+    return len(_WS_AUTH_FAILURE_TRACKER[user_id])
+
+
+def _get_ws_backoff_seconds(user_id: str) -> float:
+    """Calculate exponential backoff based on recent failures"""
+    failure_count = len(_WS_AUTH_FAILURE_TRACKER.get(user_id, []))
+    if failure_count == 0:
+        return 0
+    
+    # Exponential backoff: 2s, 4s, 8s, 16s, max 30s
+    backoff = _WS_BACKOFF_MIN_S * (2 ** (failure_count - 1))
+    return min(backoff, _WS_BACKOFF_MAX_S)
+
+
+def _clear_ws_auth_failures(user_id: str):
+    """Clear failures on successful auth"""
+    _WS_AUTH_FAILURE_TRACKER.pop(user_id, None)
 
 
 def _safe_meta(meta: Any) -> Dict[str, Any]:
@@ -2044,21 +2085,51 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
 
     heartbeat_task: Optional[asyncio.Task[Any]] = None
     conn_lock: Optional[asyncio.Lock] = None
+    
+    # ANTI-RECONNECTION-LOOP: Verificar si hay backoff activo
+    backoff_seconds = _get_ws_backoff_seconds(user_id)
+    if backoff_seconds > 0:
+        logger.warning(f"WebSocket backoff activo para user_id={user_id}: {backoff_seconds}s")
+        try:
+            await websocket.accept()
+            await _ws_send_json(
+                websocket,
+                {
+                    "type": "error",
+                    "message": "rate_limited",
+                    "error_code": "rate_limited",
+                    "retry_after_seconds": backoff_seconds,
+                },
+            )
+            await websocket.close(code=1013)  # Try again later
+        except Exception:
+            pass
+        return
+    
     try:
         await websocket.accept()
         logger.info(f"WebSocket accepted for user_id={user_id}")
         logger.info(f"Starting auth for user_id={user_id}")
         try:
             token_user_id = await _ws_auth_user_id(websocket)
+            # Auth exitosa - limpiar failures
+            _clear_ws_auth_failures(user_id)
         except HTTPException as auth_http:
             detail = getattr(auth_http, "detail", None)
+            # Track failure para backoff exponencial
+            failure_count = _track_ws_auth_failure(user_id)
+            retry_delay = _get_ws_backoff_seconds(user_id)
+            
             if detail in {"token_expired", "token_revoked", "invalid_token", "missing_token"}:
+                logger.warning(f"WebSocket auth failed ({detail}) for user_id={user_id}, failure_count={failure_count}, retry_delay={retry_delay}s")
                 await _ws_send_json(
                     websocket,
                     {
                         "type": "error",
                         "message": str(detail),
                         "error_code": str(detail),
+                        "requires_relogin": detail in {"token_expired", "token_revoked"},
+                        "retry_after_seconds": retry_delay if not detail in {"token_expired", "token_revoked"} else None,
                     },
                 )
                 await websocket.close(code=1008)
@@ -2068,8 +2139,12 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
             await websocket.close(code=1008)
             return
         except Exception as auth_error:
+            # Track failure para backoff exponencial
+            failure_count = _track_ws_auth_failure(user_id)
+            retry_delay = _get_ws_backoff_seconds(user_id)
+            
             logger.error(
-                f"WebSocket AUTH FAILED for user_id={user_id}: {type(auth_error).__name__}: {auth_error}"
+                f"WebSocket AUTH FAILED for user_id={user_id}: {type(auth_error).__name__}: {auth_error}, failure_count={failure_count}"
             )
             debug = {"stack": str(auth_error)} if _debug_enabled() else None
             await _ws_send_json(
@@ -2077,6 +2152,8 @@ async def unified_chat_websocket(websocket: WebSocket, user_id: str):
                 {
                     "type": "error",
                     "message": "auth_failed",
+                    "error_code": "auth_failed",
+                    "retry_after_seconds": retry_delay,
                     **({"debug": debug} if debug else {}),
                 },
             )
