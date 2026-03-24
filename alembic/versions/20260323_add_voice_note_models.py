@@ -2,7 +2,7 @@
 🎙️ VoiceNote Models Migration - Offline-first, resumible, idempotent
 
 Revision ID: 20260323_add_voice_note_models
-Revises: 20260320_add_hashed_password_to_users
+Revises: 20260320_add_hashed_password
 Create Date: 2026-03-23
 """
 from alembic import op
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = '20260323_add_voice_note_models'
-down_revision = '20260320_add_hashed_password_to_users'
+down_revision = '20260320_add_hashed_password'
 branch_labels = None
 depends_on = None
 
