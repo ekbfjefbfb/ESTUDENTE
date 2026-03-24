@@ -21,6 +21,9 @@ from . import (
     profile_router,
     scheduled_recording_router,
     recording_session_router,
+    
+    # Voice Notes SST
+    voice_note_router,
 )
 
 # Lista explícita de exportaciones válidas
@@ -41,6 +44,9 @@ __all__ = [
     "profile_router",
     "scheduled_recording_router",
     "recording_session_router",
+    
+    # Voice Notes SST
+    "voice_note_router",
 ]
 
 __version__ = "1.0.1"

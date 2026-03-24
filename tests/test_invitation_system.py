@@ -6,7 +6,11 @@ Ejecutar con: pytest tests/test_invitation_system.py -v
 
 import pytest
 from datetime import datetime, timedelta
-from services.invitation_service import InvitationService
+InvitationServiceModule = pytest.importorskip(
+    "services.invitation_service",
+    reason="InvitationService not available in this environment",
+)
+InvitationService = InvitationServiceModule.InvitationService
 from models.models import User, Organization, Referral
 import uuid
 

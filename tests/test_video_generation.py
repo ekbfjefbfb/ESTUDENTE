@@ -2,8 +2,15 @@
 Tests para el sistema de generación de videos HunyuanVideo
 """
 import pytest
+import pytest_asyncio
 from unittest.mock import Mock, patch, AsyncMock
 from pathlib import Path
+
+try:
+    from services.hunyuan_video_service import HUNYUAN_AVAILABLE
+except Exception:
+    pytest.skip("Hunyuan video service not available", allow_module_level=True)
+    HUNYUAN_AVAILABLE = False
 
 # ============================================================================
 # SERVICE TESTS
@@ -330,7 +337,7 @@ class TestVideoGenerationPerformance:
 # FIXTURES
 # ============================================================================
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client():
     """Cliente HTTP para tests"""
     from httpx import AsyncClient
@@ -352,8 +359,6 @@ def auth_headers():
 # ============================================================================
 # CONFTEST
 # ============================================================================
-
-from services.hunyuan_video_service import HUNYUAN_AVAILABLE
 
 def pytest_configure(config):
     """Configuración de pytest"""

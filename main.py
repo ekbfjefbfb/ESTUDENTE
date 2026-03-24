@@ -81,6 +81,7 @@ from routers import (
     profile_router,
     scheduled_recording_router,
     recording_session_router,
+    voice_note_router,
 )
 
 # Middlewares
@@ -460,8 +461,8 @@ app.include_router(scheduled_recording_router.router, tags=["Scheduled Recording
 # 🎙️ Unificado: Sesiones de Grabación (Manual, Auto, Agenda)
 app.include_router(recording_session_router.router, tags=["Recording Sessions"])
 
-# =============================================
-# STARTUP MESSAGE
+# 🎙️ VoiceNotes SST - Offline-first, resumible, idempotente
+app.include_router(voice_note_router.router, tags=["Voice Notes"])
 # =============================================
 # PUNTO DE ENTRADA
 # =============================================
