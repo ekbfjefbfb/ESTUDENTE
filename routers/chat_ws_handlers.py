@@ -1,0 +1,353 @@
+"""
+Chat WebSocket Handlers - WebSocket handlers for chat
+Separado de unified_chat_router.py para reducir responsabilidades
+"""
+import asyncio
+import json
+import logging
+from datetime import datetime
+from typing import Dict, Any, List, Optional
+
+from fastapi import WebSocket, WebSocketDisconnect, HTTPException
+
+from routers.chat_context import get_user_context_for_chat
+from routers.chat_progress import save_user_progress, _sanitize_structured_data
+from routers.chat_search import perform_web_search, prioritize_sources_with_images
+from routers.chat_ai import get_ai_response_with_streaming
+from routers.chat_ws_utils import (
+    _ws_auth_user_id, _ws_send_json, _ws_send_status, _ws_heartbeat,
+    _track_ws_auth_failure, _get_ws_backoff_seconds, _clear_ws_auth_failures,
+    _ws_replace_existing_enabled, get_user_ws_lock, set_active_ws,
+    get_active_ws, remove_active_ws, _sanitize_sources_images, _build_rich_response
+)
+from services.hub_memory_service import hub_memory_service
+from services.youtube_transcript_service import youtube_transcript_service
+from services.browser_mcp_service import browser_mcp_service
+
+logger = logging.getLogger("chat_ws_handlers")
+
+_MAX_MESSAGE_CHARS = 8000
+
+
+async def handle_chat_websocket(websocket: WebSocket, user_id: str):
+    """Handle chat WebSocket connection"""
+    heartbeat_task: Optional[asyncio.Task] = None
+    conn_lock: Optional[asyncio.Lock] = None
+    
+    # Check rate limiting
+    backoff_seconds = _get_ws_backoff_seconds(user_id)
+    if backoff_seconds > 0:
+        logger.warning(f"WebSocket backoff activo para user_id={user_id}: {backoff_seconds}s")
+        try:
+            await websocket.accept()
+            await _ws_send_json(
+                websocket,
+                {
+                    "type": "error",
+                    "message": "rate_limited",
+                    "error_code": "rate_limited",
+                    "retry_after_seconds": backoff_seconds,
+                },
+            )
+            await websocket.close(code=1013)
+        except Exception:
+            pass
+        return
+    
+    try:
+        await websocket.accept()
+        logger.info(f"WebSocket accepted for user_id={user_id}")
+        
+        # Authenticate
+        try:
+            token_user_id = await _ws_auth_user_id(websocket)
+            _clear_ws_auth_failures(user_id)
+        except HTTPException as auth_http:
+            failure_count = _track_ws_auth_failure(user_id)
+            retry_delay = _get_ws_backoff_seconds(user_id)
+            detail = getattr(auth_http, "detail", None)
+            
+            logger.warning(f"WebSocket auth failed ({detail}) for user_id={user_id}, failure_count={failure_count}")
+            await _ws_send_json(
+                websocket,
+                {
+                    "type": "error",
+                    "message": str(detail),
+                    "error_code": str(detail),
+                    "requires_relogin": detail in {"token_expired", "token_revoked"},
+                    "retry_after_seconds": retry_delay if detail not in {"token_expired", "token_revoked"} else None,
+                },
+            )
+            await websocket.close(code=1008)
+            return
+        except Exception as auth_error:
+            failure_count = _track_ws_auth_failure(user_id)
+            retry_delay = _get_ws_backoff_seconds(user_id)
+            logger.error(f"WebSocket AUTH FAILED for user_id={user_id}: {auth_error}")
+            await _ws_send_json(
+                websocket,
+                {
+                    "type": "error",
+                    "message": "auth_failed",
+                    "error_code": "auth_failed",
+                    "retry_after_seconds": retry_delay,
+                },
+            )
+            await websocket.close(code=1008)
+            return
+        
+        # Verify user match
+        if str(token_user_id) != str(user_id):
+            logger.warning(f"User ID mismatch: token={token_user_id}, path={user_id}")
+            await _ws_send_json(websocket, {"type": "error", "message": "forbidden_user_id_mismatch"})
+            await websocket.close(code=1008)
+            return
+        
+        # Connection lock management
+        conn_lock = get_user_ws_lock(user_id)
+        if conn_lock.locked():
+            if _ws_replace_existing_enabled():
+                prev = get_active_ws(user_id)
+                if prev is not None:
+                    try:
+                        await asyncio.wait_for(prev.close(code=1012), timeout=1.0)
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.05)
+            else:
+                await _ws_send_json(websocket, {"type": "error", "message": "ws_already_connected"})
+                await websocket.close(code=1013)
+                return
+        
+        await conn_lock.acquire()
+        set_active_ws(user_id, websocket)
+        
+        logger.info(f"WebSocket connected successfully for user_id={user_id}")
+        
+        # Start heartbeat
+        heartbeat_task = asyncio.create_task(_ws_heartbeat(websocket))
+        
+        # Message loop
+        while True:
+            try:
+                data = await websocket.receive_text()
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket disconnect user_id={user_id}")
+                break
+            except Exception as e:
+                logger.error(f"WebSocket receive error user_id={user_id}: {e}")
+                break
+            
+            # Handle pong
+            if data == "pong" or (data.startswith("{") and '"type":"pong"' in data):
+                continue
+            
+            # Check message size
+            if len(data) > _MAX_MESSAGE_CHARS:
+                await _ws_send_json(websocket, {"type": "error", "message": "payload_too_large"})
+                try:
+                    await websocket.close(code=1009)
+                except Exception:
+                    pass
+                break
+            
+            # Parse JSON
+            try:
+                message_data = json.loads(data)
+            except Exception as e:
+                logger.warning(f"WebSocket invalid JSON user_id={user_id}: {e}")
+                await _ws_send_json(websocket, {"type": "error", "message": "invalid_json"})
+                continue
+            
+            # Process message
+            await _process_chat_message(websocket, user_id, message_data)
+            
+    except json.JSONDecodeError as e:
+        logger.warning(f"WebSocket JSON decode error for user_id={user_id}: {e}")
+    except Exception as e:
+        logger.error(f"WebSocket ERROR for user_id={user_id}: {e}")
+    finally:
+        if conn_lock is not None and conn_lock.locked():
+            try:
+                conn_lock.release()
+            except Exception:
+                pass
+        remove_active_ws(user_id, websocket)
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            logger.debug(f"Heartbeat task cancelled for user_id={user_id}")
+
+
+async def _process_chat_message(websocket: WebSocket, user_id: str, message_data: Dict[str, Any]):
+    """Process a single chat message from WebSocket"""
+    from routers.chat_search import _should_web_search, _should_include_images_in_search
+    from services.groq_ai_service import get_context_info
+    import time
+    import uuid
+    
+    start_ts = datetime.utcnow()
+    request_id = uuid.uuid4().hex[:12]
+    
+    user_message = str(message_data.get("message", "") or "").strip()
+    if not user_message:
+        await _ws_send_json(websocket, {"type": "error", "message": "message_empty"})
+        return
+    
+    if len(user_message) > _MAX_MESSAGE_CHARS:
+        await _ws_send_json(websocket, {"type": "error", "message": f"message_too_long_max_{_MAX_MESSAGE_CHARS}"})
+        return
+    
+    should_web_search = _should_web_search(user_id=user_id, message=user_message)
+    logger.info(f"chat_ws_start request_id={request_id} user_id={user_id} web_search={should_web_search}")
+    
+    # Get user context
+    user_context = await get_user_context_for_chat(user_id)
+    
+    # Web search
+    ddg_sources: List[Dict[str, Any]] = []
+    if should_web_search:
+        await _ws_send_status(websocket, "Buscando en la web...", request_id=request_id)
+        search_sources, _ = await perform_web_search(
+            user_id=user_id,
+            query=user_message.strip(),
+            include_images=_should_include_images_in_search(user_message)
+        )
+        ddg_sources = prioritize_sources_with_images(search_sources, max_sources=5)
+        if search_sources:
+            user_context = dict(user_context)
+            user_context["web_search_results"] = list(search_sources)[:5]
+    
+    # YouTube processing
+    yt_video_id = youtube_transcript_service.extract_video_id(user_message)
+    yt_source = None
+    if yt_video_id:
+        await _ws_send_status(websocket, "Leyendo transcripción de YouTube...", request_id=request_id)
+        yt = await youtube_transcript_service.fetch_transcript_text(video_id=yt_video_id)
+        if isinstance(yt, dict) and str(yt.get("text") or "").strip():
+            user_context = dict(user_context)
+            user_context["youtube_transcript"] = str(yt.get("text") or "")
+            yt_source = youtube_transcript_service.build_source(
+                video_id=yt_video_id,
+                snippet=str(yt.get("text") or "")[:400],
+            )
+            if isinstance(yt_source, dict) and "style" not in yt_source:
+                yt_source["style"] = "video"
+    
+    # Browser processing
+    web_source = None
+    if browser_mcp_service.enabled() and not yt_video_id:
+        url = browser_mcp_service.extract_first_url(user_message)
+        if url:
+            await _ws_send_status(websocket, "Leyendo página web...", request_id=request_id)
+            extracted = await browser_mcp_service.fetch_page_extract(url=url)
+            if isinstance(extracted, dict) and str(extracted.get("text") or "").strip():
+                user_context = dict(user_context)
+                user_context["web_extract"] = str(extracted.get("text") or "")
+                web_source = browser_mcp_service.build_source(
+                    url=str(extracted.get("url") or url),
+                    title=str(extracted.get("title") or ""),
+                    snippet=str(extracted.get("text") or "")[:400],
+                )
+    
+    # Send rich preview
+    await _send_rich_preview(websocket, ddg_sources, yt_source, web_source, request_id)
+    
+    # AI streaming response
+    await _ws_send_status(websocket, "Generando respuesta...", request_id=request_id)
+    try:
+        ai_result = await get_ai_response_with_streaming(
+            user_id, user_message, user_context, websocket, request_id
+        )
+    except Exception as e:
+        logger.exception(f"WebSocket streaming error user_id={user_id}: {e}")
+        await _ws_send_json(websocket, {"type": "error", "message": "llm_error", "request_id": request_id})
+        return
+    
+    text = str(ai_result.get("text") or "")
+    logger.info(f"chat_ws_done request_id={request_id} user_id={user_id} response_len={len(text)}")
+    
+    # Save memory and persist
+    memory_id = str(uuid.uuid4())
+    latency_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
+    memory_debug = {"latency_ms": latency_ms, "query": user_message.strip()}
+    
+    asyncio.create_task(_persist_memory(user_id, memory_id, text, ddg_sources, user_message, memory_debug))
+    
+    # Send complete response
+    sources = await _sanitize_sources_images(list(ddg_sources or []))
+    rich_response = _build_rich_response(text=text, memory_id=memory_id, sources=sources)
+    
+    await _ws_send_json(
+        websocket,
+        {
+            "type": "complete",
+            "request_id": request_id,
+            "text": text,
+            "memory_id": memory_id,
+            "sources": sources,
+            "rich_response": rich_response.model_dump() if rich_response else None,
+        },
+    )
+
+
+async def _send_rich_preview(
+    websocket: WebSocket,
+    ddg_sources: List[Dict[str, Any]],
+    yt_source: Optional[Dict],
+    web_source: Optional[Dict],
+    request_id: str
+):
+    """Send rich preview with sources before AI response"""
+    try:
+        preview_sources: List[Dict[str, Any]] = []
+        if isinstance(ddg_sources, list) and ddg_sources:
+            preview_sources = list(ddg_sources)
+        
+        combined_preview: List[Dict[str, Any]] = []
+        if isinstance(yt_source, dict):
+            combined_preview.append(yt_source)
+        if isinstance(web_source, dict):
+            combined_preview.append(web_source)
+        combined_preview.extend(list(preview_sources or []))
+        
+        if not combined_preview:
+            return
+        
+        preview_sources = combined_preview[:5]
+        preview_sources = await _sanitize_sources_images(list(preview_sources or []))
+        
+        rich_preview = _build_rich_response(text="", memory_id=None, sources=preview_sources)
+        if rich_preview is not None:
+            await _ws_send_json(
+                websocket,
+                {
+                    "type": "rich",
+                    "request_id": str(request_id),
+                    "sources": preview_sources,
+                    "rich_response": rich_preview.model_dump(),
+                },
+            )
+    except Exception as e:
+        logger.warning(f"ws_rich_preview_failed: {e}")
+
+
+async def _persist_memory(
+    user_id: str,
+    memory_id: str,
+    text: str,
+    sources: List[Dict[str, Any]],
+    query: str,
+    debug: Dict[str, Any]
+):
+    """Persist memory to hub in background"""
+    try:
+        await hub_memory_service.save_memory(
+            user_id=user_id,
+            memory_id=memory_id,
+            text=text,
+            sources=sources,
+            query=query,
+            debug=debug,
+        )
+    except Exception as e:
+        logger.warning(f"hub_memory_persist_failed: {e}")
