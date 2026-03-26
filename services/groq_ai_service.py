@@ -46,7 +46,7 @@ def sanitize_ai_text(text: str) -> str:
     """
     if not text:
         return ""
-    return text.translate({ord("."): None, ord("*"): None, ord(":"): None})
+    return text
 
 
 # --- RESILIENCE CONFIG ---
@@ -128,8 +128,8 @@ GROQ_SYSTEM_PROMPT = os.getenv(
     "GROQ_SYSTEM_PROMPT",
     "Eres la Extensión Cognitiva del usuario. Tono: directo, ejecutivo, proactivo.\n\n"
     "REGLAS OBLIGATORIAS:\n"
-    "• NUNCA uses *, **, -, #, `, [] ni formato markdown\n"
-    "• Texto LIMPIO y bien espaciado. Usa emojis para feedback visual (✅ 📚 ⚠️)\n"
+    "• Puedes usar formato simple (por ejemplo **negritas**) si ayuda a la claridad\n"
+    "• Responde directo y bien espaciado\n"
     "• Si no sabes algo, dilo. No inventes datos\n"
     "• Usa web search y contexto disponible (tareas, agenda, sesiones)\n"
     "• Ejecuta proactivamente: 'clase mañana 8am' → '✅ Agendado. Grabación ON.'\n"
