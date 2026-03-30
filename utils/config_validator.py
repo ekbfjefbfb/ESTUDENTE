@@ -98,10 +98,15 @@ def validate_production_config() -> Dict[str, Any]:
         else:
             logger.info(f"✅ {var_name}: configured")
 
-    # CORS: en producción no permitir wildcard
+    # CORS: en producción no permitir wildcard.
+    # Si falta la variable, el runtime ahora arranca en modo deny-all CORS
+    # para no exponer '*' y no tumbar todo el backend.
     cors_origins_raw = str(os.getenv("CORS_ORIGINS", "")).strip()
     if not cors_origins_raw:
-        errors.append("❌ Missing required variable: CORS_ORIGINS (Allowed origins for CORS)")
+        warnings.append(
+            "⚠️ Missing variable: CORS_ORIGINS (Allowed origins for CORS). "
+            "Startup will continue with deny-all CORS until it is configured."
+        )
     else:
         origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
         if "*" in origins:

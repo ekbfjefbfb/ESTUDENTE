@@ -61,13 +61,22 @@ JWT_REFRESH_EXPIRATION_DAYS = int(os.getenv("JWT_REFRESH_EXPIRATION_DAYS", "7"))
 # =========================
 # Configuración de CORS
 # =========================
-CORS_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", "*").split(",")
-    if origin.strip()
-] or ["*"]
+def _resolve_cors_origins() -> list[str]:
+    raw_origins = str(os.getenv("CORS_ORIGINS", "")).strip()
+    if raw_origins:
+        origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+        if origins:
+            return origins
+
+    if ENVIRONMENT == "production":
+        return []
+
+    return ["*"]
+
+
+CORS_ORIGINS = _resolve_cors_origins()
 CORS_CREDENTIALS = os.getenv("CORS_CREDENTIALS", "true").lower() in ("true", "1", "t")
-if "*" in CORS_ORIGINS:
+if "*" in CORS_ORIGINS or not CORS_ORIGINS:
     CORS_CREDENTIALS = False
 CORS_METHODS = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
 CORS_HEADERS = ["*"]
