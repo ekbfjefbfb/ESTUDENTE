@@ -6,6 +6,12 @@ import logging
 from typing import Dict, Any, Optional
 
 from services.groq_ai_service import chat_with_ai, sanitize_ai_text
+try:
+    from services.groq_voice_service import text_to_speech_groq
+    GROQ_TTS_AVAILABLE = True
+except ImportError:
+    text_to_speech_groq = None
+    GROQ_TTS_AVAILABLE = False
 from services.master_chat_utils import (
     extract_image_prompt, extract_document_topic, extract_text_for_speech,
     determine_edit_type
@@ -29,6 +35,8 @@ class CoreTaskHandlers:
     async def task_generate_image(self, message: str, parameters: Dict) -> Optional[Dict]:
         """Tarea: Generar imagen"""
         try:
+            if self.stability is None:
+                return {"error": "stability_service_unavailable", "fallback": True}
             prompt = extract_image_prompt(message)
             config = {
                 "prompt": prompt,
@@ -45,6 +53,8 @@ class CoreTaskHandlers:
     async def task_edit_image(self, image_file, message: str, parameters: Dict) -> Optional[Dict]:
         """Tarea: Editar imagen"""
         try:
+            if self.image_editor is None:
+                return {"error": "image_edit_service_unavailable", "fallback": True}
             edit_type = determine_edit_type(message)
             config = {
                 "image": image_file,
@@ -61,26 +71,36 @@ class CoreTaskHandlers:
     async def task_create_document(self, message: str, parameters: Dict, user_id: str) -> Optional[Dict]:
         """Tarea: Crear documento"""
         try:
+            if self.document is None and self.internet_reports is None:
+                return {"error": "document_service_unavailable", "fallback": True}
             topic = extract_document_topic(message)
             
             # Si menciona imágenes, usar servicio con imágenes
             if "imagen" in message.lower() or "image" in message.lower():
                 config = {
-                    "topic": topic,
-                    "user_id": user_id,
-                    "include_images": True,
-                    "format": parameters.get("format", "pdf")
+                    "query": topic,
+                    "max_images": 5,
                 }
-                result = await self.internet_reports.create_report_with_images(**config)
-                logger.info(f"✅ Documento con imágenes creado automáticamente: {topic}")
+                if self.internet_reports is None:
+                    return {"error": "internet_image_report_service_unavailable", "fallback": True}
+                if hasattr(self.internet_reports, "generate_report_with_images"):
+                    result = await self.internet_reports.generate_report_with_images(**config)
+                    logger.info(f"✅ Reporte con imágenes creado automáticamente: {topic}")
+                else:
+                    return {"error": "internet_image_report_method_missing", "fallback": True}
             else:
-                config = {
-                    "topic": topic,
-                    "user_id": user_id,
-                    "format": parameters.get("format", "pdf")
-                }
-                result = await self.document.create_document(**config)
-                logger.info(f"✅ Documento creado automáticamente: {topic}")
+                if self.document is None:
+                    return {"error": "document_service_unavailable", "fallback": True}
+                if hasattr(self.document, "create_document"):
+                    config = {
+                        "topic": topic,
+                        "user_id": user_id,
+                        "format": parameters.get("format", "pdf")
+                    }
+                    result = await self.document.create_document(**config)
+                    logger.info(f"✅ Documento creado automáticamente: {topic}")
+                else:
+                    return {"error": "document_create_method_missing", "fallback": True}
             
             return result
         except Exception as e:
@@ -90,6 +110,8 @@ class CoreTaskHandlers:
     async def task_analyze_image(self, image_file, message: str) -> Optional[Dict]:
         """Tarea: Analizar imagen"""
         try:
+            if self.vision is None:
+                return {"error": "vision_service_unavailable", "fallback": True}
             config = {
                 "image": image_file,
                 "detailed": "detallado" in message.lower()
@@ -107,8 +129,13 @@ class CoreTaskHandlers:
             text_to_convert = extract_text_for_speech(message)
             voice = parameters.get("voice", "coqui_enterprise")
             
-            # Usar el voice engine empresarial
-            audio_data = await self.voice_engine.text_to_speech(text_to_convert, voice_model=voice)
+            audio_data = None
+            if self.voice_engine is not None:
+                audio_data = await self.voice_engine.text_to_speech(text_to_convert, voice_model=voice)
+            elif GROQ_TTS_AVAILABLE and text_to_speech_groq is not None:
+                audio_data = await text_to_speech_groq(text_to_convert, voice=voice, language="es")
+            else:
+                return {"error": "tts_unavailable", "fallback": True}
             
             result = {
                 "audio_data": audio_data,

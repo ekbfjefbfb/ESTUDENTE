@@ -17,18 +17,52 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
-from config import AI_MODEL
 import json_log_formatter
 from utils.safe_metrics import Counter, Histogram
 
 # Importar servicios empresariales optimizados
 from services.groq_ai_service import chat_with_ai, sanitize_ai_text
-from services.stability_service import StabilityService
-from services.image_edit_service import ImageEditService
-from services.voice_service import VoiceEngineEnterprise
-from services.vision_pipeline_service import VisionPipelineService
-from services.document_service import DocumentServiceEnterprise
-from services.internet_image_report_service import InternetImageReportService
+try:
+    from services.stability_service import StabilityService
+    STABILITY_AVAILABLE = True
+except ImportError:
+    StabilityService = None
+    STABILITY_AVAILABLE = False
+
+try:
+    from services.image_edit_service import ImageEditService
+    IMAGE_EDIT_AVAILABLE = True
+except ImportError:
+    ImageEditService = None
+    IMAGE_EDIT_AVAILABLE = False
+
+try:
+    from services.voice_service import VoiceEngineEnterprise
+    VOICE_ENGINE_AVAILABLE = True
+except ImportError:
+    VoiceEngineEnterprise = None
+    VOICE_ENGINE_AVAILABLE = False
+
+try:
+    from services.vision_pipeline_service import VisionPipelineService
+    VISION_AVAILABLE = True
+except ImportError:
+    VisionPipelineService = None
+    VISION_AVAILABLE = False
+
+try:
+    from services.document_service import DocumentServiceEnterprise
+    DOCUMENT_AVAILABLE = True
+except ImportError:
+    DocumentServiceEnterprise = None
+    DOCUMENT_AVAILABLE = False
+
+try:
+    from services.internet_image_report_service import InternetImageReportService
+    INTERNET_REPORTS_AVAILABLE = True
+except ImportError:
+    InternetImageReportService = None
+    INTERNET_REPORTS_AVAILABLE = False
 
 # 🚀 NUEVOS SERVICIOS INTEGRADOS (v4.0) - Con manejo de errores
 try:
@@ -59,8 +93,6 @@ except ImportError:
     IntegrationsService = None
     INTEGRATIONS_AVAILABLE = False
 
-DEEPSEEK_SEARCH_AVAILABLE = False
-
 # =============================================
 # IMPORTAR MÓDULOS REFACTORIZADOS
 # =============================================
@@ -71,7 +103,6 @@ from services.master_chat_response import (
     create_smart_response, extract_generated_content,
     extract_generated_files, create_execution_summary
 )
-from services.master_chat_patterns import get_intent_display_name
 
 # =============================================
 # CONFIGURACIÓN DE LOGGING EMPRESARIAL
@@ -81,7 +112,8 @@ handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("master_chat_enterprise")
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
 
 # =============================================
 # MÉTRICAS PROMETHEUS
@@ -110,12 +142,12 @@ class MasterChatServiceEnterprise:
         # ====================================
         # SERVICIOS EMPRESARIALES ORIGINALES
         # ====================================
-        self.stability = StabilityService()
-        self.image_editor = ImageEditService()
-        self.voice_engine = VoiceEngineEnterprise()
-        self.vision = VisionPipelineService()
-        self.document = DocumentServiceEnterprise()
-        self.internet_reports = InternetImageReportService()
+        self.stability = StabilityService() if STABILITY_AVAILABLE else None
+        self.image_editor = ImageEditService() if IMAGE_EDIT_AVAILABLE else None
+        self.voice_engine = VoiceEngineEnterprise() if VOICE_ENGINE_AVAILABLE else None
+        self.vision = VisionPipelineService() if VISION_AVAILABLE else None
+        self.document = DocumentServiceEnterprise() if DOCUMENT_AVAILABLE else None
+        self.internet_reports = InternetImageReportService() if INTERNET_REPORTS_AVAILABLE else None
         
         # ====================================
         # 🚀 NUEVOS SERVICIOS v4.0
