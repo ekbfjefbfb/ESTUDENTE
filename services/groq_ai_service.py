@@ -89,7 +89,9 @@ async def ensure_api_warmup():
 CONTEXT_THRESHOLD = 0.85
 MAX_CONTEXT_TOKENS = 32000
 
-user_contexts: Dict[str, Dict[str, Any]] = {}
+from utils.bounded_dict import BoundedDict
+
+user_contexts: BoundedDict = BoundedDict(max_size=1000, ttl_seconds=1800)  # Max 1000 users, 30min TTL
 
 
 def calculate_context_usage(messages: List[Dict[str, Any]]) -> float:
@@ -113,10 +115,12 @@ def get_context_info(user_id: str) -> Dict[str, Any]:
 
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+# Modelo rápido: respuestas cortas, chat diario, tareas simples
 GROQ_LLM_FAST_MODEL = os.getenv(
     "GROQ_LLM_FAST_MODEL",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "openai/gpt-oss-20b",
 ).strip()
+# Modelo de razonamiento: explicaciones complejas, análisis, generación de resúmenes
 GROQ_LLM_REASONING_MODEL = os.getenv(
     "GROQ_LLM_REASONING_MODEL",
     "openai/gpt-oss-120b",
@@ -144,33 +148,39 @@ def _get_groq_client() -> Groq:
 
 
 def _is_complex_task(messages: List[Dict[str, Any]]) -> bool:
+    """
+    Decide si usar el modelo de razonamiento (120B) o el rápido (20B).
+    El 120B se activa para: explicaciones profundas, código, resúmenes,
+    análisis académicos, preguntas largas.
+    """
     text = "\n".join(str(m.get("content") or "") for m in messages).lower()
-    if len(text) >= 900:
+
+    # Mensajes largos = mas contexto = mas razonamiento
+    if len(text) >= 800:
         return True
 
-    complex_markers = (
-        "stack trace",
-        "traceback",
-        "exception",
-        "error",
-        "bug",
-        "optimiz",
-        "arquitect",
-        "refactor",
-        "diseño",
-        "design",
-        "performance",
-        "latency",
-        "database",
-        "sql",
-        "websocket",
-        "stream",
-        "docker",
-        "kubernetes",
+    # Marcadores técnicos
+    tech_markers = (
+        "stack trace", "traceback", "exception", "error", "bug",
+        "optimiz", "arquitect", "refactor", "design", "performance",
+        "latency", "database", "sql", "websocket", "docker",
     )
-    if any(k in text for k in complex_markers):
+    if any(k in text for k in tech_markers):
         return True
 
+    # Marcadores académicos (estudiantes)
+    academic_markers = (
+        "explica", "explicame", "explícame", "por qué", "por que",
+        "cómo funciona", "como funciona", "resume", "resumen",
+        "tesis", "ensayo", "examen", "parcial", "investigación",
+        "investigacion", "análisis", "analisis", "concluye",
+        "conclusion", "conclusión", "teoría", "teoria",
+        "comprend", "entiende", "profund", "detall",
+    )
+    if any(k in text for k in academic_markers):
+        return True
+
+    # Código en el mensaje
     if "```" in text or "\nimport " in text or "\nclass " in text or "\ndef " in text:
         return True
 
@@ -375,8 +385,8 @@ async def chat_with_ai(
     friendly: bool = False,
     stream: bool = False,
 ) -> Any:
-    # Asegurar calentamiento de API antes de la primera llamada real
-    await ensure_api_warmup()
+    # Warmup se ejecuta UNA VEZ en startup (main.py lifespan), no en cada request
+    # await ensure_api_warmup()  # REMOVIDO: causa latencia en cada request
     
     # Actualizar tiempo de última llamada
     global _last_api_call_time
@@ -446,5 +456,4 @@ async def chat_with_ai(
         raise RuntimeError("Unexpected Groq response") from e
 
     # Sanitizar texto para frontend limpio
-    return sanitize_ai_text(content or "")
     return sanitize_ai_text(content or "")

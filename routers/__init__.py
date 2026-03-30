@@ -24,6 +24,9 @@ from . import (
     
     # Voice Notes SST
     voice_note_router,
+
+    # Image & Document Analysis
+    image_analysis_router,
 )
 
 # Lista explícita de exportaciones válidas
@@ -47,6 +50,9 @@ __all__ = [
     
     # Voice Notes SST
     "voice_note_router",
+
+    # Image & Document Analysis
+    "image_analysis_router",
 ]
 
 __version__ = "1.0.1"

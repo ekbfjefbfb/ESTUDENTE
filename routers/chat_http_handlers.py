@@ -117,7 +117,8 @@ async def handle_chat_message(
     )
     
     # Save progress
-    asyncio.create_task(save_user_progress(user_id, normalized_message, structured))
+    from utils.background import safe_create_task
+    safe_create_task(save_user_progress(user_id, normalized_message, structured), name="save_user_progress")
     
     # Add to cache
     if not structured.get("is_stream"):

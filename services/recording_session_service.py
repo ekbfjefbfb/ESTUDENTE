@@ -142,13 +142,11 @@ class RecordingSessionService:
             await db_session.commit()
 
             try:
-                # 1. Generar Resumen
-                summary = await self._generate_ai_summary(session)
-                session.summary = summary
-                
-                # 2. Extraer Items (Tareas, Puntos Clave)
+                # 1. Extraer Items y Resumen global estructurado (Soporta 3 horas reales via Map-Reduce)
                 extracted = await self._extract_session_items(session.transcript)
+                
                 if extracted:
+                    session.summary = extracted.get("summary", "")
                     session.extracted_state = extracted
                     
                     # Eliminar items previos generados por IA
@@ -209,37 +207,7 @@ class RecordingSessionService:
                 await db_session.commit()
                 return session
 
-    async def _generate_ai_summary(self, session: RecordingSession) -> str:
-        """Llamada unificada a IA para resumen estructurado."""
-        max_chars = 25000
-        transcript = session.transcript
-        if len(transcript) > max_chars:
-            transcript = transcript[:max_chars] + "...[truncado]"
-
-        prompt = f"""Genera un resumen académico estructurado de la clase: {session.title}
-Profesor: {session.teacher_name or 'N/A'}
-
-TRANSCRIPCIÓN:
-{transcript}
-
-INSTRUCCIONES:
-1. Resumen ejecutivo (puntos clave).
-2. Temas principales y detalles técnicos.
-3. Tareas, fechas o exámenes mencionados.
-4. Formato Markdown limpio."""
-
-        messages = [
-            {"role": "system", "content": "Eres un asistente académico de élite."},
-            {"role": "user", "content": prompt}
-        ]
-
-        summary = await chat_with_ai(
-            messages=messages,
-            user=session.user_id,
-            fast_reasoning=True,
-            stream=False
-        )
-        return summary.strip()
+    # _generate_ai_summary eliminado: se usa _extract_session_items que procesa todo el transcript.
 
     async def _extract_session_items(self, transcript: str) -> Dict[str, Any]:
         """Extrae items usando el motor de extracción."""

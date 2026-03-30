@@ -243,11 +243,7 @@ class User(Base):
     local_chat_metadata = relationship("LocalChatMetadata", back_populates="user")
     chat_sync_status = relationship("ChatSyncStatus", back_populates="user", uselist=False)
     
-    # 🎯 NUEVAS RELACIONES PARA VISION PIPELINE
-    vision_jobs = relationship("VisionProcessingJob", back_populates="user")
-    vision_analytics = relationship("VisionAnalytics", back_populates="user", uselist=False)
-    
-    # 🔔 NUEVAS RELACIONES PARA PUSH NOTIFICATIONS
+    # 📱 PUSH NOTIFICATIONS
     device_tokens = relationship("DeviceToken", back_populates="user")
     
     def get_plan_limits(self) -> Dict[str, Any]:
@@ -1372,60 +1368,54 @@ class UserDocumentIndex(Base):
 
 # Exportar todos los modelos y enums
 __all__ = [
-    # Modelos básicos
+    # Core
+    "Base",
     "User",
-    "Session",
+    "Plan",
     "Subscription",
     "Payment",
+    "Document",
+    "UserSession",
+    # Perfil y agentes
     "UserProfile",
-    # Agentes personalizados
+    "LearningPattern",
     "PersonalAgent",
     "AgentInteraction",
-    "UserPreference",
-    "LearningPath",
-    "ConversationMemory",
-    # Onboarding inteligente
-    "OnboardingStep",
-    "UserAnswer",
-    "QuestionTemplate",
+    "OnboardingSession",
     # Integraciones
     "ExternalIntegration",
     "SyncedExternalData",
-    # Chat híbrido
+    # Chat
     "ChatMessage",
     "LocalChatMetadata",
     "ChatSyncStatus",
-    # 🔥 Sistema de permisos
+    # Permisos
     "UserPermissions",
-    "StorageStrategy", 
+    "StorageStrategy",
     "CostSavings",
-    # 🎯 Vision Pipeline - YOLO8 + OCR
+    # Vision Pipeline
     "VisionProcessingJob",
     "VisionAnalytics",
-    # 🏢 Sistema Multi-Usuario
+    # Multi-Usuario
     "Organization",
     "OrganizationMember",
     "OrganizationInvitation",
     "UsageTracking",
     "UsageEvent",
     "Referral",
-    # 🔔 Push Notifications
+    # Push Notifications
     "DeviceToken",
-    # 🎙️ Sesiones de Grabación Unificadas
+    # Sesiones de Grabación
     "RecordingSession",
     "TranscriptChunk",
     "SessionItem",
-    "RecordingSessionType",
-    "RecordingSessionStatus",
-    "SessionItemType",
-    "SessionItemStatus",
-    # 🤖 Agenda inteligente automatizada
+    # Agenda Inteligente
     "ScheduledRecording",
     "UserContext",
     "UserDocumentIndex",
     # Enums
     "PlanType",
-    "SubscriptionStatus", 
+    "SubscriptionStatus",
     "PaymentStatus",
     "AgentType",
     "Specialization",

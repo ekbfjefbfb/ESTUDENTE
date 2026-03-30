@@ -12,19 +12,20 @@ from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 
 from fastapi import WebSocket, HTTPException
+from utils.bounded_dict import BoundedDict
 
 logger = logging.getLogger("chat_ws_utils")
 
-# Rate limiting para prevenir reconnection loops en móviles
-_WS_AUTH_FAILURE_TRACKER: Dict[str, list] = {}
-_WS_MAX_AUTH_FAILURES = 5
-_WS_AUTH_FAILURE_WINDOW_S = 60
-_WS_BACKOFF_MIN_S = 2
-_WS_BACKOFF_MAX_S = 30
+# Rate limiting — BoundedDict evita memory leak con usuarios móviles que reconectan
+_WS_AUTH_FAILURE_TRACKER: BoundedDict = BoundedDict(max_size=10000, ttl_seconds=300)
+_WS_MAX_AUTH_FAILURES = 10
+_WS_AUTH_FAILURE_WINDOW_S = 120
+_WS_BACKOFF_MIN_S = 1
+_WS_BACKOFF_MAX_S = 60
 
-# User connection tracking
-_USER_WS_CONNECTION_LOCKS: Dict[str, asyncio.Lock] = {}
-_USER_ACTIVE_WS: Dict[str, WebSocket] = {}
+# Conexiones activas — max 10000 usuarios concurrentes
+_USER_WS_CONNECTION_LOCKS: BoundedDict = BoundedDict(max_size=10000, ttl_seconds=3600)
+_USER_ACTIVE_WS: BoundedDict = BoundedDict(max_size=10000, ttl_seconds=3600)
 
 # Image content type cache
 _image_ct_cache: Dict[str, Dict[str, Any]] = {}
@@ -118,21 +119,38 @@ async def _ws_send_status(websocket: WebSocket, content: str, *, request_id: Opt
     )
 
 
-async def _ws_heartbeat(websocket: WebSocket):
-    """Background task to keep WebSocket connection alive"""
+async def _ws_heartbeat(websocket: WebSocket, user_id: str):
+    """
+    Background task to keep WebSocket connection alive
+    Envía ping cada 25s y espera pong del cliente (móviles necesitan esto)
+    """
+    ping_interval = float(os.getenv("WS_PING_INTERVAL_S", "25"))  # iOS: 30s timeout
+    pong_timeout = float(os.getenv("WS_PONG_TIMEOUT_S", "5"))
+    
     try:
         while True:
-            await asyncio.sleep(20)
+            await asyncio.sleep(ping_interval)
+            
             try:
                 from starlette.websockets import WebSocketState
-                if websocket.client_state == WebSocketState.CONNECTED:
-                    logger.debug("WS heartbeat check: connected")
-            except Exception:
+                if websocket.client_state != WebSocketState.CONNECTED:
+                    logger.debug(f"WS heartbeat: not connected for user_id={user_id}")
+                    break
+                
+                # Enviar ping y esperar pong
+                await _ws_send_json(websocket, {"type": "ping", "timestamp": datetime.utcnow().isoformat()})
+                
+                # El cliente debe responder con {"type": "pong"}
+                # El loop principal en chat_ws_handlers.py ya maneja esto en línea 142
+                
+            except Exception as e:
+                logger.debug(f"WS heartbeat failed for user_id={user_id}: {e}")
                 break
+                
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        logger.warning(f"WS heartbeat failed: {e}")
+        logger.warning(f"WS heartbeat error for user_id={user_id}: {e}")
 
 
 # Rate limiting functions

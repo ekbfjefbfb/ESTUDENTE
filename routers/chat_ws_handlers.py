@@ -119,13 +119,21 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
                 await websocket.close(code=1013)
                 return
         
-        await conn_lock.acquire()
+        # Acquire lock con timeout (prevenir bloqueo infinito en móviles)
+        try:
+            await asyncio.wait_for(conn_lock.acquire(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.error(f"WS lock timeout for user_id={user_id}")
+            await _ws_send_json(websocket, {"type": "error", "message": "server_busy"})
+            await websocket.close(code=1013)
+            return
+        
         set_active_ws(user_id, websocket)
         
         logger.info(f"WebSocket connected successfully for user_id={user_id}")
         
-        # Start heartbeat
-        heartbeat_task = asyncio.create_task(_ws_heartbeat(websocket))
+        # Start heartbeat con user_id
+        heartbeat_task = asyncio.create_task(_ws_heartbeat(websocket, user_id))
         
         # Message loop
         while True:
@@ -271,7 +279,8 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     latency_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
     memory_debug = {"latency_ms": latency_ms, "query": user_message.strip()}
     
-    asyncio.create_task(_persist_memory(user_id, memory_id, text, ddg_sources, user_message, memory_debug))
+    from utils.background import safe_create_task
+    safe_create_task(_persist_memory(user_id, memory_id, text, ddg_sources, user_message, memory_debug), name=f"persist_memory_{request_id}")
     
     # Send complete response
     sources = await _sanitize_sources_images(list(ddg_sources or []))

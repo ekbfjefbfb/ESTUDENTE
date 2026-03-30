@@ -91,30 +91,11 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         user_id = await self._get_user_id_from_jwt(request)
         plan_multiplier = await self._get_user_plan_multiplier(user_id)
         timeout = self._get_base_timeout(request.url.path) * plan_multiplier
-        user_key = user_id or request.client.host
 
-        # Incrementa la métrica centralizada de requests
-        try:
-            REQUESTS_TOTAL.labels(
-                method=request.method,
-                endpoint=request.url.path,
-                status_code="pending",
-                user_type=str(plan_multiplier),
-            ).inc()
-        except Exception:
-            pass
+        # NOTE: REQUESTS_TOTAL se trackea en RateLimitMiddleware — no duplicar aquí
 
         try:
             response = await asyncio.wait_for(call_next(request), timeout=timeout)
-            try:
-                REQUESTS_TOTAL.labels(
-                    method=request.method,
-                    endpoint=request.url.path,
-                    status_code=str(getattr(response, "status_code", "200")),
-                    user_type=str(plan_multiplier),
-                ).inc()
-            except Exception:
-                pass
             return response
         except asyncio.TimeoutError:
             try:

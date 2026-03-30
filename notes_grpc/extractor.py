@@ -106,7 +106,7 @@ async def extract_note_from_text(*, client: GroqClient, transcript: str, title_h
     )
 
 
-def _chunk_text(text: str, *, max_chars: int = 1800) -> List[str]:
+def _chunk_text(text: str, *, max_chars: int = 15000) -> List[str]:
     cleaned = (text or "").strip()
     if not cleaned:
         return []
@@ -169,22 +169,27 @@ async def extract_note_segmented(
     client: GroqClient,
     transcript: str,
     title_hint: str = "",
-    max_chunk_chars: int = 1800,
+    max_chunk_chars: int = 15000,
 ) -> ExtractedNote:
     """Extract annotations by splitting the transcript into chunks and merging results.
 
-    Intended for the UX of "user records audio -> presses stop".
+    Soporta altas cargas (grabaciones de 3 horas) usando chunking extenso
+    y concurrencia limitada (Semaphore) para no saturar la API de Groq.
     """
 
     chunks = _chunk_text(transcript, max_chars=max_chunk_chars)
     if not chunks:
         return ExtractedNote(title=title_hint or "Untitled", summary="", lecture_notes="", key_points=[], tasks=[])
 
-    # Run per-chunk extraction in parallel for speed.
-    tasks = [
-        extract_note_from_text(client=client, transcript=chunk, title_hint=title_hint)
-        for chunk in chunks
-    ]
+    # Run per-chunk extraction in parallel but with a strict RATE LIMIT (max 3 at a time)
+    # This prevents DDoS-ing the Groq API on 3-hour long transcripts (429 Too Many Requests)
+    sem = asyncio.Semaphore(3)
+
+    async def _process_with_limit(chunk: str) -> ExtractedNote:
+        async with sem:
+            return await extract_note_from_text(client=client, transcript=chunk, title_hint=title_hint)
+
+    tasks = [_process_with_limit(chunk) for chunk in chunks]
     parts = await asyncio.gather(*tasks)
 
     merged_title = title_hint.strip() if title_hint.strip() else (parts[0].title if parts else "Untitled")

@@ -10,6 +10,11 @@ from typing import Dict, Any, List
 
 from fastapi import WebSocket
 from services.groq_ai_service import chat_with_ai, should_refresh_context, get_context_info
+from services.conversational_memory_service import (
+    add_message,
+    get_conversation_history,
+    detect_topic_change,
+)
 
 logger = logging.getLogger("chat_ai")
 
@@ -27,6 +32,12 @@ async def get_ai_response_with_streaming(
     """
     should_refresh_context(user_id, [{"role": "user", "content": user_message}])
 
+    # Detectar cambio de tema
+    topic = await detect_topic_change(user_message, "")
+    
+    # Agregar mensaje del usuario al historial
+    await add_message(user_id, "user", user_message, topic=topic)
+
     context_prompt = _build_context_prompt(user_context)
     user_full_name = str(user_context.get("user_full_name") or "").strip()
     user_name_line = f"El usuario se llama {user_full_name}. Dirígete a él/ella por su nombre.\n" if user_full_name else ""
@@ -43,10 +54,15 @@ async def get_ai_response_with_streaming(
         context_prompt=context_prompt
     )
 
-    messages = [
-        {"role": "system", "content": system_content},
-        {"role": "user", "content": user_message},
-    ]
+    # Obtener historial de conversación
+    conversation_history = await get_conversation_history(user_id, limit=10)
+    
+    # Construir mensajes: system + historial + mensaje actual
+    messages = [{"role": "system", "content": system_content}]
+    messages.extend(conversation_history)
+    # Asegurar que el último mensaje sea el actual (podría estar ya en historial)
+    if not conversation_history or conversation_history[-1].get("content") != user_message:
+        messages.append({"role": "user", "content": user_message})
 
     full_text = ""
     try:
@@ -57,6 +73,10 @@ async def get_ai_response_with_streaming(
     except Exception as e:
         logger.error(f"Error en streaming IA: {e}")
         raise
+
+    # Guardar respuesta de la IA en el historial
+    if full_text:
+        await add_message(user_id, "assistant", full_text)
 
     return {"text": full_text, "tasks": [], "plan": [], "actions": [], "is_stream": True}
 
@@ -72,6 +92,12 @@ async def get_ai_response_http(
     Retorna el texto completo.
     """
     should_refresh_context(user_id, [{"role": "user", "content": user_message}])
+    
+    # Detectar cambio de tema
+    topic = await detect_topic_change(user_message, "")
+    
+    # Agregar mensaje del usuario al historial
+    await add_message(user_id, "user", user_message, topic=topic)
 
     context_prompt = _build_context_prompt(user_context)
     user_full_name = str(user_context.get("user_full_name") or "").strip()
@@ -89,12 +115,22 @@ async def get_ai_response_http(
         context_prompt=context_prompt
     )
 
-    messages = [
-        {"role": "system", "content": system_content},
-        {"role": "user", "content": user_message},
-    ]
+    # Obtener historial de conversación
+    conversation_history = await get_conversation_history(user_id, limit=10)
+    
+    # Construir mensajes: system + historial + mensaje actual
+    messages = [{"role": "system", "content": system_content}]
+    messages.extend(conversation_history)
+    if not conversation_history or conversation_history[-1].get("content") != user_message:
+        messages.append({"role": "user", "content": user_message})
 
-    return await chat_with_ai(messages=messages, user=user_id, fast_reasoning=fast_reasoning, stream=False)
+    response = await chat_with_ai(messages=messages, user=user_id, fast_reasoning=fast_reasoning, stream=False)
+    
+    # Guardar respuesta de la IA en el historial
+    if response:
+        await add_message(user_id, "assistant", response)
+    
+    return response
 
 
 def _wants_detail_explanation(msg_low: str) -> bool:
@@ -171,40 +207,108 @@ def _build_system_prompt(
     wants_detail: bool,
     context_prompt: str
 ) -> str:
-    """Construye el prompt del sistema para la IA"""
-    system_parts = [
-        "Eres la Extensión Cognitiva del usuario.\n",
-    ]
-    
-    if user_name_line:
-        system_parts.append(user_name_line)
-    
-    if images_line:
-        system_parts.append(images_line)
-    
+    """
+    Construye el system prompt de Extensión Cognitiva.
+
+    Técnicas aplicadas:
+    1. Etiquetado emocional — nombra lo que el usuario siente
+    2. Confirmación-antes-de-responder — parafrasea antes de responder
+    3. Seguimiento de hilo — reconoce cambios de tema explícitamente
+    4. Acción proactiva — ejecuta sin pedir permiso cuando está claro
+    5. Progresión visible — muestra el razonamiento paso a paso en complejidad
+    """
+
+    # --- IDENTIDAD CORE ---
+    identity = (
+        "Eres la Extensión Cognitiva del usuario — no un chatbot, sino una "
+        "parte activa de su mente que recuerda, conecta y ejecuta.\n"
+    )
+
+    # --- NOMBRE (personalización) ---
+    name_block = user_name_line  # ya formateado o vacío
+
+    # --- TÉCNICA 1: ETIQUETADO EMOCIONAL ---
+    emotional_label = (
+        "ETIQUETADO EMOCIONAL:\n"
+        "Detecta el estado del usuario en cada mensaje. Si hay frustración, "
+        "estrés, confusión o entusiasmo, nómbralo brevemente al inicio:\n"
+        "  'Esto suena frustrante — aquí la solución directa:'\n"
+        "  'Tema emocionante. Aquí lo clave:'\n"
+        "No fuerces emociones si no las hay. Si el mensaje es neutro, omite.\n"
+    )
+
+    # --- TÉCNICA 2: CONFIRMAR ANTES DE RESPONDER (cuando hay ambigüedad) ---
+    confirm_before = (
+        "CONFIRMA SI HAY AMBIGÜEDAD:\n"
+        "Si el usuario expresa algo ambiguo o complejo, parafrasea en 1 línea "
+        "antes de responder: 'Entendido — [parafraseo breve]. Aquí la respuesta:'\n"
+        "Si es claro, responde directo sin el parafraseo.\n"
+    )
+
+    # --- TÉCNICA 3: SEGUIMIENTO DE HILO CONVERSACIONAL ---
+    thread_tracking = (
+        "SEGUIMIENTO DE CONTEXTO:\n"
+        "Cuando el usuario cambie de tema, reconócelo: "
+        "'Dejando de lado [X], sobre [Y]...'\n"
+        "Conecta con lo mencionado antes si es relevante: "
+        "'Como dijiste antes sobre [X], esto también aplica aquí...'\n"
+    )
+
+    # --- TÉCNICA 4: ACCIÓN PROACTIVA ---
+    proactive_action = (
+        "EJECUCIÓN PROACTIVA:\n"
+        "Cuando la intención es clara, ACTÚA sin pedir confirmación:\n"
+        "  'clase mañana 8am' → '✅ Grabación programada para mañana 8am.'\n"
+        "  'resume esto' → [resumen directo, sin introducción]\n"
+        "  'tengo examen de cálculo' → '✅ Nota creada. Aquí 3 puntos clave...'\n"
+        "Solo pide confirmación si el riesgo es irreversible.\n"
+    )
+
+    # --- LONGITUD DE RESPUESTA ---
     if wants_detail:
-        system_parts.append(
-            "El usuario pidió explicación: puedes responder con más detalle, pero sé directo (máximo 10-14 líneas).\n"
-            "Usa: 1 frase + 3-6 viñetas.\n"
+        length_rule = (
+            "LONGITUD: El usuario pidió detalle. Responde con profundidad:\n"
+            "  Estructura: resumen ejecutivo (1-2 líneas) + desarrollo (3-7 viñetas) "
+            "+ conclusión accionable.\n"
+            "  Máximo 15 líneas.\n"
         )
     else:
-        system_parts.append(
-            "Responde corto por defecto: máximo 2-4 líneas, o 3 viñetas cortas.\n"
+        length_rule = (
+            "LONGITUD: Por defecto, responde CORTO y DENSO:\n"
+            "  • Máximo 3-5 líneas, o 3 viñetas.\n"
+            "  • Si el tema requiere más, avisa: 'Hay más — ¿quieres el detalle?'\n"
         )
-    
-    system_parts.append(
-        "No escribas artículos largos. No repitas la pregunta.\n\n"
-        "ESTILO:\n"
-        "• Cero saludos innecesarios. Cero relleno.\n"
-        "• Acción inmediata: el usuario habla, tú ejecutas.\n"
-        "• Usa emojis solo si son 1 y aportan valor.\n"
-        "• Tono: confidente, proactivo, sin disculpas.\n"
+
+    # --- ESTILO UNIVERSAL ---
+    style = (
+        "ESTILO FIJO:\n"
+        "• Cero saludos, cero relleno, cero 'claro que sí'.\n"
+        "• Tono: confidente, directo, sin disculpas.\n"
+        "• Anti-repetición: varía enfoque si la pregunta es similar a la anterior.\n"
+        "• Usa emojis solo si son 1 y aportan valor real (no decoración).\n"
+        "• No inventes datos. Si no sabes algo, dilo con exactitud.\n"
     )
-    
-    if context_prompt:
-        system_parts.append(f"\nCONTEXTO DEL USUARIO:\n{context_prompt}")
-    
-    return "".join(system_parts)
+
+    # --- IMÁGENES (si aplica) ---
+    images_block = images_line  # ya formateado o vacío
+
+    # --- CONTEXTO DEL USUARIO ---
+    context_block = f"\nCONTEXTO ACTIVO DEL USUARIO:\n{context_prompt}\n" if context_prompt else ""
+
+    # Ensamblar en orden lógico
+    parts = [
+        identity,
+        name_block,
+        emotional_label,
+        confirm_before,
+        thread_tracking,
+        proactive_action,
+        length_rule,
+        style,
+        images_block,
+        context_block,
+    ]
+    return "".join(p for p in parts if p)
 
 
 async def _send_token(websocket: WebSocket, token: str, request_id: str):

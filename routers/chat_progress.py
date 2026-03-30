@@ -7,10 +7,12 @@ from datetime import datetime, date, timedelta
 from typing import Dict, Any, Optional, List
 
 from models.models import SessionItem, RecordingSession, RecordingSessionType
+from utils.bounded_dict import BoundedDict
 
 logger = logging.getLogger("chat_progress")
 
-_user_progress: Dict[str, Dict[str, Any]] = {}
+# BoundedDict: max 5000 usuarios, TTL 4 horas — previene memory leak en prod
+_user_progress: BoundedDict = BoundedDict(max_size=5000, ttl_seconds=14400)
 
 
 def _sanitize_structured_data(structured_data: Any) -> Dict[str, Any]:
@@ -245,12 +247,12 @@ async def _generate_document_action(user_id: str, action_data: Dict[str, Any]):
     logger.info(f"🤖 AI ACCIÓN AUTOMÁTICA: Preparando documento - {action_data}")
     try:
         from services.document_service import create_document_from_user_message
-        import asyncio
-        asyncio.create_task(create_document_from_user_message(
+        from utils.background import safe_create_task
+        safe_create_task(create_document_from_user_message(
             user_message=action_data.get("content", ""),
             user_id=user_id,
             doc_type=action_data.get("format", "pdf")
-        ))
+        ), name="generate_document")
         logger.info(f"✅ Ejecución silenciosa iniciada: generate_document")
     except Exception as e:
         logger.error(f"❌ Fallo al iniciar ejecución silenciosa: {e}")

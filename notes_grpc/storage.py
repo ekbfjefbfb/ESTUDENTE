@@ -1,12 +1,40 @@
+"""
+notes_grpc/storage.py — Almacenamiento de notas de clase en Nhost PostgreSQL.
+
+MIGRADO a SQLAlchemy async (PostgreSQL vía Nhost).
+Los datos persisten en producción y sobreviven redeploys en Render.
+
+Tablas usadas (ya existen en models/models.py):
+  - RecordingSession  → representa una "nota de clase" (transcript + summary)
+  - SessionItem       → representa una "tarea" extraída de la nota
+"""
 from __future__ import annotations
 
 import json
 import uuid
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-import aiosqlite
+from sqlalchemy import select, and_, delete
+from sqlalchemy.exc import SQLAlchemyError
+
+from database.db_enterprise import get_primary_session
+from models.models import (
+    RecordingSession,
+    SessionItem,
+    RecordingSessionType,
+    RecordingSessionStatus,
+    SessionItemType,
+    SessionItemStatus,
+)
+
+logger = logging.getLogger("notes_grpc.storage")
+
+# Constante para distinguir notas del router /api/class-notes
+_CLASS_NOTE_TYPE = "class_note"
+_CLASS_NOTE_SOURCE = "class_note"  # max 16 chars (String(16) in DB)
 
 
 def _utcnow() -> datetime:
@@ -16,6 +44,7 @@ def _utcnow() -> datetime:
 @dataclass
 class NoteRow:
     id: str
+    user_id: str
     title: str
     transcript: str
     summary: str
@@ -26,6 +55,7 @@ class NoteRow:
 @dataclass
 class TaskRow:
     id: str
+    user_id: str
     note_id: str
     text: str
     due_date: Optional[datetime]
@@ -33,55 +63,62 @@ class TaskRow:
     priority: int
 
 
+def _session_to_note_row(s: RecordingSession) -> NoteRow:
+    """Convierte un RecordingSession al formato NoteRow."""
+    # key_points guardado en extracted_state como {"key_points": [...]}
+    raw = s.extracted_state or {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    key_points = raw.get("key_points", []) if isinstance(raw, dict) else []
+    return NoteRow(
+        id=s.id,
+        user_id=s.user_id,
+        title=s.title,
+        transcript=s.transcript or "",
+        summary=s.summary or "",
+        key_points=key_points,
+        created_at=s.created_at or _utcnow(),
+    )
+
+
+def _item_to_task_row(it: SessionItem) -> TaskRow:
+    """Convierte un SessionItem al formato TaskRow."""
+    return TaskRow(
+        id=it.id,
+        user_id=it.user_id,
+        note_id=it.session_id,
+        text=it.content or "",
+        due_date=it.due_date if isinstance(it.due_date, datetime) else None,
+        done=(it.status == "done" or it.status == SessionItemStatus.COMPLETED),
+        priority=int(it.priority or 0) if it.priority else 0,
+    )
+
+
 class Storage:
-    def __init__(self, sqlite_path: str) -> None:
-        self._path = sqlite_path
+    """
+    Capa de persistencia para notas de clase.
+    Usa Nhost PostgreSQL vía SQLAlchemy — sin SQLite local.
+    """
+
+    def __init__(self, _deprecated_sqlite_path: str = "") -> None:
+        # El path SQLite ya no se usa; se mantiene el parámetro
+        # para no romper el constructor en class_notes_router.py
+        if _deprecated_sqlite_path:
+            logger.info(
+                "Storage: sqlite_path ignorado. "
+                "Usando Nhost PostgreSQL (SQLAlchemy)."
+            )
 
     async def init(self) -> None:
-        async with aiosqlite.connect(self._path) as db:
-            await db.execute("PRAGMA journal_mode=WAL")
-            await db.execute("PRAGMA synchronous=NORMAL")
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS notes (
-                    id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    transcript TEXT NOT NULL,
-                    summary TEXT NOT NULL,
-                    key_points_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )
-                """
-            )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS tasks (
-                    id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    note_id TEXT NOT NULL,
-                    text TEXT NOT NULL,
-                    due_date TEXT NULL,
-                    done INTEGER NOT NULL,
-                    priority INTEGER NOT NULL,
-                    FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
-                )
-                """
-            )
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_notes_user_id ON notes(user_id)")
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at)")
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_note_id ON tasks(note_id)")
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date)")
-            
-            # Migración simple: intentar agregar user_id si no existe
-            try:
-                await db.execute("ALTER TABLE notes ADD COLUMN user_id TEXT DEFAULT ''")
-                await db.execute("ALTER TABLE tasks ADD COLUMN user_id TEXT DEFAULT ''")
-            except Exception:
-                pass # Ya existen
-            
-            await db.commit()
+        """No-op: las tablas ya existen en Nhost vía Alembic/models."""
+        logger.info("✅ Storage (PostgreSQL) listo — no init necesario.")
+
+    # -------------------------------------------------------------------------
+    # CREAR NOTA
+    # -------------------------------------------------------------------------
 
     async def create_note(
         self,
@@ -94,96 +131,112 @@ class Storage:
         tasks: List[Dict[str, Any]],
         created_at: Optional[datetime] = None,
     ) -> Tuple[NoteRow, List[TaskRow]]:
-        note_id = uuid.uuid4().hex
-        created_at = created_at or _utcnow()
-        created_at_s = created_at.isoformat()
+        note_id = str(uuid.uuid4())
+        ts = created_at or _utcnow()
 
-        async with aiosqlite.connect(self._path) as db:
-            await db.execute(
-                "INSERT INTO notes(id,user_id,title,transcript,summary,key_points_json,created_at) VALUES(?,?,?,?,?,?,?)",
-                (note_id, user_id, title, transcript, summary, json.dumps(key_points, ensure_ascii=False), created_at_s),
+        async with get_primary_session() as db:
+            # Crear nota como RecordingSession
+            session_obj = RecordingSession(
+                id=note_id,
+                user_id=user_id,
+                title=title,
+                transcript=transcript,
+                summary=summary,
+                extracted_state={"key_points": key_points},
+                session_type=_CLASS_NOTE_TYPE,
+                status=RecordingSessionStatus.COMPLETED,
+                started_at=ts,
+                ended_at=ts,
             )
+            db.add(session_obj)
+            await db.flush()  # necesitamos el id antes de los items
 
+            # Crear tareas como SessionItems
             task_rows: List[TaskRow] = []
-            for t in tasks:
-                task_id = uuid.uuid4().hex
+            for order, t in enumerate(tasks or []):
                 text = str(t.get("text", "")).strip()
                 if not text:
                     continue
-                due_date = t.get("due_date")
-                due_date_s: Optional[str] = None
-                if isinstance(due_date, datetime):
-                    due_date_s = due_date.astimezone(timezone.utc).isoformat()
-                done = bool(t.get("done", False))
-                priority = int(t.get("priority", 0))
+                due = t.get("due_date")
+                due_dt: Optional[datetime] = None
+                if isinstance(due, datetime):
+                    due_dt = due
+                elif isinstance(due, str) and due:
+                    try:
+                        due_dt = datetime.fromisoformat(due)
+                    except Exception:
+                        pass
 
-                await db.execute(
-                    "INSERT INTO tasks(id,user_id,note_id,text,due_date,done,priority) VALUES(?,?,?,?,?,?,?)",
-                    (task_id, user_id, note_id, text, due_date_s, 1 if done else 0, priority),
+                item_id = str(uuid.uuid4())
+                item = SessionItem(
+                    id=item_id,
+                    session_id=note_id,
+                    user_id=user_id,
+                    item_type=SessionItemType.TASK,
+                    status=SessionItemStatus.SUGGESTED,
+                    content=text,
+                    due_date=due_dt,
+                    priority=str(t.get("priority", 0)),
+                    order_index=order,
+                    source=_CLASS_NOTE_SOURCE,
                 )
+                db.add(item)
                 task_rows.append(
                     TaskRow(
-                        id=task_id,
+                        id=item_id,
                         user_id=user_id,
                         note_id=note_id,
                         text=text,
-                        due_date=datetime.fromisoformat(due_date_s) if due_date_s else None,
-                        done=done,
-                        priority=priority,
+                        due_date=due_dt,
+                        done=bool(t.get("done", False)),
+                        priority=int(t.get("priority", 0)),
                     )
                 )
 
             await db.commit()
+            await db.refresh(session_obj)
 
-        note = NoteRow(
+        note_row = NoteRow(
             id=note_id,
             user_id=user_id,
             title=title,
             transcript=transcript,
             summary=summary,
             key_points=key_points,
-            created_at=created_at,
+            created_at=ts,
         )
-        return note, task_rows
+        logger.info(f"📝 Nota creada en Nhost: {note_id} ({len(task_rows)} tareas)")
+        return note_row, task_rows
 
-    async def get_note(self, *, user_id: str, note_id: str) -> Optional[Tuple[NoteRow, List[TaskRow]]]:
-        async with aiosqlite.connect(self._path) as db:
-            db.row_factory = aiosqlite.Row
+    # -------------------------------------------------------------------------
+    # OBTENER NOTA
+    # -------------------------------------------------------------------------
 
-            cur = await db.execute("SELECT * FROM notes WHERE id = ? AND user_id = ?", (note_id, user_id))
-            note_row = await cur.fetchone()
-            if not note_row:
+    async def get_note(
+        self, *, user_id: str, note_id: str
+    ) -> Optional[Tuple[NoteRow, List[TaskRow]]]:
+        async with get_primary_session() as db:
+            s = await db.get(RecordingSession, note_id)
+            if not s or s.user_id != user_id:
                 return None
 
-            tasks_cur = await db.execute("SELECT * FROM tasks WHERE note_id = ? AND user_id = ? ORDER BY id", (note_id, user_id))
-            task_rows_raw = await tasks_cur.fetchall()
-
-        note = NoteRow(
-            id=note_row["id"],
-            user_id=note_row["user_id"],
-            title=note_row["title"],
-            transcript=note_row["transcript"],
-            summary=note_row["summary"],
-            key_points=json.loads(note_row["key_points_json"]),
-            created_at=datetime.fromisoformat(note_row["created_at"]),
-        )
-
-        tasks: List[TaskRow] = []
-        for r in task_rows_raw:
-            due = r["due_date"]
-            tasks.append(
-                TaskRow(
-                    id=r["id"],
-                    user_id=r["user_id"],
-                    note_id=r["note_id"],
-                    text=r["text"],
-                    due_date=datetime.fromisoformat(due) if due else None,
-                    done=bool(r["done"]),
-                    priority=int(r["priority"]),
-                )
+            result = await db.execute(
+                select(SessionItem).where(
+                    and_(
+                        SessionItem.session_id == note_id,
+                        SessionItem.user_id == user_id,
+                        SessionItem.source == _CLASS_NOTE_SOURCE,
+                        SessionItem.item_type == SessionItemType.TASK,
+                    )
+                ).order_by(SessionItem.order_index)
             )
+            items = result.scalars().all()
 
-        return note, tasks
+        return _session_to_note_row(s), [_item_to_task_row(it) for it in items]
+
+    # -------------------------------------------------------------------------
+    # LISTAR NOTAS
+    # -------------------------------------------------------------------------
 
     async def list_notes(
         self,
@@ -194,42 +247,27 @@ class Storage:
         limit: int,
         offset: int,
     ) -> List[NoteRow]:
-        q = "SELECT * FROM notes WHERE user_id = ?"
-        args: List[Any] = [user_id]
-        clauses: List[str] = []
-
-        if from_ts:
-            clauses.append("created_at >= ?")
-            args.append(from_ts.astimezone(timezone.utc).isoformat())
-        if to_ts:
-            clauses.append("created_at <= ?")
-            args.append(to_ts.astimezone(timezone.utc).isoformat())
-
-        if clauses:
-            q += " AND " + " AND ".join(clauses)
-
-        q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-        args.extend([limit, offset])
-
-        async with aiosqlite.connect(self._path) as db:
-            db.row_factory = aiosqlite.Row
-            cur = await db.execute(q, tuple(args))
-            rows = await cur.fetchall()
-
-        notes: List[NoteRow] = []
-        for r in rows:
-            notes.append(
-                NoteRow(
-                    id=r["id"],
-                    user_id=r["user_id"],
-                    title=r["title"],
-                    transcript=r["transcript"],
-                    summary=r["summary"],
-                    key_points=json.loads(r["key_points_json"]),
-                    created_at=datetime.fromisoformat(r["created_at"]),
+        async with get_primary_session() as db:
+            q = select(RecordingSession).where(
+                and_(
+                    RecordingSession.user_id == user_id,
+                    RecordingSession.session_type == _CLASS_NOTE_TYPE,
                 )
             )
-        return notes
+            if from_ts:
+                q = q.where(RecordingSession.created_at >= from_ts)
+            if to_ts:
+                q = q.where(RecordingSession.created_at <= to_ts)
+
+            q = q.order_by(RecordingSession.created_at.desc()).offset(offset).limit(limit)
+            result = await db.execute(q)
+            sessions = result.scalars().all()
+
+        return [_session_to_note_row(s) for s in sessions]
+
+    # -------------------------------------------------------------------------
+    # LISTAR TAREAS
+    # -------------------------------------------------------------------------
 
     async def list_tasks(
         self,
@@ -241,44 +279,30 @@ class Storage:
         limit: int,
         offset: int,
     ) -> List[TaskRow]:
-        q = "SELECT * FROM tasks WHERE user_id = ?"
-        args: List[Any] = [user_id]
-        clauses: List[str] = []
-
-        if only_pending:
-            clauses.append("done = 0")
-        if only_with_due_date:
-            clauses.append("due_date IS NOT NULL")
-        if due_before:
-            clauses.append("due_date <= ?")
-            args.append(due_before.astimezone(timezone.utc).isoformat())
-
-        if clauses:
-            q += " AND " + " AND ".join(clauses)
-
-        q += " ORDER BY COALESCE(due_date, '9999-12-31T00:00:00+00:00') ASC LIMIT ? OFFSET ?"
-        args.extend([limit, offset])
-
-        async with aiosqlite.connect(self._path) as db:
-            db.row_factory = aiosqlite.Row
-            cur = await db.execute(q, tuple(args))
-            rows = await cur.fetchall()
-
-        tasks: List[TaskRow] = []
-        for r in rows:
-            due = r["due_date"]
-            tasks.append(
-                TaskRow(
-                    id=r["id"],
-                    user_id=r["user_id"],
-                    note_id=r["note_id"],
-                    text=r["text"],
-                    due_date=datetime.fromisoformat(due) if due else None,
-                    done=bool(r["done"]),
-                    priority=int(r["priority"]),
+        async with get_primary_session() as db:
+            q = select(SessionItem).where(
+                and_(
+                    SessionItem.user_id == user_id,
+                    SessionItem.source == _CLASS_NOTE_SOURCE,
+                    SessionItem.item_type == SessionItemType.TASK,
                 )
             )
-        return tasks
+            if only_pending:
+                q = q.where(SessionItem.status != SessionItemStatus.COMPLETED)
+            if only_with_due_date:
+                q = q.where(SessionItem.due_date.isnot(None))
+            if due_before:
+                q = q.where(SessionItem.due_date <= due_before)
+
+            q = q.order_by(SessionItem.due_date.asc().nullslast()).offset(offset).limit(limit)
+            result = await db.execute(q)
+            items = result.scalars().all()
+
+        return [_item_to_task_row(it) for it in items]
+
+    # -------------------------------------------------------------------------
+    # ACTUALIZAR TAREA
+    # -------------------------------------------------------------------------
 
     async def update_task(
         self,
@@ -289,54 +313,53 @@ class Storage:
         due_date: Optional[datetime],
         priority: Optional[int],
     ) -> TaskRow:
-        async with aiosqlite.connect(self._path) as db:
-            db.row_factory = aiosqlite.Row
-
-            cur = await db.execute("SELECT * FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id))
-            row = await cur.fetchone()
-            if not row:
+        async with get_primary_session() as db:
+            item = await db.get(SessionItem, task_id)
+            if not item or item.user_id != user_id:
                 raise KeyError("task_not_found")
 
-            new_done = int(done) if done is not None else int(row["done"])
-            new_due: Optional[str]
+            if done is not None:
+                item.status = (
+                    SessionItemStatus.COMPLETED if done else SessionItemStatus.SUGGESTED
+                )
             if due_date is not None:
-                new_due = due_date.astimezone(timezone.utc).isoformat()
-            else:
-                new_due = row["due_date"]
+                item.due_date = due_date
+            if priority is not None:
+                item.priority = str(priority)
 
-            new_priority = int(priority) if priority is not None else int(row["priority"])
-
-            await db.execute(
-                "UPDATE tasks SET done = ?, due_date = ?, priority = ? WHERE id = ? AND user_id = ?",
-                (new_done, new_due, new_priority, task_id, user_id),
-            )
             await db.commit()
+            await db.refresh(item)
 
-        return TaskRow(
-            id=task_id,
-            user_id=user_id,
-            note_id=row["note_id"],
-            text=row["text"],
-            due_date=datetime.fromisoformat(new_due) if new_due else None,
-            done=bool(new_done),
-            priority=new_priority,
-        )
+        return _item_to_task_row(item)
+
+    # -------------------------------------------------------------------------
+    # ELIMINAR NOTA
+    # -------------------------------------------------------------------------
 
     async def delete_note(self, *, user_id: str, note_id: str) -> bool:
-        """Elimina una nota y sus tareas asociadas (cascade)"""
-        async with aiosqlite.connect(self._path) as db:
-            # Verificar que existe y pertenece al usuario
-            cur = await db.execute("SELECT id FROM notes WHERE id = ? AND user_id = ?", (note_id, user_id))
-            row = await cur.fetchone()
-            if not row:
+        async with get_primary_session() as db:
+            s = await db.get(RecordingSession, note_id)
+            if not s or s.user_id != user_id:
                 return False
-            
-            # Eliminar (las tareas se eliminan en cascade por FK si la BD lo soporta, 
-            # pero forzamos por user_id por seguridad extra)
-            await db.execute("DELETE FROM notes WHERE id = ? AND user_id = ?", (note_id, user_id))
-            await db.execute("DELETE FROM tasks WHERE note_id = ? AND user_id = ?", (note_id, user_id))
+
+            # Eliminar items primero
+            await db.execute(
+                delete(SessionItem).where(
+                    and_(
+                        SessionItem.session_id == note_id,
+                        SessionItem.user_id == user_id,
+                    )
+                )
+            )
+            await db.delete(s)
             await db.commit()
-            return True
+
+        logger.info(f"🗑️ Nota eliminada de Nhost: {note_id}")
+        return True
+
+    # -------------------------------------------------------------------------
+    # ACTUALIZAR NOTA
+    # -------------------------------------------------------------------------
 
     async def update_note(
         self,
@@ -348,60 +371,29 @@ class Storage:
         summary: Optional[str] = None,
         key_points: Optional[List[str]] = None,
     ) -> Optional[NoteRow]:
-        """Actualiza una nota existente. Campos None no se modifican."""
-        async with aiosqlite.connect(self._path) as db:
-            db.row_factory = aiosqlite.Row
-
-            # Verificar que existe y pertenece al usuario
-            cur = await db.execute("SELECT * FROM notes WHERE id = ? AND user_id = ?", (note_id, user_id))
-            row = await cur.fetchone()
-            if not row:
+        async with get_primary_session() as db:
+            s = await db.get(RecordingSession, note_id)
+            if not s or s.user_id != user_id:
                 return None
 
-            # Construir update dinámico
-            updates: List[str] = []
-            args: List[Any] = []
-            
             if title is not None:
-                updates.append("title = ?")
-                args.append(title)
+                s.title = title
             if transcript is not None:
-                updates.append("transcript = ?")
-                args.append(transcript)
+                s.transcript = transcript
             if summary is not None:
-                updates.append("summary = ?")
-                args.append(summary)
+                s.summary = summary
             if key_points is not None:
-                updates.append("key_points_json = ?")
-                args.append(json.dumps(key_points, ensure_ascii=False))
+                raw = s.extracted_state or {}
+                if isinstance(raw, str):
+                    try:
+                        raw = json.loads(raw)
+                    except Exception:
+                        raw = {}
+                raw["key_points"] = key_points
+                s.extracted_state = raw
+            s.updated_at = _utcnow()
 
-            if not updates:
-                # No hay nada que actualizar, devolver nota actual
-                return NoteRow(
-                    id=row["id"],
-                    user_id=row["user_id"],
-                    title=row["title"],
-                    transcript=row["transcript"],
-                    summary=row["summary"],
-                    key_points=json.loads(row["key_points_json"]),
-                    created_at=datetime.fromisoformat(row["created_at"]),
-                )
-
-            args.extend([note_id, user_id])
-            query = f"UPDATE notes SET {', '.join(updates)} WHERE id = ? AND user_id = ?"
-            await db.execute(query, tuple(args))
             await db.commit()
+            await db.refresh(s)
 
-            # Leer nota actualizada
-            cur2 = await db.execute("SELECT * FROM notes WHERE id = ? AND user_id = ?", (note_id, user_id))
-            updated = await cur2.fetchone()
-            
-            return NoteRow(
-                id=updated["id"],
-                user_id=updated["user_id"],
-                title=updated["title"],
-                transcript=updated["transcript"],
-                summary=updated["summary"],
-                key_points=json.loads(updated["key_points_json"]),
-                created_at=datetime.fromisoformat(updated["created_at"]),
-            )
+        return _session_to_note_row(s)

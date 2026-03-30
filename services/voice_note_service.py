@@ -320,7 +320,8 @@ class VoiceNoteService:
             await session.commit()
             
             # Cleanup async de archivos
-            asyncio.create_task(self._cleanup_storage(voice_note_id))
+            from utils.background import safe_create_task
+            safe_create_task(self._cleanup_storage(voice_note_id), name="cleanup_storage")
             
             return True
     
@@ -685,7 +686,8 @@ class VoiceNoteService:
             
             # Cleanup async
             if hard_delete:
-                asyncio.create_task(self._cleanup_storage(voice_note_id))
+                from utils.background import safe_create_task
+                safe_create_task(self._cleanup_storage(voice_note_id), name="cleanup_storage_delete")
             
             return True
     

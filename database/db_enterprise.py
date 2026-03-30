@@ -1,11 +1,10 @@
 """
-Database Enterprise v4.0 - Ultra Optimized
+Database Enterprise v5.0 - Production Optimized
 Sistema de base de datos enterprise con máxima performance:
-- Connection pooling mejorado (20 → 40 connections)
-- Query timeout optimizado (30s → 15s)
-- Circuit breakers más inteligentes
+- Connection pooling optimizado (20 connections + 10 overflow)
+- Circuit breakers + heartbeat keep-alive
 - Métricas y monitoring avanzado
-Versión: 4.0 - Octubre 2025
+- Compatible con PostgreSQL + SQLite (desarrollo)
 """
 import asyncio
 import os
@@ -52,7 +51,7 @@ class DatabaseConfig:
     readonly_pool_size: int = 5
     readonly_max_overflow: int = 5
     pool_timeout: int = 30
-    pool_recycle: int = 120  # Reciclar cada 2 min para limpiar conexiones muertas
+    pool_recycle: int = 1800  # 30 min — estándar PostgreSQL (120s era demasiado agresivo)
     query_timeout: int = 30
     enable_query_cache: bool = True
     enable_metrics: bool = True
@@ -135,15 +134,19 @@ class SimpleCircuitBreaker:
 class DatabaseEnterpriseManager:
     """Manager avanzado de base de datos enterprise"""
     
+    # Tamaño máximo del query cache en memoria
+    _QUERY_CACHE_MAX_SIZE = 500
+
     def __init__(self, config: DatabaseConfig):
         self.config = config
         self.engines: Dict[ConnectionType, Any] = {}
         self.session_makers: Dict[ConnectionType, Any] = {}
         self.circuit_breakers: Dict[ConnectionType, SimpleCircuitBreaker] = {}
         self.metrics = DatabaseMetrics()
-        self.query_cache: Dict[str, Any] = {}
+        self.query_cache: Dict[str, Any] = {}  # Bounded: se limpia si supera _QUERY_CACHE_MAX_SIZE
         self.initialized = False
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._is_postgresql: bool = False  # Se detecta en initialize()
     
     async def _heartbeat_loop(self):
         """Loop de heartbeat para evitar que la DB se duerma (Keep-Alive)"""
@@ -206,7 +209,9 @@ class DatabaseEnterpriseManager:
                     await self._setup_engine(ConnectionType.ANALYTICS, self.config.analytics_url)
                 
                 self.initialized = True
-                logger.info("✅ Database Enterprise Manager inicializado")
+                # Detectar tipo de DB para comandos específicos
+                self._is_postgresql = "postgresql" in self.config.primary_url.lower()
+                logger.info(f"✅ Database Enterprise Manager inicializado (postgresql={self._is_postgresql})")
 
                 # Iniciar Heartbeat en background
                 if self._heartbeat_task is None or self._heartbeat_task.done():
@@ -308,10 +313,14 @@ class DatabaseEnterpriseManager:
                     session = session_maker()
                 
                 async with session:
-                    # Configurar timeout por sesión
-                    await session.execute(
-                        text(f"SET statement_timeout = '{self.config.query_timeout}s'")
-                    )
+                    # Configurar timeout por sesión (solo PostgreSQL)
+                    if self._is_postgresql:
+                        try:
+                            await session.execute(
+                                text(f"SET statement_timeout = '{self.config.query_timeout * 1000}'")
+                            )
+                        except Exception:
+                            pass  # Non-critical: no bloquear si falla
                     
                     self.metrics.query_counter.inc(
                         labels=[connection_type.value, 'session_start', 'success']
@@ -392,6 +401,12 @@ class DatabaseEnterpriseManager:
                 
                 # Guardar en cache si está configurado
                 if cache_key and self.config.enable_query_cache:
+                    # Evitar crecimiento infinito del cache
+                    if len(self.query_cache) >= self._QUERY_CACHE_MAX_SIZE:
+                        # Eliminar la mitad más antigua (FIFO)
+                        keys_to_remove = list(self.query_cache.keys())[:self._QUERY_CACHE_MAX_SIZE // 2]
+                        for k in keys_to_remove:
+                            self.query_cache.pop(k, None)
                     self.query_cache[cache_key] = data
                 
                 self.metrics.query_counter.inc(
@@ -471,10 +486,10 @@ def create_database_config() -> DatabaseConfig:
     # URL principal
     primary_url = os.getenv("DATABASE_URL") or CONFIG_DATABASE_URL
     if not primary_url:
-        if ENVIRONMENT == "production":
-            raise RuntimeError("❌ DATABASE_URL no está definido")
-        # Fallback seguro para desarrollo local
-        primary_url = "sqlite+aiosqlite:///./backend_super.db"
+        raise RuntimeError(
+            "❌ DATABASE_URL no está definido. "
+            "Configura la URL de Nhost PostgreSQL."
+        )
     
     # Convertir a asyncpg si es necesario
     if primary_url.startswith("postgresql://"):
@@ -498,7 +513,7 @@ def create_database_config() -> DatabaseConfig:
         readonly_pool_size=int(os.getenv("DB_READONLY_POOL_SIZE", "5")),
         readonly_max_overflow=int(os.getenv("DB_READONLY_MAX_OVERFLOW", "5")),
         pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "30")),
-        pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "120")),
+        pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "1800")),
         query_timeout=int(os.getenv("DB_QUERY_TIMEOUT", "30")),
         enable_query_cache=os.getenv("DB_ENABLE_QUERY_CACHE", "true").lower() == "true",
         enable_metrics=os.getenv("DB_ENABLE_METRICS", "true").lower() == "true",
@@ -556,12 +571,20 @@ async def get_analytics_session():
 
 # Compatibilidad con API anterior - mantener nombres originales
 async def get_async_db():
-    """Función de compatibilidad"""
-    return await get_primary_session()
+    """Async generator compatible con FastAPI Depends().
+    
+    Uso:
+        db: AsyncSession = Depends(get_async_db)
+    """
+    session = await get_primary_session()
+    try:
+        yield session
+    finally:
+        await session.close()
 
 
 async def get_db_session():
-    """Context manager de compatibilidad"""
+    """Retorna sesión directa (NO para Depends, sí para uso interno)."""
     return await get_primary_session()
 
 # ===============================================

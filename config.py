@@ -27,17 +27,16 @@ if ENVIRONMENT == "production" and SECRET_KEY == "dev-secret-key-change-in-produ
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 # =========================
-# Configuración de Base de Datos
+# Configuración de Base de Datos (Nhost PostgreSQL)
 # =========================
 DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "❌ DATABASE_URL no está definido. "
+        "Configura la URL de Nhost PostgreSQL en las variables de entorno."
+    )
 
-# Fallback a SQLite para desarrollo local
-if not DATABASE_URL and ENVIRONMENT == "development":
-    DATABASE_URL = "sqlite:///./backend_super.db"
-
-DATABASE_URL_SYNC = os.getenv("DATABASE_URL_SYNC")
-if not DATABASE_URL_SYNC and ENVIRONMENT == "development":
-    DATABASE_URL_SYNC = "sqlite:///./backend_super.db"
+DATABASE_URL_SYNC = os.getenv("DATABASE_URL_SYNC", DATABASE_URL)
 
 # =========================
 # Configuración de Redis v4.0
@@ -100,6 +99,10 @@ AI_SERVER_URL = os.getenv("AI_SERVER_URL", "https://api.groq.com").strip() or "h
 AI_MODEL = os.getenv("AI_MODEL", "auto").strip() or "auto"  # auto = fast/reasoning según complejidad
 VISION_MODEL = os.getenv("VISION_MODEL", "").strip() or None
 TEXT_MODEL = os.getenv("TEXT_MODEL", "").strip() or None
+GROQ_VISION_MODEL = os.getenv(
+    "GROQ_VISION_MODEL",
+    "meta-llama/llama-4-scout-17b-16e-instruct"
+).strip()
 
 SEARXNG_URL = os.getenv("SEARXNG_URL", "")  # URL de SearXNG para LiveSearch (opcional)
 LIVESEARCH_ENABLED = os.getenv("LIVESEARCH_ENABLED", "true").lower() in ("true", "1", "t")

@@ -70,6 +70,7 @@ except Exception:
 
 # Database
 from database.db_enterprise import get_async_db
+from services.redis_service import get_redis
 
 
 # Routers
@@ -83,6 +84,7 @@ from routers import (
     recording_session_router,
     voice_note_router,
 )
+from routers import image_analysis_router
 
 # Middlewares
 from middlewares.rate_limit_middleware import RateLimitMiddleware
@@ -158,20 +160,26 @@ async def lifespan(app: FastAPI):
             logger.warning(f" Database initialization warning: {e}")
     startup_tasks.append(init_database())
     
-    # Task 3: Precarga ligera (sin warmup de terceros)
-    async def preload_ai_models():
-        logger.info("🤖 AI client ready (Groq)")
+    # Task 3: Warmup de API Groq (una sola vez en startup, no por request)
+    async def warmup_groq():
+        try:
+            from services.groq_ai_service import ensure_api_warmup
+            await ensure_api_warmup()
+            logger.info("🤖 Groq API warmed up")
+        except Exception as e:
+            logger.warning(f"⚠️ Groq warmup skipped: {e}")
 
-    startup_tasks.append(preload_ai_models())
+    startup_tasks.append(warmup_groq())
     
     # 🚀 Ejecutar todo en paralelo (3x más rápido que v3.0)
     await asyncio.gather(*startup_tasks, return_exceptions=True)
 
-    # Background tasks (fail-open)
+    # Background tasks (fail-open) con safe_create_task
     try:
         from services.session_service import periodic_tasks
+        from utils.background import safe_create_task
 
-        app.state.session_periodic_task = asyncio.create_task(periodic_tasks())
+        app.state.session_periodic_task = safe_create_task(periodic_tasks(), name="session_periodic")
     except Exception as e:
         logger.warning(f"⚠️ session_service periodic task not started: {e}")
     
@@ -242,7 +250,7 @@ app.add_middleware(
 )
 
 # Compression - 🚀 v4.0: Mejor threshold y compresión
-app.add_middleware(GZipMiddleware, minimum_size=100, compresslevel=9)
+app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)  # 6 = balance óptimo CPU/compresión
 
 # Security Middleware - CSRF Protection (Production)
 if ENVIRONMENT == "production":
@@ -461,8 +469,11 @@ app.include_router(scheduled_recording_router.router, tags=["Scheduled Recording
 # 🎙️ Unificado: Sesiones de Grabación (Manual, Auto, Agenda)
 app.include_router(recording_session_router.router, tags=["Recording Sessions"])
 
-# 🎙️ VoiceNotes SST - Offline-first, resumible, idempotente
+# 🎤 VoiceNotes SST - Offline-first, resumible, idempotente
 app.include_router(voice_note_router.router, tags=["Voice Notes"])
+
+# 🖼️ Análisis de Imágenes y Documentos
+app.include_router(image_analysis_router.router, tags=["Image Analysis"])
 # =============================================
 # PUNTO DE ENTRADA
 # =============================================
