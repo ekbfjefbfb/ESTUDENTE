@@ -15,6 +15,9 @@ from typing import Dict, Any, List, Optional
 import enum
 import uuid
 
+# Importar User para la relación (forward reference)
+from models.models import User
+
 Base = declarative_base()
 
 # =============================================
