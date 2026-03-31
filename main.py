@@ -183,6 +183,14 @@ async def lifespan(app: FastAPI):
         app.state.session_periodic_task = safe_create_task(periodic_tasks(), name="session_periodic")
     except Exception as e:
         logger.warning(f"⚠️ session_service periodic task not started: {e}")
+        
+    try:
+        from workers.voice_note_worker import worker_loop as voice_worker_loop
+        from utils.background import safe_create_task
+        app.state.voice_note_worker_task = safe_create_task(voice_worker_loop(), name="voice_note_worker")
+        logger.info("✅🏭 Voice Note Background Worker started successfully")
+    except Exception as e:
+        logger.error(f"❌ Fatal: voice_note_worker failed to start: {e}")
     
     logger.info(f"✅ {APP_NAME} v4.0 started successfully - Ready for production!")
     
@@ -195,6 +203,12 @@ async def lifespan(app: FastAPI):
         task = getattr(app.state, "session_periodic_task", None)
         if task is not None:
             task.cancel()
+            
+        from workers.voice_note_worker import _shutdown_event
+        _shutdown_event.set()
+        voice_task = getattr(app.state, "voice_note_worker_task", None)
+        if voice_task is not None:
+            voice_task.cancel()
     except Exception:
         pass
     
