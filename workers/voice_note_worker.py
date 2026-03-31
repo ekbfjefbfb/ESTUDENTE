@@ -15,7 +15,7 @@ from typing import Optional
 # Añadir root al path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import select, and_, update
+from sqlalchemy import select, and_, update, cast, String
 from sqlalchemy.orm import selectinload
 
 from database.db_enterprise import get_primary_session
@@ -79,9 +79,9 @@ async def acquire_job(session) -> Optional[VoiceNoteProcessingJob]:
         select(VoiceNoteProcessingJob)
         .where(
             and_(
-                VoiceNoteProcessingJob.status.in_([
-                    ProcessingJobStatus.PENDING,
-                    ProcessingJobStatus.RETRYING
+                cast(VoiceNoteProcessingJob.status, String).in_([
+                    ProcessingJobStatus.PENDING.value,
+                    ProcessingJobStatus.RETRYING.value
                 ]),
                 VoiceNoteProcessingJob.scheduled_at <= datetime.utcnow(),
                 # Lock expirado o no existe

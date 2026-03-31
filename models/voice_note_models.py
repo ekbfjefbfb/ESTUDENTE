@@ -133,7 +133,7 @@ class VoiceNote(Base):
     is_deleted = Column(Boolean, default=False, index=True)
     
     # Relaciones
-    user = relationship("User")
+    user = relationship(User)
     chunks = relationship("VoiceNoteChunk", back_populates="voice_note", cascade="all, delete-orphan", lazy="selectin")
     processing_jobs = relationship("VoiceNoteProcessingJob", back_populates="voice_note", cascade="all, delete-orphan")
     
