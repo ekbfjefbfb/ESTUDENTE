@@ -9,25 +9,10 @@ from typing import Callable, Dict, Any, Optional
 from fastapi import Request, Response, HTTPException, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-
-# from services.smart_cache_service import smart_cache  # TODO: Implementar smart_cache_service
+from services.smart_cache_service import smart_cache
 from services.anti_abuse_service import anti_abuse_service
 from utils.auth import decode_access_token
 import json_log_formatter
-
-# Stub temporal para smart_cache
-class SmartCacheStub:
-    async def get(self, key: str):
-        return None
-    async def set(self, key: str, value: Any, ttl: int = 60):
-        pass
-    async def get_or_set(self, namespace: str, key: str, factory, ttl: int = 60):
-        try:
-            return await factory()
-        except Exception:
-            return None
-
-smart_cache = SmartCacheStub()
 
 # =============================================
 # CONFIGURACIÓN DE LOGGING
@@ -221,9 +206,8 @@ class PreValidationMiddleware(BaseHTTPMiddleware):
             
             # 4. Obtener plan del usuario desde caché
             user_plan = await smart_cache.get_or_set(
-                "user_plan",
-                user_id,
-                lambda: anti_abuse_service.get_user_plan(user_id),
+                key=f"user_plan:{user_id}",
+                factory=lambda: anti_abuse_service.get_user_plan(user_id),
                 ttl=600
             )
             
@@ -269,9 +253,8 @@ class PreValidationMiddleware(BaseHTTPMiddleware):
                     return {"valid": False}
             
             result = await smart_cache.get_or_set(
-                "auth_token",
-                cache_key,
-                validate_token,
+                key=f"auth_token:{cache_key}",
+                factory=validate_token,
                 ttl=300  # 5 minutos
             )
             

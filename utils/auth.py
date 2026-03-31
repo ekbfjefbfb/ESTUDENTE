@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, text
 from jose import JWTError, jwt, ExpiredSignatureError
 import redis.asyncio as redis
+from services.smart_cache_service import smart_cache
 
 # Usar get_async_db desde database.db_enterprise
 # Nota: Importar de forma lazy dentro de las funciones para evitar circular imports
@@ -258,57 +259,58 @@ async def get_current_user(
         )
     
     try:
-        # Verificar token
-        payload = await verify_token(credentials.credentials)
+        # 🚀 Caché combinado (Math + DB) por token para O(1) lectura instantánea
+        cache_key = f"auth_user:{credentials.credentials[-40:]}"
         
-        # Verificar que es token de acceso
-        if payload.get("type") != "access":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Tipo de token inválido"
+        async def fetch_and_validate_user():
+            # Verificar token (Matemática costosa)
+            payload = await verify_token(credentials.credentials)
+            
+            if payload.get("type") != "access":
+                raise ValueError("Tipo de token inválido")
+            
+            user_id: str = payload.get("sub")
+            if user_id is None:
+                raise ValueError("Token inválido - usuario no especificado")
+            
+            # Buscar usuario en DB
+            result = await db.execute(
+                text("SELECT id, email, username, is_active FROM users WHERE id = :user_id"),
+                {"user_id": user_id},
             )
-        
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token inválido - usuario no especificado"
-            )
-        
-        # Buscar usuario en DB con SQL directo
-        # Nota: en producción la tabla users puede no tener columnas como is_admin.
-        result = await db.execute(
-            text("SELECT id, email, username, is_active FROM users WHERE id = :user_id"),
-            {"user_id": user_id},
-        )
-        row = result.first()
-        
-        if row is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Usuario no encontrado"
-            )
-        
-        user_id_db, email, username, is_active = row
-        is_admin = False
-        
-        # Verificar que el usuario esté activo
-        if not is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Usuario desactivado"
-            )
-        
-        user = AuthUser(
-            {
+            row = result.first()
+            
+            if row is None:
+                raise ValueError("Usuario no encontrado")
+            
+            user_id_db, email, username, is_active = row
+            
+            if not is_active:
+                raise ValueError("Usuario desactivado")
+            
+            return {
                 "id": str(user_id_db),
                 "user_id": str(user_id_db),
                 "email": email,
                 "username": username,
-                "is_active": bool(is_active) if is_active is not None else True,
-                "is_admin": bool(is_admin),
+                "is_active": True,
+                "is_admin": False,
             }
-        )
+            
+        try:
+            # TTL de 60s amortiza todos los requests en paralelo y ahorra 1 SQL + 1 JWT decode
+            user_data = await smart_cache.get_or_set(
+                key=cache_key,
+                factory=fetch_and_validate_user,
+                ttl=60
+            )
+            user = AuthUser(user_data)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(e),
+                headers={"WWW-Authenticate": "Bearer"}
+            )
         
         # Actualizar última actividad (opcional)
         try:

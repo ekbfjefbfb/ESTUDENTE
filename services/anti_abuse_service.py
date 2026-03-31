@@ -74,9 +74,8 @@ class AntiAbuseService:
                 return user_plan
             
             user_plan = await smart_cache.get_or_set(
-                "user_plan", 
-                user_id, 
-                fetch_plan,
+                key=f"user_plan:{user_id}", 
+                factory=fetch_plan,
                 ttl=600
             )
             return user_plan
@@ -105,9 +104,8 @@ class AntiAbuseService:
                 return PLAN_CONFIGS[user_plan]["limits"]
             
             plan_limits = await smart_cache.get_or_set(
-                "plan_limits",
-                user_plan,
-                fetch_plan_limits,
+                key=f"plan_limits:{user_plan}",
+                factory=fetch_plan_limits,
                 ttl=3600  # 1 hora - los límites cambian poco
             )
             
