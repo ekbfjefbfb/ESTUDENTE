@@ -4,7 +4,7 @@ import logging
 import re
 from fastapi import APIRouter, Depends, Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, AliasChoices
 from typing import Optional
 from jose import jwt, JWTError
 
@@ -85,38 +85,16 @@ class LoginSchema(BaseModel):
         return v
 
 class RefreshSchema(BaseModel):
-    """Schema ultra-permisivo para refresh - acepta cualquier formato de payload"""
-    # Campos comunes que pueden enviar clientes móviles
-    refresh_token: Optional[str] = Field(None, max_length=5000)
-    refreshToken: Optional[str] = Field(None, max_length=5000)
-    token: Optional[str] = Field(None, max_length=5000)
-    access_token: Optional[str] = Field(None, max_length=5000)
-    refresh: Optional[str] = Field(None, max_length=5000)
-    
-    @model_validator(mode="before")
-    def extract_refresh_token(cls, values):
-        """Extrae el refresh token de cualquier campo posible"""
-        if not isinstance(values, dict):
-            return values
-        
-        # Buscar en todos los campos posibles
-        candidates = [
-            values.get("refresh_token"),
-            values.get("refreshToken"),
-            values.get("token"),
-            values.get("access_token"),
-            values.get("refresh"),
-        ]
-        
-        # Usar el primer valor no-vacío
-        for candidate in candidates:
-            if candidate and isinstance(candidate, str) and len(candidate) > 10:
-                values["refresh_token"] = candidate.strip()
-                return values
-        
-        # Si llegamos aquí sin token, dejarlo pasar (validación manual en endpoint)
-        values["refresh_token"] = values.get("refresh_token") or ""
-        return values
+    """Schema estricto para refresh que acepta variantes mediante AliasChoices"""
+    refresh_token: str = Field(
+        ...,
+        validation_alias=AliasChoices(
+            "refresh_token", "refreshToken", "token", "access_token", "refresh"
+        ),
+        min_length=10,
+        max_length=5000,
+        description="El token de refresco a validar"
+    )
 
 # ---------------- Seguridad Input ----------------
 def sanitize_input(value: str) -> str:
@@ -147,9 +125,15 @@ async def oauth_login(
         id_token = sanitize_input(data.id_token)
         name = sanitize_input(data.name) if data.name else None
 
-        result = await oauth_login_or_register(db, provider, id_token, name)
+        # Usar Circuit Breaker para proteger contra saturación
+        result = await cb_oauth.call(oauth_login_or_register, db, provider, id_token, name)
         logger.info(f'{{"event": "oauth_login_success", "provider": "{provider}", "ip": "{request.client.host}"}}')
         return result
+    except RuntimeError as e:
+        if "Circuit breaker" in str(e):
+            logger.warning(f'{{"event": "oauth_circuit_open", "provider": "{data.provider}", "ip": "{request.client.host}"}}')
+            raise HTTPException(status_code=503, detail="oauth_service_temporarily_unavailable")
+        raise
     except Exception as e:
         logger.error(f'{{"event": "oauth_login_error", "error": "{str(e)}"}}', exc_info=True)
         raise HTTPException(status_code=400, detail="Error al procesar login OAuth")
@@ -162,17 +146,18 @@ async def refresh_token_route(
 ) -> dict:
     logger.info(f'{{"event": "refresh_token_attempt", "ip": "{request.client.host}"}}')
     try:
-        # Validación manual del token
-        refresh_token = (data.refresh_token or "").strip()
-        if not refresh_token or len(refresh_token) < 10:
-            logger.warning(f'{{"event": "refresh_token_missing", "ip": "{request.client.host}"}}')
-            raise HTTPException(status_code=400, detail="refresh_token_required")
+        # El token ya viene validado estrictamente por Pydantic (AliasChoices y min_length)
+        refresh_token = sanitize_input(data.refresh_token.strip())
         
-        # Sanitizar y procesar
-        refresh_token = sanitize_input(refresh_token)
-        result = await refresh_access_token_service(refresh_token)
+        # Usar Circuit Breaker para proteger contra saturación
+        result = await cb_refresh.call(refresh_access_token_service, refresh_token)
         logger.info(f'{{"event": "refresh_token_success", "ip": "{request.client.host}"}}')
         return result
+    except RuntimeError as e:
+        if "Circuit breaker" in str(e):
+            logger.warning(f'{{"event": "refresh_circuit_open", "ip": "{request.client.host}"}}')
+            raise HTTPException(status_code=503, detail="token_refresh_temporarily_unavailable")
+        raise
     except HTTPException:
         raise
     except Exception as e:
@@ -184,6 +169,7 @@ async def refresh_token_route(
 async def register_route(
     data: RegisterSchema,
     request: Request,
+    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     # Safe slicing para evitar IndexError con emails cortos
     email_preview = data.email[:3] + "..." + data.email[-6:] if len(data.email) > 9 else data.email[:3] + "..."
@@ -193,7 +179,7 @@ async def register_route(
         password = data.password
         full_name = sanitize_input(data.full_name) if data.full_name else None
 
-        result = await register_email_password_service(email=email, password=password, full_name=full_name)
+        result = await register_email_password_service(email=email, password=password, full_name=full_name, session=db)
         logger.info(f'{{"event": "register_success", "ip": "{request.client.host}"}}')
         return result
     except Exception as e:
@@ -210,12 +196,13 @@ async def register_route(
 async def login_route(
     data: LoginSchema,
     request: Request,
+    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     logger.info(f'{{"event": "login_attempt", "ip": "{request.client.host}"}}')
     try:
         email = sanitize_input(data.email)
         password = data.password
-        result = await login_email_password_service(email=email, password=password)
+        result = await login_email_password_service(email=email, password=password, session=db)
         logger.info(f'{{"event": "login_success", "ip": "{request.client.host}"}}')
         return result
     except Exception as e:

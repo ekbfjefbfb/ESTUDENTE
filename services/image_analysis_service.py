@@ -120,34 +120,7 @@ def validate_file(
 # ANÁLISIS CON GROQ (Visión)
 # =============================================
 
-async def _analyze_with_groq_vision(
-    file_bytes: bytes,
-    content_type: str,
-    language: str = "es",
-    extract_text: bool = True,
-    describe: bool = True,
-    max_tokens: int = 800,
-) -> Dict[str, Any]:
-    """
-    Analiza imagen usando Groq con modelo multimodal.
-    
-    Envía la imagen como base64 al modelo de visión y solicita:
-    - Descripción del contenido
-    - Extracción de texto (OCR vía IA)
-    - Detección de objetos/elementos relevantes
-    """
-    import os
-    from groq import Groq
-    
-    api_key = os.getenv("GROQ_API_KEY", "").strip()
-    if not api_key:
-        raise ProcessingError("GROQ_API_KEY not configured")
-    
-    # Modelo de visión — usar el configurado en config.py
-    from config import GROQ_VISION_MODEL as _cfg_vision_model
-    vision_model = _cfg_vision_model
-    
-    # Construir prompt según lo que se pide
+def _build_image_prompt(language: str, extract_text: bool, describe: bool) -> str:
     instructions = []
     if language == "es":
         if describe:
@@ -162,64 +135,7 @@ async def _analyze_with_groq_vision(
         if extract_text:
             instructions.append("Extract ALL visible text from the image, preserving original formatting.")
         instructions.append("If there are tables, represent them in a readable format.")
-    
-    prompt = "\n".join(instructions)
-    
-    # Codificar imagen en base64
-    b64_image = base64.b64encode(file_bytes).decode("utf-8")
-    mime = content_type if content_type else "image/jpeg"
-    
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime};base64,{b64_image}"
-                    }
-                }
-            ]
-        }
-    ]
-    
-    # Llamar a Groq en thread separado para no bloquear el event loop
-    client = Groq(api_key=api_key)
-    
-    def _call_groq():
-        return client.chat.completions.create(
-            model=vision_model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=0.1,  # Bajo para mayor precisión en OCR
-            timeout=60.0,
-        )
-    
-    try:
-        completion = await anyio.to_thread.run_sync(_call_groq)
-        response_text = completion.choices[0].message.content or ""
-    except Exception as e:
-        logger.error(f"Groq vision call failed: {e}")
-        raise ProcessingError(f"ai_processing_failed: {str(e)}")
-    
-    # Parsear respuesta
-    result = {
-        "raw_response": response_text,
-        "model_used": vision_model,
-    }
-    
-    # Intentar separar descripción y texto extraído
-    if extract_text and describe:
-        # La IA suele separar naturalmente, pero no forzamos estructura
-        result["description"] = response_text
-        result["extracted_text"] = response_text
-    elif extract_text:
-        result["extracted_text"] = response_text
-    elif describe:
-        result["description"] = response_text
-    
-    return result
+    return "\n".join(instructions)
 
 
 async def _extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -327,16 +243,47 @@ async def analyze_image(
             result["success"] = True
         
         elif file_info["is_image"]:
-            # Para imágenes: usar modelo de visión
-            vision_result = await _analyze_with_groq_vision(
-                file_bytes=file_bytes,
-                content_type=content_type,
-                language=language,
-                extract_text=extract_text,
-                describe=describe,
+            # Para imágenes: formatear y delegar directo al servicio base
+            from services.groq_ai_service import chat_with_ai_vision
+            from config import GROQ_MODEL_VISION
+            
+            prompt = _build_image_prompt(language, extract_text, describe)
+            b64_image = base64.b64encode(file_bytes).decode("utf-8")
+            mime = content_type if content_type else "image/jpeg"
+            
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime};base64,{b64_image}"
+                            }
+                        }
+                    ]
+                }
+            ]
+            
+            response_text = await chat_with_ai_vision(
+                messages=messages,
+                user=user_id,
+                temperature=0.1,  # Bajo para mayor precisión en OCR
                 max_tokens=max_tokens,
             )
-            result.update(vision_result)
+            
+            result["raw_response"] = response_text
+            result["model_used"] = GROQ_MODEL_VISION
+            
+            if extract_text and describe:
+                result["description"] = response_text
+                result["extracted_text"] = response_text
+            elif extract_text:
+                result["extracted_text"] = response_text
+            elif describe:
+                result["description"] = response_text
+                
             result["success"] = True
         
         else:

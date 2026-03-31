@@ -73,7 +73,7 @@ except ImportError:
     CV_AVAILABLE = False
 
 try:
-    from services.search_service import SearchService
+    from services.tavily_search_service import TavilySearchService as SearchService
     SEARCH_AVAILABLE = True
 except ImportError:
     SearchService = None

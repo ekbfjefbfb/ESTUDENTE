@@ -402,6 +402,7 @@ async def _execute_chat_core(
     max_tokens: Optional[int],
     stream: bool,
     forced_model: Optional[str] = None,
+    use_web_search: bool = False,
 ) -> Any:
     """
     NÚCLEO REUTILIZABLE de chat con Groq.
@@ -478,9 +479,97 @@ async def _execute_chat_core(
         "timeout": TIMEOUT_SECONDS,
     }
     
+    if use_web_search and not stream:
+        kwargs["tools"] = [{
+            "type": "function",
+            "function": {
+                "name": "search_web",
+                "description": "Busca informacion actualizada, clima, noticias o datos en internet. Usar SIEMPRE que no sepas algo reciente o pida informacion real.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "La busqueda o pregunta exacta (en base a la conversacion)"
+                        }
+                    },
+                    "required": ["query"]
+                }
+            }
+        }]
+        kwargs["tool_choice"] = "auto"
+    
     # 8. Ejecutar con retry y fallback
     try:
         completion = await _call_groq_with_retry(create_fn, kwargs)
+        
+        # 8.1 Interceptar Tool Calls (Búsqueda Web)
+        response_message = completion.choices[0].message
+        if getattr(response_message, "tool_calls", None):
+            for tool_call in response_message.tool_calls:
+                if tool_call.function.name == "search_web":
+                    import json
+                    from services.tavily_search_service import tavily_search_service
+                    from services.serper_search_service import serper_search_service
+                    
+                    try:
+                        args = json.loads(tool_call.function.arguments)
+                        query = args.get("query", "")
+                        logger.info(f"LLM tool invocation: search_web(query='{query}')")
+                        
+                        # PRIORITY: Tavily
+                        user_for_search = user or "tool_search"
+                        search_results, meta = await tavily_search_service.search_with_meta(
+                            query=query, user_id=user_for_search, include_images=False
+                        )
+                        
+                        # FALLBACK: Serper
+                        if meta.get("status") != "ok":
+                            logger.warning(f"Tavily search failed ({meta.get('status')}), falling back to Serper")
+                            search_results, meta = await serper_search_service.search_with_meta(
+                                query=query, user_id=user_for_search, include_images=False
+                            )
+                        
+                        # Format Output
+                        if not search_results:
+                            search_result_text = "No se encontraron resultados o las APIs de búsqueda están agotadas."
+                        else:
+                            snippets = [
+                                f"- {r.get('title', 'Sin título')}\n  {r.get('snippet', '')}\n  (Fuente: {r.get('url', '')})"
+                                for r in search_results
+                            ]
+                            search_result_text = "Resultados recuperados de la web:\n\n" + "\n\n".join(snippets)
+                        
+                        logger.info(f"Search retrieved {len(search_results)} primary sources")
+                        
+                        msg_dump = response_message.model_dump(exclude_unset=True) if hasattr(response_message, "model_dump") else response_message.dict(exclude_unset=True)
+                        messages.append(msg_dump)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "name": tool_call.function.name,
+                            "content": search_result_text[:6000]  # Hard cap
+                        })
+                        
+                    except Exception as e:
+                        logger.error(f"Error executing search_web tool: {e}")
+                        msg_dump = response_message.model_dump(exclude_unset=True) if hasattr(response_message, "model_dump") else response_message.dict(exclude_unset=True)
+                        messages.append(msg_dump)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": getattr(tool_call, "id", "unknown"),
+                            "name": "search_web",
+                            "content": f"Búsqueda falló temporalmente: {e}"
+                        })
+
+            # Llamada de inyección final con resultado
+            kwargs["messages"] = messages
+            kwargs.pop("tools", None)
+            kwargs.pop("tool_choice", None)
+            # Re-ejecutar ignorando caídas de timeout para dar margen a la búsqueda
+            kwargs["timeout"] = TIMEOUT_SECONDS + 15 
+            completion = await _call_groq_with_retry(create_fn, kwargs)
+
     except Exception as e:
         logger.error(f"Groq API failed with model {model}: {e}")
         
@@ -490,6 +579,8 @@ async def _execute_chat_core(
             try:
                 kwargs["model"] = GROQ_MODEL_FAST
                 kwargs["reasoning_effort"] = None
+                kwargs.pop("tools", None)
+                kwargs.pop("tool_choice", None)
                 # Ajustar tokens para FAST
                 kwargs["max_tokens"] = min(kwargs.get("max_tokens", GROQ_MAX_TOKENS_FAST), GROQ_MAX_TOKENS_FAST)
                 completion = await _call_groq_with_retry(create_fn, kwargs)
@@ -499,7 +590,7 @@ async def _execute_chat_core(
             # FAST falló = no hay fallback
             raise RuntimeError(f"Error al contactar con la IA: {str(e)}") from e
 
-    # 9. Extraer respuesta
+    # 9. Extraer respuesta final
     try:
         content = completion.choices[0].message.content
     except Exception as e:
@@ -516,6 +607,7 @@ async def chat_with_ai(
     fast_reasoning: bool = True,
     friendly: bool = False,
     stream: bool = False,
+    use_web_search: bool = False,
 ) -> Any:
     """
     Chat con IA - selección automática de modelo (FAST o REASONING).
@@ -528,6 +620,7 @@ async def chat_with_ai(
         max_tokens=max_tokens,
         stream=stream,
         forced_model=None,  # Auto-detecta según complejidad
+        use_web_search=use_web_search,
     )
 
 
@@ -538,6 +631,7 @@ async def chat_with_ai_vision(
     max_tokens: Optional[int] = None,
     fast_reasoning: bool = True,
     stream: bool = False,
+    use_web_search: bool = False,
 ) -> Any:
     """
     Chat con IA FORZANDO modelo VISION (para imágenes).
@@ -550,6 +644,7 @@ async def chat_with_ai_vision(
         max_tokens=max_tokens,
         stream=stream,
         forced_model=GROQ_MODEL_VISION,
+        use_web_search=use_web_search,
     )
     
     # Si _execute_chat_core devolvió un async generator (streaming), pasarlo directo

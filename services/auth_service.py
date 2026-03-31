@@ -64,24 +64,33 @@ class AuthService:
         self.redis = None
         self.session_timeout = 3600  # 1 hora
 
-    def _hash_password(self, password: str) -> str:
+    async def _hash_password(self, password: str) -> str:
+        """Hash password - ejecutado en thread separado para no bloquear event loop"""
         pwd = str(password or "")
-        try:
-            if len(pwd.encode("utf-8")) > 72:
+        
+        def _do_hash():
+            try:
+                if len(pwd.encode("utf-8")) > 72:
+                    return pwd_context.hash(pwd, scheme="pbkdf2_sha256")
+            except Exception:
                 return pwd_context.hash(pwd, scheme="pbkdf2_sha256")
-        except Exception:
-            return pwd_context.hash(pwd, scheme="pbkdf2_sha256")
 
-        try:
-            return pwd_context.hash(pwd, scheme="bcrypt")
-        except Exception:
-            return pwd_context.hash(pwd, scheme="pbkdf2_sha256")
+            try:
+                return pwd_context.hash(pwd, scheme="bcrypt")
+            except Exception:
+                return pwd_context.hash(pwd, scheme="pbkdf2_sha256")
+        
+        return await asyncio.to_thread(_do_hash)
 
-    def _verify_password(self, plain_password: str, hashed_password: str) -> bool:
-        try:
-            return pwd_context.verify(plain_password, hashed_password)
-        except Exception:
-            return False
+    async def _verify_password(self, plain_password: str, hashed_password: str) -> bool:
+        """Verify password - ejecutado en thread separado para no bloquear event loop"""
+        def _do_verify():
+            try:
+                return pwd_context.verify(plain_password, hashed_password)
+            except Exception:
+                return False
+        
+        return await asyncio.to_thread(_do_verify)
 
     async def _generate_unique_username(self, session: AsyncSession, email: str) -> str:
         base = (email.split("@")[0] if email and "@" in email else "user").strip().lower()
@@ -91,8 +100,7 @@ class AuthService:
         for _ in range(8):
             try:
                 result = await session.execute(
-                    text("SELECT id FROM users WHERE username = :username"),
-                    {"username": candidate}
+                    select(User.id).where(User.username == candidate)
                 )
                 if result.scalar_one_or_none() is None:
                     return candidate
@@ -103,12 +111,16 @@ class AuthService:
         # Si no se pudo verificar, generar username con UUID único
         return f"user_{uuid.uuid4().hex[:12]}"[:50]
 
-    async def register_email_password_v2(self, email: str, password: str, full_name: Optional[str] = None) -> Dict[str, Any]:
+    async def register_email_password_v2(self, email: str, password: str, full_name: Optional[str] = None, session: Optional[AsyncSession] = None) -> Dict[str, Any]:
+        """Registro con email/password - usa sesión inyectada o crea una"""
         start_time = time.time()
+        own_session = session is None
         try:
             AUTH_REQUESTS.labels(method="email_register", status="started").inc()
 
-            session = await get_db_session()
+            if own_session:
+                session = await get_db_session()
+            
             async with session:
                 email = (email or "").strip().lower()
                 if not email:
@@ -116,39 +128,31 @@ class AuthService:
                 if not password or len(str(password)) < 8:
                     raise Exception("Password inválido")
 
-                # Usar SQL directo para evitar columnas faltantes - solo columnas que existen
+                # Verificar con SQLAlchemy ORM
                 result = await session.execute(
-                    text("SELECT id, email, username, is_active FROM users WHERE email = :email"),
-                    {"email": email}
+                    select(User).where(User.email == email)
                 )
-                row = result.first()
-                if row is not None:
+                user = result.scalar_one_or_none()
+                if user is not None:
                     raise Exception("El email ya está registrado")
 
                 username = await self._generate_unique_username(session, email=email)
 
-                hashed_password = self._hash_password(str(password))
+                hashed_password = await self._hash_password(str(password))
                 
-                # Insertar usuario con SQL directo - solo columnas que existen
+                # Crear nuevo usuario con ORM
                 user_id = str(uuid.uuid4())
                 try:
-                    await session.execute(
-                        text(
-                            """INSERT INTO users (id, username, email, hashed_password, is_active, created_at)
-                               VALUES (:id, :username, :email, :hashed_password, true, NOW())"""
-                        ),
-                        {
-                            "id": user_id,
-                            "username": username,
-                            "email": email,
-                            "hashed_password": hashed_password,
-                        },
+                    new_user = User(
+                        id=user_id,
+                        username=username,
+                        email=email,
+                        hashed_password=hashed_password,
+                        is_active=True
                     )
+                    session.add(new_user)
                 except Exception as e:
-                    # Si la DB aún no tiene la columna hashed_password, fallar claro.
-                    msg = str(e)
-                    if "hashed_password" in msg or "column" in msg:
-                        raise Exception("db_schema_missing_hashed_password")
+                    logger.error(f"Error creando usuario ORM: {e}")
                     raise
                 await session.commit()
 
@@ -175,12 +179,16 @@ class AuthService:
             logger.error({"event": "email_register_failed", "error": str(e), "processing_time": processing_time})
             raise
 
-    async def login_email_password(self, email: str, password: str) -> Dict[str, Any]:
+    async def login_email_password(self, email: str, password: str, session: Optional[AsyncSession] = None) -> Dict[str, Any]:
+        """Login con email/password - usa sesión inyectada o crea una"""
         start_time = time.time()
+        own_session = session is None
         try:
             AUTH_REQUESTS.labels(method="email_login", status="started").inc()
 
-            session = await get_db_session()
+            if own_session:
+                session = await get_db_session()
+            
             async with session:
                 email = (email or "").strip().lower()
                 if not email:
@@ -188,17 +196,20 @@ class AuthService:
                 if not password:
                     raise Exception("Credenciales inválidas")
 
-                # Usar SQL directo para evitar columnas faltantes
+                # Verificar con SQLAlchemy ORM
                 result = await session.execute(
-                    text("SELECT id, email, username, is_active, hashed_password FROM users WHERE email = :email"),
-                    {"email": email}
+                    select(User).where(User.email == email)
                 )
-                row = result.first()
+                user = result.scalar_one_or_none()
                 
-                if row is None:
+                if user is None:
                     raise Exception("Credenciales inválidas")
                 
-                user_id, user_email, username, is_active, hashed_password = row
+                user_id = user.id
+                user_email = user.email
+                username = user.username
+                is_active = user.is_active
+                hashed_password = user.hashed_password
                 
                 if not is_active:
                     raise Exception("Credenciales inválidas")
@@ -206,7 +217,7 @@ class AuthService:
                 if not hashed_password:
                     raise Exception("user_has_no_password")
 
-                if not self._verify_password(str(password), str(hashed_password)):
+                if not await self._verify_password(str(password), str(hashed_password)):
                     raise Exception("Credenciales inválidas")
 
             access_token = await create_access_token({"sub": str(user_id)})
@@ -233,30 +244,39 @@ class AuthService:
             raise
 
     async def authenticate_google_user(self, google_token: str) -> Dict[str, Any]:
-        """Autentica usuario con token de Google"""
+        """Autentica usuario validando criptográficamente el token de Google"""
         start_time = time.time()
         
         try:
             AUTH_REQUESTS.labels(method="google", status="started").inc()
             
-            # Mock implementation para evitar dependencias externas
-            logger.info({
-                "event": "google_auth_started",
-                "token_preview": google_token[:20] + "..." if len(google_token) > 20 else google_token
-            })
+            import httpx
             
-            # Simular procesamiento
-            await asyncio.sleep(0.1)
+            # 1. Validar el token directamente de forma segura con Google
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"https://oauth2.googleapis.com/tokeninfo?id_token={google_token}")
+                if resp.status_code != 200:
+                    raise Exception(f"Token de Google inválido o expirado: {resp.text}")
+                
+                payload = resp.json()
+            
+            # 2. Verificar Audience contra el backend
+            from config import GOOGLE_CLIENT_ID
+            if GOOGLE_CLIENT_ID and payload.get("aud") != GOOGLE_CLIENT_ID:
+                raise Exception(f"Audience (aud) no coincide con GOOGLE_CLIENT_ID")
+            
+            email = payload.get("email")
+            if not email:
+                raise Exception("El token no proporcionó un email válido")
             
             user_data = {
-                "email": "user@example.com",
-                "name": "Test User",
-                "google_id": "mock_google_id"
+                "email": email,
+                "name": payload.get("name") or payload.get("given_name") or email.split("@")[0],
+                "google_id": payload.get("sub")
             }
             
             # Crear o actualizar usuario
-            from database.db_enterprise import get_primary_session
-            session = await get_primary_session()
+            session = await get_db_session()
             async with session:
                 user = await self._get_or_create_user(session, user_data)
                 
@@ -301,28 +321,53 @@ class AuthService:
             raise Exception(f"Error en autenticación con Google: {str(e)}")
 
     async def authenticate_apple_user(self, apple_token: str) -> Dict[str, Any]:
-        """Autentica usuario con token de Apple"""
+        """Autentica usuario validando criptográficamente la firma RS256 de Apple"""
         start_time = time.time()
         
         try:
             AUTH_REQUESTS.labels(method="apple", status="started").inc()
             
-            logger.info({
-                "event": "apple_auth_started",
-                "token_preview": apple_token[:20] + "..." if len(apple_token) > 20 else apple_token
-            })
+            import httpx
+            from jose import jwt
+            from config import APPLE_CLIENT_ID
             
-            # Mock implementation para evitar dependencias externas
-            await asyncio.sleep(0.1)
+            # 1. Traer llaves públicas (JWKs) de Apple
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get("https://appleid.apple.com/auth/keys")
+                if resp.status_code != 200:
+                    raise Exception("No se pudieron obtener las llaves de seguridad de Apple")
+                apple_keys = resp.json().get("keys", [])
+            
+            # 2. Encontrar qué llave firmó el token
+            unverified_header = jwt.get_unverified_header(apple_token)
+            kid = unverified_header.get("kid")
+            if not kid:
+                raise Exception("El token no tiene un identificador de llave ('kid') válido")
+            
+            rsa_key = next((key for key in apple_keys if key.get("kid") == kid), None)
+            if not rsa_key:
+                raise Exception("No se encontró una llave pública coincidente en Apple para la firma del token")
+            
+            # 3. Validar matemáticamente el payload y el vencimiento
+            payload = jwt.decode(
+                apple_token,
+                rsa_key,
+                algorithms=["RS256"],
+                audience=APPLE_CLIENT_ID,        # Valida que sea para nuestro bundle id
+                issuer="https://appleid.apple.com" # Exige que Apple lo haya emitido
+            )
+            
+            email = payload.get("email")
+            if not email:
+                raise Exception("El token de Apple no proporcionó un email")
             
             user_data = {
-                "email": "user@apple.com",
-                "name": "Apple User",
-                "apple_id": "mock_apple_id"
+                "email": email,
+                "name": "Apple User", # Las identidades ocultas de Apple no mandan name en el JWT (sólo en callback de OAuth)
+                "apple_id": payload.get("sub")
             }
             
-            from database.db_enterprise import get_primary_session
-            session = await get_primary_session()
+            session = await get_db_session()
             async with session:
                 user = await self._get_or_create_user(session, user_data)
                 
@@ -370,45 +415,30 @@ class AuthService:
         try:
             email = user_data.get("email")
             result = await session.execute(
-                text("SELECT id, email, username, is_active FROM users WHERE email = :email"),
-                {"email": email}
+                select(User).where(User.email == email)
             )
-            row = result.first()
-            if row:
-                user_id, email_val, username, is_active = row
-                user = type('User', (), {
-                    'id': user_id, 'email': email_val, 'username': username, 'is_active': is_active
-                })()
-            else:
-                user = None
+            user = result.scalar_one_or_none()
 
             if not user:
-                # Crear nuevo usuario con SQL directo
+                # Crear nuevo usuario con ORM
                 user_id = str(uuid.uuid4())
                 username = email.split("@")[0][:30] if email and "@" in email else f"user_{uuid.uuid4().hex[:8]}"
                 
                 # Verificar si username existe
                 result2 = await session.execute(
-                    text("SELECT id FROM users WHERE username = :username"),
-                    {"username": username}
+                    select(User.id).where(User.username == username)
                 )
-                if result2.first():
+                if result2.scalar_one_or_none():
                     username = f"{username}_{uuid.uuid4().hex[:6]}"
                 
-                await session.execute(
-                    text("""INSERT INTO users (id, username, email, is_active, created_at) 
-                           VALUES (:id, :username, :email, true, NOW())"""),
-                    {"id": user_id, "username": username, "email": email}
+                user = User(
+                    id=user_id,
+                    username=username,
+                    email=email,
+                    is_active=True
                 )
+                session.add(user)
                 await session.commit()
-                
-                # Crear objeto User simplificado
-                user = type('User', (), {
-                    'id': user_id,
-                    'email': email,
-                    'username': username,
-                    'is_active': True
-                })()
                 
                 logger.info({
                     "event": "user_created",
@@ -416,11 +446,10 @@ class AuthService:
                     "email": email
                 })
             else:
-                # Actualizar usuario existente - usar SQL directo
-                await session.execute(
-                    text("UPDATE users SET last_activity = NOW() WHERE id = :user_id"),
-                    {"user_id": user.id}
-                )
+                # Actualizar usuario existente con ORM
+                from sqlalchemy.sql import func
+                user.last_activity = func.now()
+                session.add(user)
                 await session.commit()
                 
                 logger.info({
@@ -449,17 +478,9 @@ class AuthService:
             session = await get_db_session()
             async with session:
                 result = await session.execute(
-                    text("SELECT id, email, username, is_active FROM users WHERE id = :user_id"),
-                    {"user_id": user_id}
+                    select(User).where(User.id == user_id)
                 )
-                row = result.first()
-                if row:
-                    user_id_val, email, username, is_active = row
-                    user = type('User', (), {
-                        'id': user_id_val, 'email': email, 'username': username, 'is_active': is_active
-                    })()
-                else:
-                    user = None
+                user = result.scalar_one_or_none()
 
                 if not user or not user.is_active:
                     raise Exception("Usuario no encontrado o inactivo")
@@ -513,17 +534,9 @@ class AuthService:
             session = await get_db_session()
             async with session:
                 result = await session.execute(
-                    text("SELECT id, email, username, is_active FROM users WHERE id = :user_id"),
-                    {"user_id": user_id}
+                    select(User).where(User.id == user_id)
                 )
-                row = result.first()
-                if row:
-                    user_id_val, email, username, is_active = row
-                    user = type('User', (), {
-                        'id': user_id_val, 'email': email, 'username': username, 'is_active': is_active
-                    })()
-                else:
-                    user = None
+                user = result.scalar_one_or_none()
                 
                 if not user:
                     return None
@@ -571,13 +584,13 @@ async def refresh_access_token_service(refresh_token: str) -> Dict[str, Any]:
     """Función de compatibilidad para renovar token"""
     return await auth_service.refresh_access_token(refresh_token)
 
-async def register_email_password_service(email: str, password: str, full_name: Optional[str] = None) -> Dict[str, Any]:
+async def register_email_password_service(email: str, password: str, full_name: Optional[str] = None, session: Optional[AsyncSession] = None) -> Dict[str, Any]:
     """Función de compatibilidad para registrar usuario con email/password"""
-    return await auth_service.register_email_password_v2(email=email, password=password, full_name=full_name)
+    return await auth_service.register_email_password_v2(email=email, password=password, full_name=full_name, session=session)
 
-async def login_email_password_service(email: str, password: str) -> Dict[str, Any]:
+async def login_email_password_service(email: str, password: str, session: Optional[AsyncSession] = None) -> Dict[str, Any]:
     """Función de compatibilidad para login con email/password"""
-    return await auth_service.login_email_password(email=email, password=password)
+    return await auth_service.login_email_password(email=email, password=password, session=session)
 
 # =============================================
 # FUNCIONES DE INICIALIZACIÓN
