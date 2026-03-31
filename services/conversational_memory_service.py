@@ -76,8 +76,9 @@ async def get_conversation_history(user_id: str, limit: int = 10) -> List[Dict[s
         if not isinstance(history, list):
             return []
         
-        # Retornar últimos 'limit' mensajes
-        return history[-limit:] if len(history) > limit else history
+        # Retornar últimos 'limit' mensajes, solo con role y content (sin timestamp)
+        messages = history[-limit:] if len(history) > limit else history
+        return [{"role": msg.get("role"), "content": msg.get("content")} for msg in messages if isinstance(msg, dict)]
         
     except Exception as e:
         logger.warning(f"Failed to get conversation history: {e}")

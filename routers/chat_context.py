@@ -27,23 +27,27 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
         "user_full_name": "",
     }
     
+    from database.db_enterprise import get_primary_session
+    
+    today = date.today()
+    end_week = today + timedelta(days=7)
+    
+    # Query 1: Info del usuario (transacción independiente)
     try:
-        from database.db_enterprise import get_primary_session
         db = await get_primary_session()
         async with db:
-            today = date.today()
-            end_week = today + timedelta(days=7)
-            
-            try:
-                stmt_user = select(User).where(User.id == user_id).limit(1)
-                result_user = await db.execute(stmt_user)
-                user_row = result_user.scalar_one_or_none()
-                if user_row is not None:
-                    context["user_full_name"] = str(getattr(user_row, "full_name", "") or "").strip()
-            except Exception:
-                pass
-
-            # Tareas de hoy
+            stmt_user = select(User).where(User.id == user_id).limit(1)
+            result_user = await db.execute(stmt_user)
+            user_row = result_user.scalar_one_or_none()
+            if user_row is not None:
+                context["user_full_name"] = str(getattr(user_row, "full_name", "") or "").strip()
+    except Exception as e:
+        logger.debug(f"Could not fetch user name: {e}")
+    
+    # Query 2: Tareas de hoy (transacción independiente)
+    try:
+        db = await get_primary_session()
+        async with db:
             stmt_tasks_today = select(SessionItem).where(
                 and_(
                     SessionItem.user_id == user_id,
@@ -58,8 +62,13 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
                 {"id": t.id, "title": t.title, "due_date": t.due_date.isoformat() if t.due_date else None}
                 for t in tasks_today
             ]
-
-            # Tareas próximas (próxima semana)
+    except Exception as e:
+        logger.debug(f"Could not fetch today's tasks: {e}")
+    
+    # Query 3: Tareas próximas (transacción independiente)
+    try:
+        db = await get_primary_session()
+        async with db:
             stmt_tasks_upcoming = select(SessionItem).where(
                 and_(
                     SessionItem.user_id == user_id,
@@ -75,8 +84,13 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
                 {"id": t.id, "title": t.title, "due_date": t.due_date.isoformat() if t.due_date else None}
                 for t in tasks_upcoming
             ]
-
-            # Puntos clave recientes
+    except Exception as e:
+        logger.debug(f"Could not fetch upcoming tasks: {e}")
+    
+    # Query 4: Puntos clave recientes (transacción independiente)
+    try:
+        db = await get_primary_session()
+        async with db:
             stmt_points = select(SessionItem).where(
                 and_(
                     SessionItem.user_id == user_id,
@@ -90,8 +104,13 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
                 {"id": p.id, "content": p.content[:100], "created_at": p.created_at.isoformat()}
                 for p in points
             ]
-            
-            # Sesiones recientes
+    except Exception as e:
+        logger.debug(f"Could not fetch key points: {e}")
+    
+    # Query 5: Sesiones recientes (transacción independiente)
+    try:
+        db = await get_primary_session()
+        async with db:
             stmt_sessions = select(RecordingSession).where(
                 and_(
                     RecordingSession.user_id == user_id,
@@ -105,13 +124,8 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
                 {"id": s.id, "title": s.title, "date": s.created_at.isoformat()}
                 for s in sessions
             ]
-            
     except Exception as e:
-        msg = str(e)
-        if "relation" in msg and "does not exist" in msg:
-            logger.warning(f"Database tables not ready: {msg}")
-        else:
-            logger.error(f"Error al obtener contexto de usuario: {e}")
+        logger.debug(f"Could not fetch recent sessions: {e}")
     
     return context
 
