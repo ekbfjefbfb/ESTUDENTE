@@ -254,6 +254,13 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
         # Cleanup final garantizado si cae la red
         if processor_task and not processor_task.done():
             try:
-                audio_queue.put_nowait(None)
-            except Exception:
-                pass
+                # 1. Avisamos al worker que es el fin
+                await audio_queue.put(None)
+                # 2. Le damos 5s de gracia para que guarde en Base de Datos
+                await asyncio.wait_for(processor_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                # 3. Si se congela y no respeta los 5s, lo destruimos forzosamente (Anti-Zombies)
+                logger.warning(f"⚠️ Worker tardó demasiado. Matando proceso forzosamente para prevenir Memory Leak. (Session: {session_id})")
+                processor_task.cancel()
+            except Exception as e:
+                logger.error(f"Error limpiando memory task: {e}")
