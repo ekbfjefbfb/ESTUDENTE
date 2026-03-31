@@ -178,8 +178,6 @@ class User(Base):
     
     # Estado del usuario
     is_active = Column(Boolean, default=True)
-    is_admin = Column(Boolean, default=False)
-    is_verified = Column(Boolean, default=False)
     
     # Plan y suscripción
     plan_id = Column(Integer, ForeignKey("plans.id"), nullable=True)
@@ -359,7 +357,6 @@ class User(Base):
             "email": self.email,
             "full_name": self.full_name,
             "is_active": self.is_active,
-            "is_verified": self.is_verified,
             "user_type": self.get_user_type(),
             "is_premium": self.is_premium_user(),
             "plan": self.plan.to_dict() if self.plan else None,
@@ -372,7 +369,6 @@ class User(Base):
         
         if include_sensitive:
             data.update({
-                "is_admin": self.is_admin,
                 "profile_data": self.profile_data or {},
                 "preferences": self.preferences or {}
             })

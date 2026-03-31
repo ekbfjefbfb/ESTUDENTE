@@ -30,7 +30,7 @@ logger = logging.getLogger("user_repository")
 # Queries SQL reutilizables
 _FULL_USER_SELECT = """
     SELECT id, username, email, full_name,
-           is_active, is_admin, is_verified,
+           is_active,
            profile_picture_url, oauth_provider, hashed_password,
            created_at
     FROM users

@@ -23,8 +23,6 @@ class UserDTO:
     email: Optional[str] = None
     full_name: Optional[str] = None
     is_active: bool = True
-    is_admin: bool = False
-    is_verified: bool = False
     plan_name: Optional[str] = None
     profile_picture_url: Optional[str] = None
     oauth_provider: Optional[str] = None
@@ -65,8 +63,6 @@ class UserDTO:
                 "email": getattr(row, "email", None),
                 "full_name": getattr(row, "full_name", None),
                 "is_active": getattr(row, "is_active", True),
-                "is_admin": getattr(row, "is_admin", False),
-                "is_verified": getattr(row, "is_verified", False),
                 "profile_picture_url": getattr(row, "profile_picture_url", None),
                 "oauth_provider": getattr(row, "oauth_provider", None),
             }
@@ -77,8 +73,6 @@ class UserDTO:
             email=data.get("email"),
             full_name=data.get("full_name"),
             is_active=bool(data.get("is_active", True)),
-            is_admin=bool(data.get("is_admin", False)),
-            is_verified=bool(data.get("is_verified", False)),
             profile_picture_url=data.get("profile_picture_url"),
             oauth_provider=data.get("oauth_provider"),
             created_at=data.get("created_at"),
