@@ -7,7 +7,6 @@ Características:
 - Procesamiento asíncrono de transcripción
 """
 from sqlalchemy import Column, String, Integer, DateTime, Float, Text, Boolean, ForeignKey, JSON, Enum, BigInteger, Index
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -15,10 +14,8 @@ from typing import Dict, Any, List, Optional
 import enum
 import uuid
 
-# Importar User para la relación (forward reference)
-from models.models import User
-
-Base = declarative_base()
+# Importar User y Base para compartir el mismo registry
+from models.models import User, Base
 
 # =============================================
 # ENUMS PARA SISTEMA DE NOTAS DE VOZ

@@ -19,6 +19,7 @@ from sqlalchemy import select, and_, update
 from sqlalchemy.orm import selectinload
 
 from database.db_enterprise import get_primary_session
+from models.models import User  # Importar User para registrar el mapper en SQLAlchemy
 from models.voice_note_models import (
     VoiceNote, 
     VoiceNoteProcessingJob, 
