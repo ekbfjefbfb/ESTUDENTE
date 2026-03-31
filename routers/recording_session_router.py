@@ -139,8 +139,42 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
             await websocket.close(code=1008) # Policy Violation
             return
     
+    import asyncio
+    audio_queue: asyncio.Queue = asyncio.Queue()
+    
+    async def audio_processor_worker():
+        """Worker secundario: procesa FIFO los audios hacia la IA sin bloquear el WS socket"""
+        while True:
+            item = await audio_queue.get()
+            if item is None:
+                audio_queue.task_done()
+                break # Señal de fin
+            
+            chunk_bytes, ts_seconds = item
+            try:
+                str_text = await recording_session_service.process_audio_chunk(
+                    session_id=session_id,
+                    user_id=user_id,
+                    audio_bytes=chunk_bytes,
+                    timestamp_seconds=ts_seconds
+                )
+                if str_text:
+                    try:
+                        await websocket.send_json({
+                            "type": "transcript",
+                            "text": str_text,
+                            "timestamp": ts_seconds
+                        })
+                    except Exception:
+                        pass # Exception si el WS se cerró abruptamente
+            except Exception as w_e:
+                logger.error(f"Error worker IA STT: {w_e}")
+            finally:
+                audio_queue.task_done()
+
     start_time = datetime.utcnow()
     audio_buffer = b""
+    processor_task = asyncio.create_task(audio_processor_worker())
     
     try:
         while True:
@@ -171,7 +205,20 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
                             break
 
                     elif msg_type == "end":
-                        await websocket.send_json({"type": "processing", "message": "Finalizando y resumiendo..."})
+                        await websocket.send_json({"type": "processing", "message": "Procesando últimos bytes..."})
+                        
+                        # Drenar audios pendientes
+                        if audio_buffer:
+                            elapsed = int((datetime.utcnow() - start_time).total_seconds())
+                            await audio_queue.put((audio_buffer, elapsed))
+                            audio_buffer = b""
+                            
+                        # Apagar worker gracefulmente
+                        await audio_queue.put(None)
+                        if processor_task and not processor_task.done():
+                            await processor_task
+                        
+                        await websocket.send_json({"type": "processing", "message": "Finalizando y extrayendo resumen IA..."})
                         session = await recording_session_service.finalize_session(session_id, user_id)
                         if session:
                             await websocket.send_json({
@@ -188,23 +235,11 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
                 chunk = message["bytes"]
                 audio_buffer += chunk
                 
-                # Procesar cada ~2 segundos de audio (32000 bytes aprox para webm/opus)
+                # Despachar cada ~2 segundos de audio y liberar loop
                 if len(audio_buffer) >= 32000:
                     elapsed = int((datetime.utcnow() - start_time).total_seconds())
-                    text = await recording_session_service.process_audio_chunk(
-                        session_id=session_id,
-                        user_id=user_id,
-                        audio_bytes=audio_buffer,
-                        timestamp_seconds=elapsed
-                    )
-                    
-                    if text:
-                        await websocket.send_json({
-                            "type": "transcript",
-                            "text": text,
-                            "timestamp": elapsed
-                        })
-                    
+                    # Encolar en memoria asíncrona O(1)
+                    await audio_queue.put((audio_buffer, elapsed))
                     audio_buffer = b""
 
     except WebSocketDisconnect:
@@ -213,4 +248,12 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
         logger.error(f"❌ Error crítico WS: {e}")
         try:
             await websocket.send_json({"type": "error", "message": "internal_error"})
-        except: pass
+        except Exception: 
+            pass
+    finally:
+        # Cleanup final garantizado si cae la red
+        if processor_task and not processor_task.done():
+            try:
+                audio_queue.put_nowait(None)
+            except Exception:
+                pass

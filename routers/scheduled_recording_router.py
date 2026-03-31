@@ -172,7 +172,7 @@ async def get_pending_recording(
                 ScheduledRecording.scheduled_at >= window_start,
                 ScheduledRecording.scheduled_at <= window_end
             )
-        ).order_by(ScheduledRecording.scheduled_at)
+        ).order_by(ScheduledRecording.scheduled_at).with_for_update(skip_locked=True)
         
         result = await session.execute(query)
         pending = result.scalar_one_or_none()

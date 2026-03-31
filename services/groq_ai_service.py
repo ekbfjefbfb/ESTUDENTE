@@ -333,8 +333,9 @@ async def _groq_stream_async(
                         yield sanitized
 
 
-async def _get_user_personal_context(user_id: str) -> Optional[str]:
-    """Obtiene contexto del usuario SOLO si hay datos relevantes para inyectar."""
+from services.smart_cache_service import smart_cache
+
+async def _get_user_personal_context_db(user_id: str) -> Optional[str]:
     if not user_id:
         return None
     try:
@@ -391,8 +392,20 @@ async def _get_user_personal_context(user_id: str) -> Optional[str]:
         finally:
             await session.close()
     except Exception as e:
-        logger.warning(f"Error fetching user context: {e}")
+        logger.warning(f"Error fetching user context (DB): {e}")
     return None
+
+
+async def _get_user_personal_context(user_id: str) -> Optional[str]:
+    """Obtiene contexto del usuario cacheado para evitar queries N+1 por mensaje."""
+    if not user_id:
+        return None
+    
+    return await smart_cache.get_or_set(
+        key=f"ai_personal_context:{user_id}",
+        factory=lambda: _get_user_personal_context_db(user_id),
+        ttl=300  # 5 minutos en RAM
+    )
 
 
 async def _execute_chat_core(
