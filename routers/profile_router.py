@@ -23,7 +23,6 @@ class MeResponse(BaseModel):
     username: str
     email: Optional[str] = None
     full_name: Optional[str] = None
-    phone_number: Optional[str] = None
     profile_picture_url: Optional[str] = None
 
 
@@ -78,14 +77,12 @@ async def get_me(current_user: Any = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="invalid_user_context")
     email = _current_user_value(current_user, "email")
     full_name = _current_user_value(current_user, "full_name")
-    phone_number = _current_user_value(current_user, "phone_number")
     profile_picture_url = _current_user_value(current_user, "profile_picture_url")
     return MeResponse(
         id=user_id,
         username=username,
         email=email,
         full_name=full_name,
-        phone_number=phone_number,
         profile_picture_url=profile_picture_url,
     )
 
@@ -93,7 +90,6 @@ async def get_me(current_user: Any = Depends(get_current_user)):
 class UpdateProfileRequest(BaseModel):
     username: Optional[str] = None
     full_name: Optional[str] = None
-    phone_number: Optional[str] = None
 
 
 class UpdateProfileResponse(BaseModel):
@@ -101,7 +97,6 @@ class UpdateProfileResponse(BaseModel):
     username: str
     email: Optional[str] = None
     full_name: Optional[str] = None
-    phone_number: Optional[str] = None
     profile_picture_url: Optional[str] = None
     updated_at: str
 
@@ -132,8 +127,6 @@ async def update_me(
         values["username"] = payload.username
     if payload.full_name is not None:
         values["full_name"] = payload.full_name
-    if payload.phone_number is not None:
-        values["phone_number"] = payload.phone_number
     
     if values:
         values["updated_at"] = datetime.now(timezone.utc)
@@ -147,7 +140,6 @@ async def update_me(
         username=(payload.username if payload.username is not None else (_current_user_value(current_user, "username") or "")),
         email=_current_user_value(current_user, "email"),
         full_name=(payload.full_name if payload.full_name is not None else _current_user_value(current_user, "full_name")),
-        phone_number=(payload.phone_number if payload.phone_number is not None else _current_user_value(current_user, "phone_number")),
         profile_picture_url=_current_user_value(current_user, "profile_picture_url"),
         updated_at=datetime.now(timezone.utc).isoformat(),
     )

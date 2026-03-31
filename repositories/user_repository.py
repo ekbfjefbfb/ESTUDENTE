@@ -29,7 +29,7 @@ logger = logging.getLogger("user_repository")
 
 # Queries SQL reutilizables
 _FULL_USER_SELECT = """
-    SELECT id, username, email, full_name, phone_number,
+    SELECT id, username, email, full_name,
            is_active, is_admin, is_verified,
            profile_picture_url, oauth_provider, hashed_password,
            created_at
@@ -101,22 +101,7 @@ class UserRepository:
             logger.error(f"Error fetching user by username: {e}")
             return None
 
-    async def get_by_phone(self, phone: str) -> Optional[UserDTO]:
-        """Busca un usuario por teléfono."""
-        try:
-            session = await self._get_session()
-            async with session:
-                result = await session.execute(
-                    text(f"{_FULL_USER_SELECT} WHERE phone_number = :phone"),
-                    {"phone": phone}
-                )
-                row = result.first()
-                if row:
-                    return UserDTO.from_db_row(row)
-                return None
-        except Exception as e:
-            logger.error(f"Error fetching user by phone: {e}")
-            return None
+
 
     async def get_hashed_password(self, user_id: str) -> Optional[str]:
         """Obtiene SOLO el hash de password (no se incluye en UserDTO por seguridad)."""

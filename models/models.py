@@ -175,10 +175,6 @@ class User(Base):
     bio = Column(Text)
     hashed_password = Column(String(255), nullable=True)  # Nullable para OAuth/Phone
     
-    # 📱 WhatsApp-style Authentication
-    phone_number = Column(String(20), unique=True, nullable=True, index=True)  # Formato E.164
-    phone_verified = Column(Boolean, default=False)
-    phone_verified_at = Column(DateTime(timezone=True))
     
     # Estado del usuario
     is_active = Column(Boolean, default=True)

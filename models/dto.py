@@ -22,7 +22,6 @@ class UserDTO:
     username: str
     email: Optional[str] = None
     full_name: Optional[str] = None
-    phone_number: Optional[str] = None
     is_active: bool = True
     is_admin: bool = False
     is_verified: bool = False
@@ -65,7 +64,6 @@ class UserDTO:
                 "username": getattr(row, "username", ""),
                 "email": getattr(row, "email", None),
                 "full_name": getattr(row, "full_name", None),
-                "phone_number": getattr(row, "phone_number", None),
                 "is_active": getattr(row, "is_active", True),
                 "is_admin": getattr(row, "is_admin", False),
                 "is_verified": getattr(row, "is_verified", False),
@@ -78,7 +76,6 @@ class UserDTO:
             username=str(data.get("username", "")),
             email=data.get("email"),
             full_name=data.get("full_name"),
-            phone_number=data.get("phone_number"),
             is_active=bool(data.get("is_active", True)),
             is_admin=bool(data.get("is_admin", False)),
             is_verified=bool(data.get("is_verified", False)),
