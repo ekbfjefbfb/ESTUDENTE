@@ -101,16 +101,173 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # =========================
+# 🤖 GROQ AI MODEL REGISTRY - v6.0
+# Selección lógica y honesta de modelos
+# =========================
+
+# API Key
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+
+# --- MODELO FAST: USO GENERAL (~20B parámetros) ---
+# CASOS DE USO:
+# - Chat diario, respuestas cortas
+# - Saludos, tareas simples, preguntas directas
+# - Respuestas < 3 líneas
+# - Mayor velocidad, menor costo
+# - 80% de las peticiones van aquí
+GROQ_MODEL_FAST = os.getenv(
+    "GROQ_MODEL_FAST",
+    "openai/gpt-oss-20b"  # 20B params, rápido y eficiente
+).strip()
+
+# --- MODELO REASONING: RAZONAMIENTO COMPLEJO (~120B parámetros) ---
+# CASOS DE USO:
+# - Explicaciones profundas y detalladas
+# - Código, debugging, arquitectura
+# - Resúmenes complejos, análisis académicos
+# - Tesis, ensayos, investigación
+# - Cuando el usuario pide "explicame", "detalle", "por qué"
+# - Mensajes largos (>800 chars) o con código
+GROQ_MODEL_REASONING = os.getenv(
+    "GROQ_MODEL_REASONING",
+    "openai/gpt-oss-120b"  # 120B params, razonamiento profundo
+).strip()
+
+# Esfuerzo de razonamiento: low | medium | high
+# Afecta cuánto "piensa" el modelo antes de responder
+GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "medium").strip()
+
+# --- MODELO VISION: ANÁLISIS DE IMÁGENES (Meta/Llama) ---
+# CASOS DE USO:
+# - Describir imágenes enviadas por el usuario
+# - Analizar documentos escaneados (PDFs como imágenes)
+# - Reconocer texto en imágenes (OCR visual)
+# - Interpretar gráficos, diagramas, fotos
+# ÚNICO modelo que acepta imágenes en Groq
+GROQ_MODEL_VISION = os.getenv(
+    "GROQ_MODEL_VISION",
+    "meta-llama/llama-3.2-11b-vision-preview"  # Meta/Llama con visión
+).strip()
+
+# --- LÍMITES DE TOKENS ---
+# Máximo tokens en respuesta para cada tipo
+GROQ_MAX_TOKENS_FAST = int(os.getenv("GROQ_MAX_TOKENS_FAST", "512"))      # Respuestas cortas
+GROQ_MAX_TOKENS_REASONING = int(os.getenv("GROQ_MAX_TOKENS_REASONING", "1024"))  # Respuestas largas
+GROQ_MAX_TOKENS_VISION = int(os.getenv("GROQ_MAX_TOKENS_VISION", "768"))  # Descripción de imágenes
+
+# --- SYSTEM PROMPT BASE ---
+# Este prompt se añade a TODAS las conversaciones
+GROQ_SYSTEM_PROMPT = os.getenv(
+    "GROQ_SYSTEM_PROMPT",
+    """Eres la Extensión Cognitiva del usuario. Tono: directo, ejecutivo, proactivo.
+
+REGLAS:
+• Responde directo, sin saludos innecesarios
+• Usa formato simple si ayuda (**negritas**, viñetas)
+• Si no sabes algo, dilo claramente
+• Ejecuta proactivamente: "clase mañana 8am" → "✅ Agendado"
+• Anti-repetición: varía el enfoque si la pregunta es similar"""
+).strip()
+
+
+# =========================
+# 🎯 HELPERS DE SELECCIÓN DE MODELO
+# =========================
+
+def select_groq_model(message_text: str, has_images: bool = False) -> str:
+    """
+    Selecciona el modelo de Groq más apropiado basado en el mensaje.
+    
+    LÓGICA DE SELECCIÓN:
+    1. Si hay imágenes → VISION (único que soporta imágenes)
+    2. Si es complejo → REASONING (120B)
+    3. Default → FAST (20B) - 80% de casos
+    """
+    if has_images:
+        return GROQ_MODEL_VISION
+    
+    if _is_complex_request(message_text):
+        return GROQ_MODEL_REASONING
+    
+    return GROQ_MODEL_FAST
+
+
+def _is_complex_request(text: str) -> bool:
+    """
+    Detecta si una petición requiere razonamiento profundo.
+    
+    INDICADORES DE COMPLEJIDAD:
+    - Mensaje largo (>800 chars)
+    - Palabras clave técnicas/académicas
+    - Código en el mensaje
+    """
+    if not text:
+        return False
+    
+    text_lower = text.lower()
+    
+    # 1. Mensajes largos = más contexto = más razonamiento
+    if len(text) >= 800:
+        return True
+    
+    # 2. Marcadores de peticiones profundas
+    complex_markers = (
+        # Explicaciones
+        "explica", "explicame", "explícame", "detall", "profund",
+        "paso a paso", "cómo funciona", "como funciona",
+        "por qué", "por que", "porqué",
+        
+        # Académico
+        "tesis", "ensayo", "investigación", "investigacion",
+        "análisis", "analisis", "conclusión", "conclusion",
+        "resumen", "resume", "sintetiza",
+        "teoría", "teoria", "marco teórico",
+        
+        # Código/Técnico
+        "código", "codigo", "programa", "debug", "error",
+        "optimiza", "arquitectura", "refactor", "diseño",
+        "performance", "latencia", "database", "sql",
+        "websocket", "api", "docker", "kubernetes",
+    )
+    
+    if any(marker in text_lower for marker in complex_markers):
+        return True
+    
+    # 3. Detectar código (bloques markdown o sintaxis Python)
+    if "```" in text or "\ndef " in text or "\nclass " in text:
+        return True
+    
+    return False
+
+
+def get_max_tokens_for_model(model: str) -> int:
+    """Retorna el límite de tokens apropiado para cada modelo."""
+    if model == GROQ_MODEL_VISION:
+        return GROQ_MAX_TOKENS_VISION
+    if model == GROQ_MODEL_REASONING:
+        return GROQ_MAX_TOKENS_REASONING
+    return GROQ_MAX_TOKENS_FAST
+
+
+# Legacy aliases for backwards compatibility
+GROQ_LLM_FAST_MODEL = GROQ_MODEL_FAST
+GROQ_LLM_REASONING_MODEL = GROQ_MODEL_REASONING
+GROQ_LLM_REASONING_EFFORT = GROQ_REASONING_EFFORT
+GROQ_MAX_COMPLETION_TOKENS = GROQ_MAX_TOKENS_FAST
+GROQ_MAX_COMPLETION_TOKENS_COMPLEX = GROQ_MAX_TOKENS_REASONING
+
+
+# =========================
 # 🤖 Configuración de IA - ARQUITECTURA GROQ-ONLY
-# Backend usa Groq Cloud API para LLM/STT/TTS
+# =========================
 USE_REMOTE_AI = True  # Siempre True - usamos Groq API externa
 AI_SERVER_URL = os.getenv("AI_SERVER_URL", "https://api.groq.com").strip() or "https://api.groq.com"
-AI_MODEL = os.getenv("AI_MODEL", "auto").strip() or "auto"  # auto = fast/reasoning según complejidad
+AI_MODEL = os.getenv("AI_MODEL", "auto").strip() or "auto"  # auto = usa select_groq_model()
 VISION_MODEL = os.getenv("VISION_MODEL", "").strip() or None
 TEXT_MODEL = os.getenv("TEXT_MODEL", "").strip() or None
 GROQ_VISION_MODEL = os.getenv(
     "GROQ_VISION_MODEL",
-    "meta-llama/llama-4-scout-17b-16e-instruct"
+    GROQ_MODEL_VISION
 ).strip()
 
 SEARXNG_URL = os.getenv("SEARXNG_URL", "")  # URL de SearXNG para LiveSearch (opcional)

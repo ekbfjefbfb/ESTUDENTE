@@ -20,6 +20,7 @@ from services.groq_voice_service import transcribe_audio_groq, text_to_speech_gr
 from services.groq_ai_service import get_context_info
 from services.hub_memory_service import hub_memory_service
 from utils.auth import get_current_user
+from utils.file_processing import process_uploaded_files, build_message_with_files, is_vision_request
 from models.models import RecordingSession, RecordingSessionType, SessionItem
 
 logger = logging.getLogger("chat_http_handlers")
@@ -64,16 +65,31 @@ async def handle_chat_message(
     request_id = _new_request_id()
     t0 = time.monotonic()
     
+    # Process uploaded files (images and documents)
+    file_content = None
+    if files:
+        try:
+            image_contents, text_contents = await process_uploaded_files(files)
+            if image_contents or text_contents:
+                file_content = {
+                    "images": image_contents,
+                    "texts": text_contents
+                }
+                logger.info(f"Processed {len(image_contents)} images and {len(text_contents)} documents for user {user_id}")
+        except Exception as e:
+            logger.error(f"Error processing files: {e}")
+            # Continue without files if processing fails
+    
     should_web_search = _should_web_search(user_id=user_id, message=normalized_message)
     logger.info(
         f"chat_http_start request_id={request_id} user_id={user_id} "
-        f"message_len={len(normalized_message or '')} web_search={should_web_search}"
+        f"message_len={len(normalized_message or '')} web_search={should_web_search} has_files={bool(file_content)}"
     )
     
-    # Check semantic cache
+    # Check semantic cache (skip cache if has files)
     from services.embeddings_service import embeddings_service
     cached_response = None
-    if _should_use_semantic_cache(normalized_message):
+    if _should_use_semantic_cache(normalized_message) and not file_content:
         cached_response = await embeddings_service.get_cached_response(normalized_message)
     
     if cached_response and not stream:
@@ -93,9 +109,9 @@ async def handle_chat_message(
     # Get user context
     user_context = await get_user_context_for_chat(user_id)
     
-    # Web search
+    # Web search (skip if has files to prioritize file analysis)
     sources: List[Dict[str, Any]] = []
-    if should_web_search:
+    if should_web_search and not file_content:
         search_sources, search_meta = await perform_web_search(
             user_id=user_id,
             query=normalized_message,
@@ -106,8 +122,14 @@ async def handle_chat_message(
             user_context = dict(user_context)
             user_context["web_search_results"] = list(search_sources)[:5]
     
-    # Get AI response
-    ai_text = await get_ai_response_http(user_id, normalized_message, user_context, fast_reasoning=True)
+    # Get AI response (with file content if present)
+    ai_text = await get_ai_response_http(
+        user_id, 
+        normalized_message, 
+        user_context, 
+        fast_reasoning=True,
+        file_content=file_content
+    )
     structured = _sanitize_structured_data({"response": ai_text, "tasks": [], "plan": [], "actions": [], "is_stream": False})
     
     logger.info(
@@ -120,8 +142,8 @@ async def handle_chat_message(
     from utils.background import safe_create_task
     safe_create_task(save_user_progress(user_id, normalized_message, structured), name="save_user_progress")
     
-    # Add to cache
-    if not structured.get("is_stream"):
+    # Add to cache (only if no files)
+    if not structured.get("is_stream") and not file_content:
         await embeddings_service.add_to_semantic_cache(normalized_message, structured["response"])
     
     # Build response

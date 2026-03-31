@@ -6,15 +6,16 @@ import asyncio
 import logging
 import os
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from fastapi import WebSocket
-from services.groq_ai_service import chat_with_ai, should_refresh_context, get_context_info
+from services.groq_ai_service import chat_with_ai, chat_with_ai_vision, should_refresh_context, get_context_info
 from services.conversational_memory_service import (
     add_message,
     get_conversation_history,
     detect_topic_change,
 )
+from utils.file_processing import process_uploaded_files, build_message_with_files, is_vision_request
 
 logger = logging.getLogger("chat_ai")
 
@@ -85,11 +86,15 @@ async def get_ai_response_http(
     user_id: str,
     user_message: str,
     user_context: Dict[str, Any],
-    fast_reasoning: bool = True
+    fast_reasoning: bool = True,
+    file_content: Optional[Dict[str, Any]] = None
 ) -> str:
     """
     Obtiene respuesta de IA sin streaming (para endpoints HTTP).
     Retorna el texto completo.
+    
+    Args:
+        file_content: Optional dict with 'images' and 'texts' from processed files
     """
     should_refresh_context(user_id, [{"role": "user", "content": user_message}])
     
@@ -118,13 +123,38 @@ async def get_ai_response_http(
     # Obtener historial de conversación
     conversation_history = await get_conversation_history(user_id, limit=10)
     
-    # Construir mensajes: system + historial + mensaje actual
+    # Construir mensajes: system + historial
     messages = [{"role": "system", "content": system_content}]
     messages.extend(conversation_history)
-    if not conversation_history or conversation_history[-1].get("content") != user_message:
-        messages.append({"role": "user", "content": user_message})
-
-    response = await chat_with_ai(messages=messages, user=user_id, fast_reasoning=fast_reasoning, stream=False)
+    
+    # Construir mensaje del usuario (con o sin archivos adjuntos)
+    if file_content and (file_content.get("images") or file_content.get("texts")):
+        # Vision request with files
+        user_msg = build_message_with_files(
+            message=user_message,
+            image_contents=file_content.get("images", []),
+            text_contents=file_content.get("texts", [])
+        )
+        messages.append(user_msg)
+        
+        # Use vision-capable model
+        response = await chat_with_ai_vision(
+            messages=messages, 
+            user=user_id, 
+            fast_reasoning=fast_reasoning, 
+            stream=False
+        )
+    else:
+        # Regular text-only request
+        if not conversation_history or conversation_history[-1].get("content") != user_message:
+            messages.append({"role": "user", "content": user_message})
+        
+        response = await chat_with_ai(
+            messages=messages, 
+            user=user_id, 
+            fast_reasoning=fast_reasoning, 
+            stream=False
+        )
     
     # Guardar respuesta de la IA en el historial
     if response:

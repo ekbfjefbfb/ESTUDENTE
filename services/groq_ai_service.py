@@ -115,30 +115,26 @@ def get_context_info(user_id: str) -> Dict[str, Any]:
 
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
-# Modelo rápido: respuestas cortas, chat diario, tareas simples
-GROQ_LLM_FAST_MODEL = os.getenv(
-    "GROQ_LLM_FAST_MODEL",
-    "openai/gpt-oss-20b",
-).strip()
-# Modelo de razonamiento: explicaciones complejas, análisis, generación de resúmenes
-GROQ_LLM_REASONING_MODEL = os.getenv(
-    "GROQ_LLM_REASONING_MODEL",
-    "openai/gpt-oss-120b",
-).strip()
-GROQ_LLM_REASONING_EFFORT = os.getenv("GROQ_LLM_REASONING_EFFORT", "medium").strip()
-GROQ_MAX_COMPLETION_TOKENS = int(os.getenv("GROQ_MAX_COMPLETION_TOKENS", "768"))
-GROQ_MAX_COMPLETION_TOKENS_COMPLEX = int(os.getenv("GROQ_MAX_COMPLETION_TOKENS_COMPLEX", "1024"))
-GROQ_SYSTEM_PROMPT = os.getenv(
-    "GROQ_SYSTEM_PROMPT",
-    "Eres la Extensión Cognitiva del usuario. Tono: directo, ejecutivo, proactivo.\n\n"
-    "REGLAS OBLIGATORIAS:\n"
-    "• Puedes usar formato simple (por ejemplo **negritas**) si ayuda a la claridad\n"
-    "• Responde directo y bien espaciado\n"
-    "• Si no sabes algo, dilo. No inventes datos\n"
-    "• Usa web search y contexto disponible (tareas, agenda, sesiones)\n"
-    "• Ejecuta proactivamente: 'clase mañana 8am' → '✅ Agendado. Grabación ON.'\n"
-    "• Anti-repetición: varía el enfoque si la pregunta es similar",
-).strip()
+# Importar configuración de modelos desde config.py
+from config import (
+    GROQ_MODEL_FAST,
+    GROQ_MODEL_REASONING,
+    GROQ_MODEL_VISION,
+    GROQ_REASONING_EFFORT,
+    GROQ_MAX_TOKENS_FAST,
+    GROQ_MAX_TOKENS_REASONING,
+    GROQ_MAX_TOKENS_VISION,
+    GROQ_MAX_COMPLETION_TOKENS,
+    GROQ_MAX_COMPLETION_TOKENS_COMPLEX,
+    GROQ_SYSTEM_PROMPT,
+    select_groq_model,
+    get_max_tokens_for_model,
+)
+
+# Legacy aliases for backwards compatibility
+GROQ_LLM_FAST_MODEL = GROQ_MODEL_FAST
+GROQ_LLM_REASONING_MODEL = GROQ_MODEL_REASONING
+GROQ_LLM_REASONING_EFFORT = GROQ_REASONING_EFFORT
 
 
 def _get_groq_client() -> Groq:
@@ -150,15 +146,20 @@ def _get_groq_client() -> Groq:
 def _is_complex_task(messages: List[Dict[str, Any]]) -> bool:
     """
     Decide si usar el modelo de razonamiento (120B) o el rápido (20B).
-    El 120B se activa para: explicaciones profundas, código, resúmenes,
-    análisis académicos, preguntas largas.
+    
+    CRITERIOS BRUTALMENTE HONESTOS:
+    - El 20B es suficiente para 80% de casos
+    - El 120B solo para: código, explicaciones profundas, textos largos
+    
+    Nota: Esta función se mantiene por compatibilidad.
+    Nueva lógica está en config.py: _is_complex_request()
     """
     text = "\n".join(str(m.get("content") or "") for m in messages).lower()
-
+    
     # Mensajes largos = mas contexto = mas razonamiento
     if len(text) >= 800:
         return True
-
+    
     # Marcadores técnicos
     tech_markers = (
         "stack trace", "traceback", "exception", "error", "bug",
@@ -167,7 +168,7 @@ def _is_complex_task(messages: List[Dict[str, Any]]) -> bool:
     )
     if any(k in text for k in tech_markers):
         return True
-
+    
     # Marcadores académicos (estudiantes)
     academic_markers = (
         "explica", "explicame", "explícame", "por qué", "por que",
@@ -179,16 +180,34 @@ def _is_complex_task(messages: List[Dict[str, Any]]) -> bool:
     )
     if any(k in text for k in academic_markers):
         return True
-
+    
     # Código en el mensaje
     if "```" in text or "\nimport " in text or "\nclass " in text or "\ndef " in text:
         return True
-
+    
     return False
 
 
-def _select_model(messages: List[Dict[str, Any]]) -> str:
-    return GROQ_LLM_REASONING_MODEL if _is_complex_task(messages) else GROQ_LLM_FAST_MODEL
+def _select_model(messages: List[Dict[str, Any]], has_images: bool = False) -> str:
+    """
+    Selecciona modelo basado en el mensaje.
+    Usa la nueva lógica centralizada en config.py
+    """
+    # Extraer texto del mensaje del usuario (último mensaje)
+    user_message = ""
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                user_message = content
+            elif isinstance(content, list):
+                # Mensaje multimodal (con imágenes)
+                text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
+                user_message = " ".join(text_parts)
+            break
+    
+    # Usar selector centralizado de config.py
+    return select_groq_model(user_message, has_images=has_images)
 
 
 def _ensure_system_prompt(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -376,42 +395,66 @@ async def _get_user_personal_context(user_id: str) -> Optional[str]:
     return None
 
 
-async def chat_with_ai(
+async def _execute_chat_core(
     messages: List[Dict[str, Any]],
-    user: Optional[str] = None,
-    temperature: float = 0.2,
-    max_tokens: Optional[int] = None,
-    fast_reasoning: bool = True,
-    friendly: bool = False,
-    stream: bool = False,
+    user: Optional[str],
+    temperature: float,
+    max_tokens: Optional[int],
+    stream: bool,
+    forced_model: Optional[str] = None,
 ) -> Any:
-    # Warmup se ejecuta UNA VEZ en startup (main.py lifespan), no en cada request
-    # await ensure_api_warmup()  # REMOVIDO: causa latencia en cada request
+    """
+    NÚCLEO REUTILIZABLE de chat con Groq.
     
+    Args:
+        forced_model: Si se provee, usa este modelo. Si no, detecta automáticamente.
+    
+    ESTA FUNCIÓN ES LA BASE. chat_with_ai y chat_with_ai_vision la usan.
+    SIN DUPLICACIÓN. SIN CÓDIGO MUERTO.
+    """
     # Actualizar tiempo de última llamada
     global _last_api_call_time
     _last_api_call_time = datetime.utcnow()
 
-    # Inyectar contexto personal si existe el user_id y hay datos
+    # 1. Inyectar contexto personal del usuario (si existe)
     if user:
         personal_context = await _get_user_personal_context(user)
         if personal_context:
-            # Insertar como mensaje de sistema adicional o prefijo en el system prompt
             if messages and messages[0].get("role") == "system":
                 messages[0]["content"] = personal_context + "\n" + messages[0]["content"]
             else:
                 messages.insert(0, {"role": "system", "content": personal_context})
 
+    # 2. Asegurar system prompt base
     messages = _ensure_system_prompt(messages)
-    model = _select_model(messages)
     
-    # Select max_tokens based on complexity if not explicitly provided
+    # 3. Detectar si hay imágenes en los mensajes
+    has_images = any(
+        isinstance(m.get("content"), list) and any(
+            p.get("type") == "image_url" for p in m.get("content", [])
+        )
+        for m in messages
+    )
+    
+    # 4. Seleccionar modelo
+    if forced_model:
+        # Forzar modelo específico (ej: VISION para imágenes)
+        model = forced_model
+        # Si forzamos VISION pero no hay imágenes, es un error del llamador
+        # pero lo permitimos por flexibilidad
+    else:
+        # Auto-detectar basado en contenido
+        model = _select_model(messages, has_images=has_images)
+    
+    # 5. Calcular límites de tokens
     if max_tokens is None:
-        max_tokens = GROQ_MAX_COMPLETION_TOKENS_COMPLEX if _is_complex_task(messages) else GROQ_MAX_COMPLETION_TOKENS
+        max_tokens = get_max_tokens_for_model(model)
     
-    # Cap at complex limit to prevent runaway costs
-    max_tokens = min(max_tokens, GROQ_MAX_COMPLETION_TOKENS_COMPLEX)
+    # Cap según modelo (para prevenir costos descontrolados)
+    max_allowed = GROQ_MAX_TOKENS_VISION if model == GROQ_MODEL_VISION else GROQ_MAX_TOKENS_REASONING
+    max_tokens = min(max_tokens, max_allowed)
 
+    # 6. Streaming o blocking
     if stream:
         return _groq_stream_async(
             model=model,
@@ -420,6 +463,7 @@ async def chat_with_ai(
             max_tokens=max_tokens,
         )
 
+    # 7. Llamada a Groq
     client = _get_groq_client()
     create_fn = client.chat.completions.create
     kwargs = {
@@ -434,26 +478,83 @@ async def chat_with_ai(
         "timeout": TIMEOUT_SECONDS,
     }
     
+    # 8. Ejecutar con retry y fallback
     try:
         completion = await _call_groq_with_retry(create_fn, kwargs)
     except Exception as e:
-        logger.error(f"Groq chat_with_ai failed: {e}")
-        # Intentar un último reintento con el modelo FAST si el reasoning falló
-        if model == GROQ_LLM_REASONING_MODEL:
-            logger.info("Retrying with FAST model after reasoning model failure...")
+        logger.error(f"Groq API failed with model {model}: {e}")
+        
+        # FALLBACK RESILIENTE: Si falla REASONING o VISION, intentar FAST
+        if model in (GROQ_MODEL_REASONING, GROQ_MODEL_VISION):
+            logger.info(f"Fallback to FAST model after {model} failure...")
             try:
-                kwargs["model"] = GROQ_LLM_FAST_MODEL
+                kwargs["model"] = GROQ_MODEL_FAST
                 kwargs["reasoning_effort"] = None
+                # Ajustar tokens para FAST
+                kwargs["max_tokens"] = min(kwargs.get("max_tokens", GROQ_MAX_TOKENS_FAST), GROQ_MAX_TOKENS_FAST)
                 completion = await _call_groq_with_retry(create_fn, kwargs)
             except Exception as retry_e:
-                raise RuntimeError(f"Error al contactar con la IA (fallback incluido): {str(retry_e)}") from retry_e
+                raise RuntimeError(f"Error al contactar con la IA (fallback falló): {str(retry_e)}") from retry_e
         else:
+            # FAST falló = no hay fallback
             raise RuntimeError(f"Error al contactar con la IA: {str(e)}") from e
 
+    # 9. Extraer respuesta
     try:
         content = completion.choices[0].message.content
     except Exception as e:
-        raise RuntimeError("Unexpected Groq response") from e
+        raise RuntimeError("Respuesta inesperada de Groq API") from e
 
-    # Sanitizar texto para frontend limpio
     return sanitize_ai_text(content or "")
+
+
+async def chat_with_ai(
+    messages: List[Dict[str, Any]],
+    user: Optional[str] = None,
+    temperature: float = 0.2,
+    max_tokens: Optional[int] = None,
+    fast_reasoning: bool = True,
+    friendly: bool = False,
+    stream: bool = False,
+) -> Any:
+    """
+    Chat con IA - selección automática de modelo (FAST o REASONING).
+    Usa _execute_chat_core internamente. Sin duplicación.
+    """
+    return await _execute_chat_core(
+        messages=messages,
+        user=user,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=stream,
+        forced_model=None,  # Auto-detecta según complejidad
+    )
+
+
+async def chat_with_ai_vision(
+    messages: List[Dict[str, Any]],
+    user: Optional[str] = None,
+    temperature: float = 0.2,
+    max_tokens: Optional[int] = None,
+    fast_reasoning: bool = True,
+    stream: bool = False,
+) -> Any:
+    """
+    Chat con IA FORZANDO modelo VISION (para imágenes).
+    Usa _execute_chat_core internamente. Sin duplicación.
+    """
+    result = await _execute_chat_core(
+        messages=messages,
+        user=user,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=stream,
+        forced_model=GROQ_MODEL_VISION,
+    )
+    
+    # Si _execute_chat_core devolvió un async generator (streaming), pasarlo directo
+    if hasattr(result, '__aiter__'):
+        return result
+    
+    # Si es string (caso normal), sanitizar
+    return sanitize_ai_text(result or "")
