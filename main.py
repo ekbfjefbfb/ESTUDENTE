@@ -85,6 +85,7 @@ from routers import (
     voice_note_router,
 )
 from routers import image_analysis_router
+from routers import deepgram_agent_router
 
 # Middlewares
 from middlewares.rate_limit_middleware import RateLimitMiddleware
@@ -479,6 +480,9 @@ app.include_router(voice_note_router.router, tags=["Voice Notes"])
 
 # 🖼️ Análisis de Imágenes y Documentos
 app.include_router(image_analysis_router.router, tags=["Image Analysis"])
+
+# 🗣️ Voice Agent (Deepgram Custom LLM)
+app.include_router(deepgram_agent_router.router, tags=["Voice Agent Proxy"])
 # =============================================
 # PUNTO DE ENTRADA
 # =============================================

@@ -1,55 +1,61 @@
-# Auditoría y Refactorización Nivel "Enterprise" (Contexto, Búsqueda, Grabador y Agenda)
+# Integración Deepgram Voice Agent ("Bring Your Own LLM")
 
-Este documento contiene la auditoría completa de la fricción restante en los super-servicios de tu backend y las acciones técnicas "brutales" que necesitamos aplicar para que la IA, las grabaciones y la agenda automatizada se sientan **mágicas e instantáneas**.
+He analizado a fondo la documentación de la recién lanzada API de Deepgram Voice Agent y el payload de configuración que enviaste. Implementaremos esto con **latencia ultra-baja y sin tocar la lógica existente**.
+
+## Estrategia Arquitectónica 🧠
+
+En lugar de que Deepgram hable de forma cruda con OpenAI/Groq, **nosotros construiremos un puerto "Custom LLM"** en el backend. 
+El flujo móvil será:
+1. Tu app celular abre un WebSocket directo a Deepgram y le manda el audio (Logrando fluidez casi mágica de <300ms).
+2. Deepgram traduce a Texto de forma nativa.
+3. Deepgram envía ese texto a **NUESTRO Backend** mediante una llamada HTTP haciéndose pasar por un cliente OpenAI compatible.
+4. Nuestro Backend recibe la llamada, valida el `Bearer Token` de tu usuario, inyecta su Contexto (Agenda, Info, Búsquedas) y consulta a nuestra IA (Groq).
+5. Nuestro Backend le regresa el stream de bytes de Groq a Deepgram.
+6. Deepgram le habla al usuario final.
+
+¡Con esto mantienes lo mejor de ambos mundos! La velocidad brutal de Deepgram Voice Agent + El Nivel Cognitivo Enterprise de tu servidor.
 
 ## User Review Required
 
 > [!IMPORTANT]
-> Lee detalladamente el cuello de botella detectado en el WebSocket de grabación de audio. Si un estudiante habla durante 2 horas continuas en la app, la estructura actual es propensa a congelarse temporalmente. Requiero tu aprobación explícita para transformar el pipeline a un flujo asíncrono no-bloqueante puro.
-
-## Hallazgos de la Auditoría y Fricciones Detectadas
-
-### 1. Cuello de Botella en el Grabador de Clases WebSockets (`recording_session_router.py`)
-**El Problema:** Actualmente, cuando el WebSocket recibe ~2 segundos de audio (`32000 bytes`), la conexión pausa su ciclo temporalmente haciendo un `await recording_session_service.process_audio_chunk()`. Si la API de transcripción externa (Groq Whisper) tarda 800ms en responder, el WebSocket se bloquea 800ms. Si el alumno o teléfono envía ráfagas, FastAPI puede saturar las colas de recepción.
-**La Solución:** Desacoplar el procesamiento de red. El WebSocket solo se encargará de añadir bytes a una "Cola de Tareas en Memoria" (Asyncio Queue) y una tarea en segundo plano (`background worker`) se encargará de enviarlo a Whisper y guardar en la Base de Datos. El WebSocket emitirá eventos al teléfono de forma paralela y jamás bloqueará el hilo de recepción, garantizando fluidez infinita así el internet de la API esté lento.
-
-### 2. Sincronía Deficiente en la Agenda Inteligente (`scheduled_recording_router.py`)
-**El Problema:** La extracción de contexto en `/from-chat` ejecuta una recolección secuencial. El servidor SQL busca clases recientes y el extractor (`chat_intent_extractor.py`) llama a la IA, consumiendo preciosos milisegundos de manera lineal. Además, la búsqueda del endpoint de `/pending` puede generar colisiones de estado si varios pings compiten por bloquear una grabación al mismo tiempo.
-**La Solución:** Implementar concurrencia masiva en la inyección de contexto usando `asyncio.gather()` para paralelizar todo DB hit. Usar un bloqueo a nivel de Postgres con `FOR UPDATE SKIP LOCKED` (o `session.refresh`) para el endpoint `/pending` de la agenda, de modo que si el teléfono bombardea la ruta con peticiones asíncronas de "Ping-Location", no iniciemos dos veces la misma clase.
-
-### 3. Fricción en Contexto Continuo de IA (`groq_ai_service.py`)
-**El Problema:** Aunque tu estructura de Modelos (20B, 70B, Vision) es exquisita, la inyección del `user_context` (que hace un SELECT de `users` y `agenda_items`) dispara 3 consultas SQL distintas en cascada ("SELECT users", "SELECT agenda_items", "SELECT agenda_sessions") rompiendo el patrón "N+1" para consultas.
-**La Solución:** Refactorizar la función `_get_user_personal_context()` combinando las sentencias SQL o paralelizándolas en una única transacción ultra-rápida. Más contexto inyectado en la IA con el doble de velocidad.
-
-### 4. Search Tool Latency en Conversaciones Vivas (`chat_search.py` y Web Search)
-**El Problema:** Cuando el LLM decide usar la herramienta de "Web Search", invoca la función, luego nuestro servidor llama a `Tavily` (y un fallback a `Serper` si falla) en hasta ~2-3 segundos combinados. En un streaming directo, esto crea una "pausa cardíaca" notable para el humano. No lo podemos evitar totalmente (es física de redes), pero debemos inyectar un *Heartbeat* estructurado al frontend informando la acción "Status: Searching..." pre-calculado, antes de que el LLM termine el request con el proxy externo.
+> Para lograrlo, necesito crear un nuevo "router" exclusivo llamado `routers/deepgram_agent_router.py`. Éste expondrá la ruta `POST /api/deepgram/chat` que Deepgram Agent va a llamar.
+> 
+> En tu frontend (Mobile), cuando configures el Agente, deberás agregar nuestro Token JWT en los headers de configuración así:
+> ```json
+> "think": {
+>   "provider": { "type": "custom" },
+>   "endpoint": {
+>       "url": "https://TU-BACKEND.com/api/deepgram/chat",
+>       "headers": [
+>         {"key": "Authorization", "value": "Bearer <AQUÍ_VA_TU_JWT_DE_USUARIO>"}
+>       ]
+>   }
+> }
+> ```
+> ¿Estás de acuerdo con inyectar tu token JWT al momento de abrir el WebSocket de Deepgram desde Flutter/Swift para autenticar que realmente es el usuario?
 
 ## Proposed Changes
 
 ---
 
-### Módulo de Grabaciones (Class Recorder)
-#### [MODIFY] `routers/recording_session_router.py`
-- Refactorizaremos el loop temporal del WebSocket `while True` implementando dos hilos de corrutinas (`asyncio.create_task`): uno exclusivo para recibir (Receive Loop) y otro para transcribir y procesar a base de datos (Processor Worker Loop). Esto convertirá el grabador de un servicio "secuencial por pedazos" a un "pipeline asíncrono real".
+### Módulo de Agente Deepgram
+#### [NEW] `routers/deepgram_agent_router.py`
+- Expondrá `POST /api/deepgram/chat`.
+- Implementará una dependencia de FastAPI para extraer explícitamente el token JWT y decodificar el `user_id`.
+- Interceptará el arreglo de `messages` enviado por Deepgram, inyectará en la primera posición nuestro ultra-eficiente prompt maestro (usando `get_user_personal_context` directo de RAM).
+- Llamará al `chat_with_ai(stream=True)`.
+- Envolverá la respuesta en el protocolo `Server-Sent Events (SSE)` idéntico a OpenAI para engañar sanamente a Deepgram Agent.
 
-### Módulo de Contexto y Groq AI
-#### [MODIFY] `services/groq_ai_service.py`
-- Se optimizará `_get_user_personal_context` reemplazando los 3 comandos SQL asíncronos en serie por un envoltorio de compilación única usando `asyncio.gather(task1, task2, task3)`. Reduciremos la fricción de arranque del motor de razonamiento de ~15ms a ~4ms nativos.
-
-### Módulo de Agenda Automatizada (Automated Scheduler)
-#### [MODIFY] `routers/scheduled_recording_router.py`
-- Se agregará una optimización en el endpoint `/pending` que llama la app periódicamente. Si detecta una sesión pendiente en progreso, se implementará concurrencia atómica sobre el estado del ORM para evitar fallas o corrupciones de estado cuando el estudiante entre y salga de ubicaciones perimetrales oscilantemente.
+### Registro en el Servidor
+#### [MODIFY] `main.py`
+- Añadiremos el comando `app.include_router(deepgram_agent_router.router)` para dejar encendida la API.
 
 ## Open Questions
 
-**Feedback del Usuario Requerido:**
-1. Sobre el WebSocket de grabación de voz: Cuando enviemos los "pedazos" de audio de forma paralela en background, el orden puede verse ligeramente comprometido si Groq resuelve el Pedazo #2 antes que el #1 por velocidad de red.  Ya existe un `timestamp_seconds` en base de datos. ¿Estás de acuerdo con añadir una cola FIFO estricta que garantice a tu Frontend el orden sin asfixiar la conexión de voz?
+1. En Deepgram, el `speak: provider` que pasaste (`aura-2-aquila-es`) es el último modelo de TTS. ¿Deseas que desde la parte del backend también inyectemos la instrucción "responde en español nativo neutro, sé súper corto y conversacional" para forzar al límite al LLM a comportarse como un humano por teléfono? (Evita al máximo que use viñetas, markdown o textos largos).
 
 ## Verification Plan
 
-### Automated Tests
-1. Verificación de WS mediante scripts de control Python con bytes basura asegurando la no-bloqueabilidad del socket.
-
 ### Manual Verification
-1. Hacer ping concurrente al servidor desde 2 terminales usando `curl` directo al endpoint de agenda inteligente para confirmar los mutex lock condicionales.
-2. Analizar logs de backend post-refactor en donde confirmemos que 3 queries en cascada se convirtieron en queries paralelos.
+1. Prograbaré un mock request imitando el payload de Deepgram para asegurar que el backend emite `data: {"model": "groq", "choices": [{"delta": {"content": "hola"}}]}` de manera correcta.
+2. Confirmaremos que la ruta esté libre de Rate Limits asfixiantes para evitar que el flujo conversacional de la voz se detenga.
