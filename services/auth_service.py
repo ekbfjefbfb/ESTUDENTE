@@ -18,7 +18,8 @@ from passlib.context import CryptContext
 
 from database.db_enterprise import get_primary_session as get_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, text
+from sqlalchemy.orm import selectinload, load_only
+from sqlalchemy import delete, text, select
 from sqlalchemy.exc import IntegrityError
 
 from models.models import User
@@ -128,12 +129,12 @@ class AuthService:
                 if not password or len(str(password)) < 8:
                     raise Exception("Password inválido")
 
-                # Verificar con SQLAlchemy ORM
+                # Verificar si email existe - solo seleccionar id
                 result = await session.execute(
-                    select(User).where(User.email == email)
+                    select(User.id).where(User.email == email)
                 )
-                user = result.scalar_one_or_none()
-                if user is not None:
+                existing_id = result.scalar_one_or_none()
+                if existing_id is not None:
                     raise Exception("El email ya está registrado")
 
                 username = await self._generate_unique_username(session, email=email)
@@ -196,9 +197,12 @@ class AuthService:
                 if not password:
                     raise Exception("Credenciales inválidas")
 
-                # Verificar con SQLAlchemy ORM
+                # Verificar usuario - cargar solo columnas necesarias
+                from sqlalchemy.orm import load_only
                 result = await session.execute(
-                    select(User).where(User.email == email)
+                    select(User).where(User.email == email).options(
+                        load_only(User.id, User.email, User.username, User.is_active, User.hashed_password)
+                    )
                 )
                 user = result.scalar_one_or_none()
                 

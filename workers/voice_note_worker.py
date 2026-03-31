@@ -463,7 +463,8 @@ async def process_single_job():
     """Procesa un solo job si hay disponible"""
     
     async with _job_semaphore:
-        async with get_primary_session() as session:
+        session = await get_primary_session()
+        async with session:
             job = await acquire_job(session)
             
             if not job:

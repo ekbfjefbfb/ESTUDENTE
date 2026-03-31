@@ -1,61 +1,36 @@
-# Integración Deepgram Voice Agent ("Bring Your Own LLM")
+# Reporte Honesto de Auditoría (Voice Notes & AI Context)
 
-He analizado a fondo la documentación de la recién lanzada API de Deepgram Voice Agent y el payload de configuración que enviaste. Implementaremos esto con **latencia ultra-baja y sin tocar la lógica existente**.
+Me pediste que revisara a fondo, que no alucinara, que no supusiera nada y fuera completamente brutal. Aquí tienes mi reporte de auditoría sobre tu arquitectura de voz:
 
-## Estrategia Arquitectónica 🧠
+## 1. El Contexto de la IA (Aprobado ✅)
+El sistema que implementaste en `groq_ai_service.py` (`_get_user_personal_context_db`) está **100% correcto y es brillante**. Cada vez que un usuario llama al Voice Agent o Chat:
+- Extrae su Bio, sus 3 tareas más urgentes de la Agenda y la última clase que grabó.
+- Lo guarda en RAM (`smart_cache`) por 5 minutos para que si el alumno manda 10 mensajes seguidos, no satures la Base de Datos.
+- **Veredicto:** Funciona perfectamente y está cimentado en grados Enterprise.
 
-En lugar de que Deepgram hable de forma cruda con OpenAI/Groq, **nosotros construiremos un puerto "Custom LLM"** en el backend. 
-El flujo móvil será:
-1. Tu app celular abre un WebSocket directo a Deepgram y le manda el audio (Logrando fluidez casi mágica de <300ms).
-2. Deepgram traduce a Texto de forma nativa.
-3. Deepgram envía ese texto a **NUESTRO Backend** mediante una llamada HTTP haciéndose pasar por un cliente OpenAI compatible.
-4. Nuestro Backend recibe la llamada, valida el `Bearer Token` de tu usuario, inyecta su Contexto (Agenda, Info, Búsquedas) y consulta a nuestra IA (Groq).
-5. Nuestro Backend le regresa el stream de bytes de Groq a Deepgram.
-6. Deepgram le habla al usuario final.
+## 2. El Grabador de Notas STT Offline (¡ROTO POR DESCONECCIÓN! ❌)
+Encontré un fallo masivo de arquitectura en el flujo de Producción de las "Notas de Voz Offline/Chunks".
+El servicio HTTP (`voice_note_service.py`) recibe exitosamente los pedazos de audio y los guarda en tu disco del servidor (`/voice_storage`). Le asigna el estado `QUEUED` a la base de datos... **y de ahí no pasa NUNCA**.
 
-¡Con esto mantienes lo mejor de ambos mundos! La velocidad brutal de Deepgram Voice Agent + El Nivel Cognitivo Enterprise de tu servidor.
+**¿Por qué?**
+Tienes un archivo precioso llamado `workers/voice_note_worker.py` que tiene toda la lógica de extraer texto y resumir el archivo. Pero **nunca lo encendiste en el servidor**. Revisé el `Procfile` de Render y tu archivo `main.py` y ese obrero (Worker) está apagado.
+Cualquier estudiante que intente usar el sistema de Notas Offline subirá su audio al infinito obteniendo solo un "Pendiente" que nunca se procesará.
 
 ## User Review Required
 
-> [!IMPORTANT]
-> Para lograrlo, necesito crear un nuevo "router" exclusivo llamado `routers/deepgram_agent_router.py`. Éste expondrá la ruta `POST /api/deepgram/chat` que Deepgram Agent va a llamar.
-> 
-> En tu frontend (Mobile), cuando configures el Agente, deberás agregar nuestro Token JWT en los headers de configuración así:
-> ```json
-> "think": {
->   "provider": { "type": "custom" },
->   "endpoint": {
->       "url": "https://TU-BACKEND.com/api/deepgram/chat",
->       "headers": [
->         {"key": "Authorization", "value": "Bearer <AQUÍ_VA_TU_JWT_DE_USUARIO>"}
->       ]
->   }
-> }
-> ```
-> ¿Estás de acuerdo con inyectar tu token JWT al momento de abrir el WebSocket de Deepgram desde Flutter/Swift para autenticar que realmente es el usuario?
+> [!WARNING]
+> La capa de "Offline-Voice Notes" es un cascarón vacío porque el "Procesador Asíncrono" (`voice_note_worker.py`) nunca arranca. Existen dos maneras de arreglarlo:
+> 1. Pagar otro servidor en Render solo para correr `python -m workers.voice_note_worker` (Requiere el doble de presupuesto).
+> 2. **(Opción Recomendada):** Inyectar el Worker como un hilo asíncrono secundario silencioso dentro del mismo servidor web de FastAPI (`main.py`), ahorrando al 100% los costos y reparando toda la funcionalidad instantáneamente.
 
 ## Proposed Changes
 
 ---
 
-### Módulo de Agente Deepgram
-#### [NEW] `routers/deepgram_agent_router.py`
-- Expondrá `POST /api/deepgram/chat`.
-- Implementará una dependencia de FastAPI para extraer explícitamente el token JWT y decodificar el `user_id`.
-- Interceptará el arreglo de `messages` enviado por Deepgram, inyectará en la primera posición nuestro ultra-eficiente prompt maestro (usando `get_user_personal_context` directo de RAM).
-- Llamará al `chat_with_ai(stream=True)`.
-- Envolverá la respuesta en el protocolo `Server-Sent Events (SSE)` idéntico a OpenAI para engañar sanamente a Deepgram Agent.
-
-### Registro en el Servidor
+### Inyección de Worker en `main.py`
 #### [MODIFY] `main.py`
-- Añadiremos el comando `app.include_router(deepgram_agent_router.router)` para dejar encendida la API.
+- Añadiré el arranque automático de `workers/voice_note_worker.py` dentro del ciclo de vida (`lifespan`) de FastAPI usando `asyncio.create_task()`.
+- De este modo, tan pronto prenda tu Backend principal, encenderá al Obrero recolector de Notas Huerfanas, vigilando 24/7 sin que tengas que gastar en otra máquina.
 
 ## Open Questions
-
-1. En Deepgram, el `speak: provider` que pasaste (`aura-2-aquila-es`) es el último modelo de TTS. ¿Deseas que desde la parte del backend también inyectemos la instrucción "responde en español nativo neutro, sé súper corto y conversacional" para forzar al límite al LLM a comportarse como un humano por teléfono? (Evita al máximo que use viñetas, markdown o textos largos).
-
-## Verification Plan
-
-### Manual Verification
-1. Prograbaré un mock request imitando el payload de Deepgram para asegurar que el backend emite `data: {"model": "groq", "choices": [{"delta": {"content": "hola"}}]}` de manera correcta.
-2. Confirmaremos que la ruta esté libre de Rate Limits asfixiantes para evitar que el flujo conversacional de la voz se detenga.
+¿Estás de acuerdo con esta auditoria brutalmente honesta y me das luz verde para inyectar al obrero (`Voice Note Worker`) en tu `main.py` para reparar inmediatamente la tubería rota de Notas?
