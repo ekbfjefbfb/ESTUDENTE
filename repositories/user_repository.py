@@ -162,30 +162,20 @@ class UserRepository:
 
     async def update_last_activity(self, user_id: str) -> None:
         """Actualiza la última actividad del usuario."""
-        try:
-            session = await self._get_session()
-            async with session:
-                await session.execute(
-                    text("UPDATE users SET last_activity = :now WHERE id = :uid"),
-                    {"uid": user_id, "now": datetime.utcnow()}
-                )
-                await session.commit()
-        except Exception as e:
-            logger.warning(f"Error updating last_activity for {user_id}: {e}")
+        pass # Not supported in DB schema
 
     async def increment_request_count(self, user_id: str) -> None:
-        """Incrementa el contador mensual de requests."""
+        """Incrementa el contador diario de requests."""
         try:
             session = await self._get_session()
             async with session:
                 await session.execute(
                     text("""
                         UPDATE users 
-                        SET requests_used_this_month = requests_used_this_month + 1,
-                            last_activity = :now
+                        SET demo_requests_today = COALESCE(demo_requests_today, 0) + 1
                         WHERE id = :uid
                     """),
-                    {"uid": user_id, "now": datetime.utcnow()}
+                    {"uid": user_id}
                 )
                 await session.commit()
         except Exception as e:

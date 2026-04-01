@@ -179,18 +179,16 @@ class User(Base):
     # Estado del usuario
     is_active = Column(Boolean, default=True)
     
-    # Plan y suscripción
     plan_id = Column(Integer, ForeignKey("plans.id"), nullable=True)
-    subscription_expires_at = Column(DateTime(timezone=True))
+    plan_started_at = Column(DateTime(timezone=True))
+    plan_ends_at = Column(DateTime(timezone=True))
     
-    # Tracking de uso
-    requests_used_this_month = Column(Integer, default=0)
-    last_request_reset = Column(DateTime(timezone=True), default=func.now())
-    last_activity = Column(DateTime(timezone=True), default=func.now())
-    
-    # Metadatos
-    profile_data = Column(JSON, default=dict)
-    preferences = Column(JSON, default=dict)
+    # Tracking de uso (Demo)
+    demo_until = Column(DateTime(timezone=True))
+    demo_requests_today = Column(Integer, default=0)
+    demo_last_reset = Column(DateTime(timezone=True))
+    demo_count = Column(Integer, default=0)
+    last_demo_date = Column(DateTime)
     
     # 🔐 OAuth Profile Data (Auto-personalización)
     oauth_profile = Column(JSON, default=dict)  # Perfil completo desde OAuth provider
@@ -205,7 +203,6 @@ class User(Base):
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     # Relaciones
     plan = relationship("Plan", back_populates="users")
@@ -223,11 +220,7 @@ class User(Base):
     permissions = relationship("UserPermissions", back_populates="user", uselist=False)
     storage_strategy = relationship("StorageStrategy", back_populates="user", uselist=False)
     
-    # 🎯 NUEVAS RELACIONES PARA SISTEMA MULTI-USUARIO
-    referral_code = Column(String(8), unique=True, index=True, nullable=True)  # Código de referido
-    referred_by_id = Column(String, ForeignKey("users.id"), nullable=True)  # Referido por
-    referrals_made = relationship("Referral", foreign_keys="[Referral.referrer_id]", back_populates="referrer")
-    referred_by_relation = relationship("Referral", foreign_keys="[Referral.referred_id]", back_populates="referred", uselist=False)
+    # 🎯 REFERIDOS - Eliminados del modelo porque no existen en la base de datos
     
     organization_memberships = relationship("OrganizationMember", back_populates="user")
     sent_invitations = relationship("OrganizationInvitation", back_populates="invited_by")
@@ -300,52 +293,50 @@ class User(Base):
     
     def can_make_request(self) -> bool:
         """
-        Verifica si el usuario puede hacer más requests este mes
+        Verifica si el usuario puede hacer más requests hoy (Demo)
         """
         limits = self.get_plan_limits()
-        max_requests = limits.get("requests_per_month", 0)
+        max_requests = limits.get("requests_per_month", 50)
         
-        # Plan enterprise tiene requests ilimitados
+        # Plan enterprise
         if self.plan and self.plan.name.lower() == "enterprise":
             return True
         
-        return self.requests_used_this_month < max_requests
+        return (self.demo_requests_today or 0) < max_requests
     
     def increment_request_count(self):
         """
         Incrementa el contador de requests del usuario
         """
-        # Resetear contador si es un nuevo mes
         now = datetime.utcnow()
-        if (not self.last_request_reset or 
-            now.month != self.last_request_reset.month or 
-            now.year != self.last_request_reset.year):
-            self.requests_used_this_month = 0
-            self.last_request_reset = now
+        last_reset = self.demo_last_reset or now
         
-        self.requests_used_this_month += 1
-        self.last_activity = now
+        if now.date() != last_reset.date():
+            self.demo_requests_today = 0
+            self.demo_last_reset = now
+            
+        self.demo_requests_today = (self.demo_requests_today or 0) + 1
     
     def get_remaining_requests(self) -> int:
         """
-        Obtiene requests restantes este mes
+        Obtiene requests restantes hoy
         """
         limits = self.get_plan_limits()
-        max_requests = limits.get("requests_per_month", 0)
+        max_requests = limits.get("requests_per_month", 50)
         
         if self.plan and self.plan.name.lower() == "enterprise":
-            return float('inf')
+            return 9999
         
-        return max(0, max_requests - self.requests_used_this_month)
+        return max(0, max_requests - (self.demo_requests_today or 0))
     
     def has_active_subscription(self) -> bool:
         """
         Verifica si tiene suscripción activa
         """
-        if not self.subscription_expires_at:
+        if not self.plan_ends_at:
             return False
         
-        return self.subscription_expires_at > datetime.utcnow()
+        return self.plan_ends_at > datetime.utcnow()
     
     def to_dict(self, include_sensitive: bool = False) -> Dict[str, Any]:
         """
@@ -360,18 +351,14 @@ class User(Base):
             "user_type": self.get_user_type(),
             "is_premium": self.is_premium_user(),
             "plan": self.plan.to_dict() if self.plan else None,
-            "requests_used": self.requests_used_this_month,
+            "requests_used": self.demo_requests_today or 0,
             "requests_remaining": self.get_remaining_requests(),
             "has_active_subscription": self.has_active_subscription(),
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "last_activity": self.last_activity.isoformat() if self.last_activity else None
+            "created_at": self.created_at.isoformat() if self.created_at else None
         }
         
         if include_sensitive:
-            data.update({
-                "profile_data": self.profile_data or {},
-                "preferences": self.preferences or {}
-            })
+            data.update({})
         
         return data
 

@@ -129,7 +129,6 @@ async def update_me(
         values["full_name"] = payload.full_name
     
     if values:
-        values["updated_at"] = datetime.now(timezone.utc)
         await db.execute(update(User).where(User.id == user_id).values(**values))
         await db.commit()
         if not isinstance(current_user, dict):

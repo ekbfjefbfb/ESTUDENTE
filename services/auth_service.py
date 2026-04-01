@@ -451,8 +451,6 @@ class AuthService:
                 })
             else:
                 # Actualizar usuario existente con ORM
-                from sqlalchemy.sql import func
-                user.last_activity = func.now()
                 session.add(user)
                 await session.commit()
                 
