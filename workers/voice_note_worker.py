@@ -72,31 +72,49 @@ async def acquire_job(session) -> Optional[VoiceNoteProcessingJob]:
     """
     from sqlalchemy import text
     
-    # Query para encontrar job disponible
-    five_min_ago = datetime.utcnow().timestamp() - 300
+    # Query RAW para evitar problemas de tipo ENUM en PostgreSQL
+    five_min_ago = datetime.utcnow() - timedelta(minutes=5)
     
-    result = await session.execute(
-        select(VoiceNoteProcessingJob)
-        .where(
-            and_(
-                cast(VoiceNoteProcessingJob.status, String).in_([
-                    ProcessingJobStatus.PENDING.value,
-                    ProcessingJobStatus.RETRYING.value
-                ]),
-                VoiceNoteProcessingJob.scheduled_at <= datetime.utcnow(),
-                # Lock expirado o no existe
-                (VoiceNoteProcessingJob.locked_at.is_(None) | 
-                 (VoiceNoteProcessingJob.locked_at < datetime.utcfromtimestamp(five_min_ago)))
-            )
-        )
-        .order_by(VoiceNoteProcessingJob.priority.desc())
-        .limit(1)
-        .with_for_update(skip_locked=True)  # Evitar contention
-    )
+    query = text("""
+        SELECT * FROM voice_note_processing_jobs 
+        WHERE status::text IN ('pending', 'retrying')
+          AND scheduled_at <= NOW()
+          AND (locked_at IS NULL OR locked_at < :five_min_ago)
+        ORDER BY priority DESC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+    """)
     
-    job = result.scalar_one_or_none()
-    if not job:
+    result = await session.execute(query, {"five_min_ago": five_min_ago})
+    row = result.fetchone()
+    
+    if not row:
         return None
+    
+    # Reconstruir el objeto desde la fila
+    job = VoiceNoteProcessingJob(
+        id=row.id,
+        voice_note_id=row.voice_note_id,
+        job_type=row.job_type,
+        status=row.status,
+        audio_checksum=row.audio_checksum,
+        params_hash=row.params_hash,
+        job_params=row.job_params,
+        result_data=row.result_data,
+        error_info=row.error_info,
+        attempts=row.attempts,
+        max_attempts=row.max_attempts,
+        started_at=row.started_at,
+        completed_at=row.completed_at,
+        duration_ms=row.duration_ms,
+        queue_name=row.queue_name,
+        priority=row.priority,
+        scheduled_at=row.scheduled_at,
+        worker_id=row.worker_id,
+        locked_at=row.locked_at,
+        created_at=row.created_at,
+        updated_at=row.updated_at
+    )
     
     # Lockear el job
     job.worker_id = WORKER_ID
