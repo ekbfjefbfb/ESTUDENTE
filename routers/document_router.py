@@ -5,7 +5,7 @@ import io
 import logging
 
 from services.document_service import create_document_from_user_message
-from routers.auth_routes import get_current_user
+from utils.auth import get_current_user
 from models.models import User
 
 logger = logging.getLogger("document_router")

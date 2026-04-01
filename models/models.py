@@ -216,8 +216,9 @@ class User(Base):
     
     # 🔥 NUEVAS RELACIONES PARA SISTEMA DE PERMISOS
     
-    # 🎯 REFERIDOS - Eliminados del modelo porque no existen en la base de datos
-    
+    # 🎯 REFERIDOS
+    referrals_made = relationship("Referral", foreign_keys="Referral.referrer_id", back_populates="referrer")
+    referred_by_relation = relationship("Referral", foreign_keys="Referral.referred_id", back_populates="referred")
     
     # 📱 PUSH NOTIFICATIONS
     device_tokens = relationship("DeviceToken", back_populates="user")

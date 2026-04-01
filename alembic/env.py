@@ -11,6 +11,20 @@ from sqlalchemy import pool
 from sqlalchemy import text
 
 from alembic import context
+from sqlalchemy.schema import DropTable, DropConstraint, DropIndex
+from sqlalchemy.ext.compiler import compiles
+
+@compiles(DropTable, "postgresql")
+def _compile_drop_table(element, compiler, **kwargs):
+    return "DROP TABLE IF EXISTS " + compiler.preparer.format_table(element.element) + " CASCADE"
+
+@compiles(DropConstraint, "postgresql")
+def _compile_drop_constraint(element, compiler, **kwargs):
+    return "ALTER TABLE " + compiler.preparer.format_table(element.element.table) + (" DROP CONSTRAINT IF EXISTS " if hasattr(element.element, "name") and element.element.name else " DROP CONSTRAINT ") + compiler.preparer.format_constraint(element.element) + " CASCADE"
+
+@compiles(DropIndex, "postgresql")
+def _compile_drop_index(element, compiler, **kwargs):
+    return "DROP INDEX IF EXISTS " + compiler.preparer.quote(element.element.name) + " CASCADE"
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

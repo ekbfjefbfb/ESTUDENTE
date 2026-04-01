@@ -14,7 +14,7 @@ from pathlib import Path
 import base64
 
 # Core imports
-from services.gpt_service import GPTService
+from services.groq_ai_service import chat_with_ai
 from utils.safe_metrics import Counter, Histogram, Gauge
 
 logger = logging.getLogger("document_service")
@@ -28,7 +28,6 @@ class DocumentServiceEnterprise:
     """Servicio completo de generación de documentos"""
     
     def __init__(self):
-        self.gpt_service = GPTService()
         self.stability_service = self._get_stability_service()
         self.initialized = True
         
@@ -44,10 +43,7 @@ class DocumentServiceEnterprise:
             return None
     
     async def _enhance_content_with_ai(self, user_message: str, doc_type: str) -> str:
-        """Mejora el contenido usando Grok-4 Fast Reasoning"""
-        """Mejora el contenido usando el motor de IA local (DeepSeek-VL / Llama Vision)
-        Esta función usa la capa de compatibilidad `GPTService` que delega al servicio local.
-        """
+        """Mejora el contenido usando Groq API"""
         try:
             enhancement_prompt = f"""
             Mejora y expande este contenido para crear un {doc_type} profesional:
@@ -64,8 +60,10 @@ class DocumentServiceEnterprise:
             Genera contenido mejorado:
             """
             
-            enhanced = await self.gpt_service.get_completion(
-                message=enhancement_prompt,
+            messages = [{"role": "user", "content": enhancement_prompt}]
+            
+            enhanced = await chat_with_ai(
+                messages=messages,
                 temperature=0.7,
                 max_tokens=2000
             )

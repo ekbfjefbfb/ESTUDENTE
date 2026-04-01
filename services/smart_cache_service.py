@@ -4,6 +4,7 @@ Alias para CacheServiceEnterprise con funcionalidades adicionales
 """
 
 import asyncio
+import inspect
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime, timedelta
 import logging
@@ -135,7 +136,8 @@ class SmartCache:
             self.access_patterns[key] = self.access_patterns.get(key, 0) + 1
             
             if CACHE_ENTERPRISE_AVAILABLE:
-                return await self.cache_service.get(key, default=default)
+                result = await self.cache_service.get(key)
+                return result if result is not None else default
             else:
                 return await self.cache_service.get(key, default)
                 
@@ -175,8 +177,7 @@ class SmartCache:
                 return await self.cache_service.set(
                     key=key,
                     value=value,
-                    ttl=ttl,
-                    tags=tags or []
+                    ttl_seconds=ttl
                 )
             else:
                 return await self.cache_service.set(key, value, ttl, tags)
@@ -261,6 +262,8 @@ class SmartCache:
                 value = await factory()
             else:
                 value = factory()
+                if inspect.isawaitable(value):
+                    value = await value
             
             # Guardar en cache
             await self.set(key, value, ttl, tags)
@@ -271,9 +274,12 @@ class SmartCache:
             logger.error(f"❌ Error in get_or_set: {e}")
             # En caso de error, intentar generar el valor
             if asyncio.iscoroutinefunction(factory):
-                return await factory()
+                value = await factory()
             else:
-                return factory()
+                value = factory()
+                if inspect.isawaitable(value):
+                    value = await value
+            return value
     
     async def get_stats(self) -> Dict[str, Any]:
         """
