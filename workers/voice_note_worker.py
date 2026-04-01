@@ -119,7 +119,7 @@ async def acquire_job(session) -> Optional[VoiceNoteProcessingJob]:
     # Lockear el job
     job.worker_id = WORKER_ID
     job.locked_at = datetime.utcnow()
-    job.status = ProcessingJobStatus.RUNNING
+    job.status = ProcessingJobStatus.RUNNING.value  # Usar .value para string explícito
     job.attempts += 1
     job.started_at = datetime.utcnow()
     
@@ -384,13 +384,13 @@ async def execute_job(job: VoiceNoteProcessingJob) -> dict:
         
         job_type = job.job_type
         
-        if job_type == ProcessingJobType.TRANSCRIPTION:
+        if job_type == ProcessingJobType.TRANSCRIPTION.value:
             result = await process_transcription_job(job, voice_note)
-        elif job_type == ProcessingJobType.SUMMARIZATION:
+        elif job_type == ProcessingJobType.SUMMARIZATION.value:
             result = await process_summarization_job(job, voice_note)
-        elif job_type == ProcessingJobType.EXTRACTION:
+        elif job_type == ProcessingJobType.EXTRACTION.value:
             result = await process_extraction_job(job, voice_note)
-        elif job_type == ProcessingJobType.FULL_PIPELINE:
+        elif job_type == ProcessingJobType.FULL_PIPELINE.value:
             result = await process_full_pipeline_job(job, voice_note)
         else:
             result = {"success": False, "error": f"unknown_job_type: {job_type}"}
@@ -409,7 +409,7 @@ async def handle_job_completion(
     job.duration_ms = duration_ms
     
     if result.get("success"):
-        job.status = ProcessingJobStatus.COMPLETED
+        job.status = ProcessingJobStatus.COMPLETED.value  # Usar .value
         job.result_data = result
         job.completed_at = datetime.utcnow()
         
@@ -417,21 +417,21 @@ async def handle_job_completion(
         voice_note = await session.get(VoiceNote, job.voice_note_id)
         if voice_note:
             # Aplicar resultados según tipo
-            if job.job_type == ProcessingJobType.TRANSCRIPTION:
+            if job.job_type == ProcessingJobType.TRANSCRIPTION.value:
                 voice_note.transcript = result.get("transcript", "")
                 voice_note.transcript_confidence = result.get("confidence")
-                voice_note.status = VoiceNoteStatus.UPLOADED  # Listo para más procesamiento
+                voice_note.status = VoiceNoteStatus.UPLOADED.value  # Usar .value
                 
-            elif job.job_type == ProcessingJobType.SUMMARIZATION:
+            elif job.job_type == ProcessingJobType.SUMMARIZATION.value:
                 voice_note.summary = result.get("summary")
                 voice_note.summary_model = result.get("model")
                 
-            elif job.job_type == ProcessingJobType.EXTRACTION:
+            elif job.job_type == ProcessingJobType.EXTRACTION.value:
                 voice_note.extracted_items = result.get("items", [])
                 voice_note.topics = result.get("topics", [])
                 voice_note.entities = result.get("entities", [])
                 
-            elif job.job_type == ProcessingJobType.FULL_PIPELINE:
+            elif job.job_type == ProcessingJobType.FULL_PIPELINE.value:
                 voice_note.transcript = result.get("transcript", "")
                 voice_note.transcript_confidence = result.get("transcript_confidence")
                 voice_note.summary = result.get("summary")
@@ -439,7 +439,7 @@ async def handle_job_completion(
                 voice_note.extracted_items = result.get("extracted_items", [])
                 voice_note.topics = result.get("topics", [])
                 voice_note.entities = result.get("entities", [])
-                voice_note.status = VoiceNoteStatus.COMPLETED
+                voice_note.status = VoiceNoteStatus.COMPLETED.value  # Usar .value
                 voice_note.processing_completed_at = datetime.utcnow()
                 voice_note.processing_version += 1
         
@@ -457,18 +457,18 @@ async def handle_job_completion(
         job.error_info = error_info
         
         if job.attempts < job.max_attempts and error_info["retryable"]:
-            job.status = ProcessingJobStatus.RETRYING
+            job.status = ProcessingJobStatus.RETRYING.value  # Usar .value
             # Schedule retry con backoff exponencial
             backoff_minutes = 2 ** job.attempts
             from sqlalchemy import func
             job.scheduled_at = func.now() + f"{backoff_minutes} minutes"
             logger.warning(f"⚠️ Job {job.id} reintentará en {backoff_minutes}min (attempt {job.attempts})")
         else:
-            job.status = ProcessingJobStatus.FAILED
+            job.status = ProcessingJobStatus.FAILED.value  # Usar .value
             # Actualizar voice_note status
             voice_note = await session.get(VoiceNote, job.voice_note_id)
             if voice_note:
-                voice_note.status = VoiceNoteStatus.ERROR
+                voice_note.status = VoiceNoteStatus.ERROR.value  # Usar .value
             logger.error(f"❌ Job fallido: {job.id} ({job.job_type}): {error_info['message']}")
     
     # Liberar lock
