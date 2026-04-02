@@ -214,7 +214,7 @@ EJEMPLOS:
             ai_reasoning=intent.reasoning
         )
 
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             session.add(scheduled)
             await session.commit()
             await session.refresh(scheduled)
@@ -226,7 +226,7 @@ EJEMPLOS:
         """
         Ejecuta una grabación programada creando una RecordingSession real.
         """
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             scheduled = await session.get(ScheduledRecording, scheduled_id)
             if not scheduled or scheduled.status != "pending":
                 return None

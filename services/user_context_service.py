@@ -47,7 +47,7 @@ class UserContextService:
         Returns:
             UserContext actualizado
         """
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             context = await session.get(UserContext, user_id)
 
             if not context:
@@ -81,7 +81,7 @@ class UserContextService:
 
     async def get_context(self, user_id: str) -> Optional[UserContext]:
         """Obtiene el contexto actual del usuario"""
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             return await session.get(UserContext, user_id)
 
     async def find_documents_for_class(
@@ -101,7 +101,7 @@ class UserContextService:
         Returns:
             Lista de documentos relevantes
         """
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             # Estrategia de búsqueda:
             # 1. Buscar por related_class exacto
             # 2. Buscar por keywords que coincidan con class_name
@@ -198,7 +198,7 @@ class UserContextService:
         Returns:
             Nuevo contador
         """
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             context = await session.get(UserContext, user_id)
 
             if not context:

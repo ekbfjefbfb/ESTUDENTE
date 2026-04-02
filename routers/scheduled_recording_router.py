@@ -82,7 +82,7 @@ async def schedule_from_chat(
     Ejemplo mensaje: "Mañana a las 2:30 tengo clase de Cálculo"
     """
     # Obtener contexto del usuario
-    async with get_primary_session() as session:
+    async with await get_primary_session() as session:
         user_context = await session.get(UserContext, user["user_id"])
 
         recent_classes = []
@@ -163,7 +163,7 @@ async def get_pending_recording(
     window_start = now - timedelta(minutes=2)  # 2 minutos de margen
     window_end = now + timedelta(minutes=2)
     
-    async with get_primary_session() as session:
+    async with await get_primary_session() as session:
         # Buscar scheduled recordings pendientes en ventana de tiempo
         query = select(ScheduledRecording).where(
             and_(
@@ -255,7 +255,7 @@ async def list_scheduled_recordings(
     user=Depends(get_current_user)
 ):
     """Lista las grabaciones programadas del usuario"""
-    async with get_primary_session() as session:
+    async with await get_primary_session() as session:
         query = select(ScheduledRecording).where(
             ScheduledRecording.user_id == user["user_id"]
         )
@@ -289,7 +289,7 @@ async def cancel_scheduled_recording(
     user=Depends(get_current_user)
 ):
     """Cancela una grabación programada"""
-    async with get_primary_session() as session:
+    async with await get_primary_session() as session:
         recording = await session.get(ScheduledRecording, recording_id)
         
         if not recording or recording.user_id != user["user_id"]:

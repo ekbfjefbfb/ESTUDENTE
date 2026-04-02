@@ -373,7 +373,7 @@ async def process_full_pipeline_job(
 async def execute_job(job: VoiceNoteProcessingJob) -> dict:
     """Ejecuta un job según su tipo"""
     
-    async with get_primary_session() as session:
+    async with await get_primary_session() as session:
         # Cargar voice_note con chunks
         voice_note = await session.execute(
             select(VoiceNote)

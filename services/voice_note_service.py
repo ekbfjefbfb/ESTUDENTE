@@ -78,7 +78,7 @@ class VoiceNoteService:
         Returns:
             (VoiceNote, is_new): La nota y si fue creada nueva
         """
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             # Idempotencia: buscar por client_record_id
             existing = await session.execute(
                 select(VoiceNote).where(VoiceNote.client_record_id == client_record_id)
@@ -135,7 +135,7 @@ class VoiceNoteService:
         Recibe un chunk de audio con verificación de integridad.
         Idempotente: mismo chunk_index = reemplazo idempotente.
         """
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             # Verificar ownership
             voice_note = await session.get(VoiceNote, voice_note_id)
             if not voice_note or voice_note.user_id != user_id:
@@ -275,7 +275,7 @@ class VoiceNoteService:
         user_id: str
     ) -> Dict[str, Any]:
         """Obtiene estado de subida con chunks faltantes"""
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             voice_note = await session.get(VoiceNote, voice_note_id)
             if not voice_note or voice_note.user_id != user_id:
                 raise VoiceNoteError("not_found")
@@ -301,7 +301,7 @@ class VoiceNoteService:
         user_id: str
     ) -> bool:
         """Cancela una subida en progreso y limpia recursos"""
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             voice_note = await session.get(VoiceNote, voice_note_id)
             if not voice_note or voice_note.user_id != user_id:
                 return False
@@ -351,7 +351,7 @@ class VoiceNoteService:
         Encola un job de procesamiento de forma idempotente.
         Mismo audio_checksum + job_type + params_hash = mismo job.
         """
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             voice_note = await session.get(VoiceNote, voice_note_id)
             if not voice_note or voice_note.user_id != user_id:
                 raise VoiceNoteError("not_found")
@@ -457,7 +457,7 @@ class VoiceNoteService:
         user_id: str
     ) -> Optional[VoiceNoteProcessingJob]:
         """Obtiene estado de un job de procesamiento"""
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             job = await session.get(VoiceNoteProcessingJob, job_id)
             if not job:
                 return None
@@ -475,7 +475,7 @@ class VoiceNoteService:
         user_id: str
     ) -> Optional[VoiceNoteProcessingJob]:
         """Reintenta un job fallido"""
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             job = await session.get(VoiceNoteProcessingJob, job_id)
             if not job:
                 return None
@@ -511,7 +511,7 @@ class VoiceNoteService:
         """
         Check de sincronización: qué necesita subir/bajar el cliente
         """
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             start_time = datetime.utcnow()
             
             # Obtener todas las voice_notes del usuario
@@ -603,7 +603,7 @@ class VoiceNoteService:
         include_deleted: bool = False,
     ) -> Dict[str, Any]:
         """Lista notas de voz del usuario"""
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             query = select(VoiceNote).where(VoiceNote.user_id == user_id)
             
             if not include_deleted:
@@ -647,7 +647,7 @@ class VoiceNoteService:
         user_id: str
     ) -> Optional[VoiceNote]:
         """Obtiene detalle completo de una nota"""
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             result = await session.execute(
                 select(VoiceNote)
                 .options(
@@ -671,7 +671,7 @@ class VoiceNoteService:
         hard_delete: bool = False,
     ) -> bool:
         """Elimina una nota (soft o hard delete)"""
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             voice_note = await session.get(VoiceNote, voice_note_id)
             if not voice_note or voice_note.user_id != user_id:
                 return False
@@ -698,7 +698,7 @@ class VoiceNoteService:
         title: Optional[str] = None,
     ) -> Optional[VoiceNote]:
         """Actualiza metadatos de una nota"""
-        async with get_primary_session() as session:
+        async with await get_primary_session() as session:
             voice_note = await session.get(VoiceNote, voice_note_id)
             if not voice_note or voice_note.user_id != user_id:
                 return None

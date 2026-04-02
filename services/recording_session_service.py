@@ -55,7 +55,7 @@ class RecordingSessionService:
             started_at=datetime.utcnow()
         )
 
-        async with get_primary_session() as db_session:
+        async with await get_primary_session() as db_session:
             db_session.add(session)
             await db_session.commit()
             await db_session.refresh(session)
@@ -74,7 +74,7 @@ class RecordingSessionService:
         Procesa un chunk de audio: STT + Guardar Chunk + Actualizar Transcript.
         """
         try:
-            async with get_primary_session() as db_session:
+            async with await get_primary_session() as db_session:
                 session = await db_session.get(RecordingSession, session_id)
                 if not session or session.user_id != user_id:
                     return None
@@ -121,7 +121,7 @@ class RecordingSessionService:
         """
         Finaliza la sesión y genera procesamiento de IA (Resumen + Items).
         """
-        async with get_primary_session() as db_session:
+        async with await get_primary_session() as db_session:
             session = await db_session.get(RecordingSession, session_id)
 
             if not session or session.user_id != user_id:
@@ -236,7 +236,7 @@ class RecordingSessionService:
 
     async def list_user_sessions(self, user_id: str, limit: int = 20, offset: int = 0) -> List[RecordingSession]:
         from sqlalchemy import select, desc
-        async with get_primary_session() as db_session:
+        async with await get_primary_session() as db_session:
             query = select(RecordingSession).where(RecordingSession.user_id == user_id).order_by(desc(RecordingSession.created_at)).offset(offset).limit(limit)
             result = await db_session.execute(query)
             return list(result.scalars().all())

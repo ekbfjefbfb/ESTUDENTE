@@ -134,7 +134,7 @@ class Storage:
         note_id = str(uuid.uuid4())
         ts = created_at or _utcnow()
 
-        async with get_primary_session() as db:
+        async with await get_primary_session() as db:
             # Crear nota como RecordingSession
             session_obj = RecordingSession(
                 id=note_id,
@@ -215,7 +215,7 @@ class Storage:
     async def get_note(
         self, *, user_id: str, note_id: str
     ) -> Optional[Tuple[NoteRow, List[TaskRow]]]:
-        async with get_primary_session() as db:
+        async with await get_primary_session() as db:
             s = await db.get(RecordingSession, note_id)
             if not s or s.user_id != user_id:
                 return None
@@ -247,7 +247,7 @@ class Storage:
         limit: int,
         offset: int,
     ) -> List[NoteRow]:
-        async with get_primary_session() as db:
+        async with await get_primary_session() as db:
             q = select(RecordingSession).where(
                 and_(
                     RecordingSession.user_id == user_id,
@@ -279,7 +279,7 @@ class Storage:
         limit: int,
         offset: int,
     ) -> List[TaskRow]:
-        async with get_primary_session() as db:
+        async with await get_primary_session() as db:
             q = select(SessionItem).where(
                 and_(
                     SessionItem.user_id == user_id,
@@ -313,7 +313,7 @@ class Storage:
         due_date: Optional[datetime],
         priority: Optional[int],
     ) -> TaskRow:
-        async with get_primary_session() as db:
+        async with await get_primary_session() as db:
             item = await db.get(SessionItem, task_id)
             if not item or item.user_id != user_id:
                 raise KeyError("task_not_found")
@@ -337,7 +337,7 @@ class Storage:
     # -------------------------------------------------------------------------
 
     async def delete_note(self, *, user_id: str, note_id: str) -> bool:
-        async with get_primary_session() as db:
+        async with await get_primary_session() as db:
             s = await db.get(RecordingSession, note_id)
             if not s or s.user_id != user_id:
                 return False
@@ -371,7 +371,7 @@ class Storage:
         summary: Optional[str] = None,
         key_points: Optional[List[str]] = None,
     ) -> Optional[NoteRow]:
-        async with get_primary_session() as db:
+        async with await get_primary_session() as db:
             s = await db.get(RecordingSession, note_id)
             if not s or s.user_id != user_id:
                 return None

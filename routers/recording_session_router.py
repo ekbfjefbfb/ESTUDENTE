@@ -133,7 +133,7 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
     logger.info(f"🎙️ WS Unificado conectado: session={session_id}, user={user_id}")
     
     # VALIDACIÓN DE PROPIEDAD: Asegurar que la sesión pertenece al usuario
-    async with get_primary_session() as db_session:
+    async with await get_primary_session() as db_session:
         session_check = await db_session.get(RecordingSession, session_id)
         if not session_check or session_check.user_id != user_id:
             logger.warning(f"🚫 Intento de acceso no autorizado a sesión {session_id} por user {user_id}")
