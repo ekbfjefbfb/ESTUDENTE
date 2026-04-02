@@ -898,61 +898,39 @@ class UserDocumentIndex(Base):
 # Exportar todos los modelos y enums
 __all__ = [
     # Core
-    "Base",
     "User",
     "Plan",
     "Subscription",
     "Payment",
-    "Document",
     "UserSession",
-    # Perfil y agentes
     "UserProfile",
-    "LearningPattern",
-    "PersonalAgent",
-    "AgentInteraction",
     "OnboardingSession",
     # Integraciones
     "ExternalIntegration",
     "SyncedExternalData",
-    # Chat
-    "ChatMessage",
-    "LocalChatMetadata",
-    "ChatSyncStatus",
-    # Permisos
-    "UserPermissions",
-    "StorageStrategy",
-    "CostSavings",
-    # Vision Pipeline
-    "VisionProcessingJob",
-    "VisionAnalytics",
-    # Multi-Usuario
-    "Organization",
-    "OrganizationMember",
-    "OrganizationInvitation",
-    "UsageTracking",
-    "UsageEvent",
-    "Referral",
-    # Push Notifications
-    "DeviceToken",
-    # Sesiones de Grabación
-    "RecordingSession",
-    "TranscriptChunk",
-    "SessionItem",
-    # Agenda Inteligente
-    "ScheduledRecording",
-    "UserContext",
-    "UserDocumentIndex",
-    # Enums
+    # Permisos y Enums de Sistema
     "PlanType",
     "SubscriptionStatus",
     "PaymentStatus",
-    "AgentType",
-    "Specialization",
     "IntegrationStatus",
     "ServiceType",
+    "Specialization",
+    # Usuario y Referidos
+    "Referral",
+    "ReferralStatus",
+    "DeviceToken",
+    "UserContext",
+    "UserDocumentIndex",
+    # Sesiones de Grabación (NUEVO v5.0)
+    "RecordingSession",
+    "RecordingSessionStatus",
+    "RecordingSessionType",
+    "TranscriptChunk",
+    "SessionItem",
+    "SessionItemStatus",
+    "SessionItemType",
+    "ScheduledRecording",
+    # Enums de Visión
     "VisionProcessingType",
-    "ImageQuality",
-    "OrganizationMemberRole",
-    "InvitationStatus",
-    "ReferralStatus"
+    "ImageQuality"
 ]

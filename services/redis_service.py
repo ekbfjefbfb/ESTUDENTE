@@ -7,6 +7,7 @@ Connection pooling mejorado, compresión inteligente, mejor TTL management
 import asyncio
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Any, Optional, Dict, Union
 from datetime import timedelta, datetime
@@ -56,6 +57,12 @@ REDIS_CACHE_SIZE = Gauge("redis_cache_size_mb", "Redis cache size in MB")
 _redis_pool: Optional[Redis] = None
 _connection_status = {"healthy": False, "last_check": None}
 _thread_pool = ThreadPoolExecutor(max_workers=10, thread_name_prefix="redis_worker")
+_redis_init_lock = asyncio.Lock()
+_redis_retry_cooldown_seconds = max(
+    1.0,
+    float(os.getenv("REDIS_INIT_RETRY_COOLDOWN_SECONDS", "5"))
+)
+_next_redis_init_retry_at = 0.0
 
 async def init_redis() -> bool:
     """
@@ -68,7 +75,7 @@ async def init_redis() -> bool:
     
     try:
         # Pool de conexiones optimizado para alta carga
-        _redis_pool = redis.from_url(
+        candidate_pool = redis.from_url(
             REDIS_URL,
             password=REDIS_PASSWORD,
             max_connections=REDIS_MAX_CONNECTIONS,
@@ -83,8 +90,9 @@ async def init_redis() -> bool:
         
         # Verificar conectividad
         start_time = datetime.utcnow()
-        await _redis_pool.ping()
+        await candidate_pool.ping()
         ping_time = (datetime.utcnow() - start_time).total_seconds()
+        _redis_pool = candidate_pool
         
         # Actualizar estado de conexión
         _connection_status.update({
@@ -106,6 +114,16 @@ async def init_redis() -> bool:
         return True
         
     except Exception as e:
+        if _redis_pool is not None:
+            try:
+                await _redis_pool.close()
+            except Exception:
+                pass
+        _redis_pool = None
+        _connection_status.update({
+            "healthy": False,
+            "last_check": datetime.utcnow(),
+        })
         logger.error({
             "event": "redis_init_failed",
             "error": str(e),
@@ -115,7 +133,7 @@ async def init_redis() -> bool:
 
 async def close_redis():
     """Cierra las conexiones Redis."""
-    global _redis_pool
+    global _redis_pool, _next_redis_init_retry_at
     if _redis_pool:
         try:
             await _redis_pool.close()
@@ -124,19 +142,42 @@ async def close_redis():
             logger.error({"event": "redis_close_error", "error": str(e)})
         finally:
             _redis_pool = None
+    _next_redis_init_retry_at = 0.0
+    _connection_status.update({
+        "healthy": False,
+        "last_check": datetime.utcnow(),
+    })
 
-async def get_redis() -> Redis:
+async def get_redis() -> Optional[Redis]:
     """
     Obtiene la instancia Redis con fallback (fail-open) para resiliencia.
     """
-    global _redis_pool
-    if _redis_pool is None:
+    global _redis_pool, _next_redis_init_retry_at
+
+    if _redis_pool is not None:
+        return _redis_pool
+
+    now = time.monotonic()
+    if now < _next_redis_init_retry_at:
+        return None
+
+    async with _redis_init_lock:
+        if _redis_pool is not None:
+            return _redis_pool
+
+        now = time.monotonic()
+        if now < _next_redis_init_retry_at:
+            return None
+
         try:
             success = await init_redis()
             if not success:
+                _next_redis_init_retry_at = time.monotonic() + _redis_retry_cooldown_seconds
                 logger.warning("Redis initialization failed, operating in degraded mode (fail-open)")
                 return None
+            _next_redis_init_retry_at = 0.0
         except Exception as e:
+            _next_redis_init_retry_at = time.monotonic() + _redis_retry_cooldown_seconds
             logger.error(f"Critical error initializing Redis: {e}")
             return None
     
@@ -241,7 +282,9 @@ class DistributedLock:
             redis_client = await get_redis()
             
             # Intentar adquirir el lock
-            lock_id = f"{asyncio.current_task().get_name()}:{id(self)}"
+            current_task = asyncio.current_task()
+            task_name = current_task.get_name() if current_task is not None else "unknown-task"
+            lock_id = f"{task_name}:{id(self)}"
             
             # Bloquear hasta conseguir el lock o timeout
             start_time = asyncio.get_event_loop().time()

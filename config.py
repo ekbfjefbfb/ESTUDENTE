@@ -68,10 +68,13 @@ def _resolve_cors_origins() -> list[str]:
         if origins:
             return origins
 
-    if ENVIRONMENT == "production":
-        return []
-
-    return ["*"]
+    return [
+        "http://localhost",
+        "http://localhost:3000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:3000",
+        "http://testserver",
+    ]
 
 
 CORS_ORIGINS = _resolve_cors_origins()
@@ -168,8 +171,8 @@ Cómo responder:
 • Sé claro y útil: **negritas** o viñetas cuando ordenen la respuesta.
 • Si no sabes algo, dilo sin dramatizar y ofrece lo que sí puedas aportar.
 • Si la intención es obvia, actúa (ej. agenda, resumen) sin pedir permiso para cada coma.
-• No repitas el mismo esquema si la pregunta se parece a la anterior: varía el ángulo.
-• Hechos y cifras: no inventes ni “rellenes” lagunas; si no hay dato fiable, dilo claro."""
+• Hechos y cifras: no inventes ni “rellenes” lagunas; si no hay dato fiable, dilo claro.
+• Personalidad y Emojis: utiliza emojis de forma creativa y variada según el contexto de la situación para reforzar la empatía, el tono o el tema de la conversación (ej. si hablas de éxito usa uno festivo, si es algo serio sé más sobrio, si es aprendizaje usa algo académico). Que se sienta natural, no mecánico."""
 ).strip()
 
 # Permite que el modelo invoque la herramienta search_web (Tavily/Serper) cuando no hubo prefetch

@@ -252,8 +252,9 @@ app = FastAPI(
 if ENVIRONMENT == "production":
     # Agregar dominio de Render automáticamente si no está en la lista
     render_host = "estudente-msba.onrender.com"
-    if render_host not in ALLOWED_HOSTS:
-        ALLOWED_HOSTS = list(ALLOWED_HOSTS) + [render_host, "*.onrender.com"]
+    required_hosts = [render_host, "*.onrender.com", "testserver"]
+    if any(host not in ALLOWED_HOSTS for host in required_hosts):
+        ALLOWED_HOSTS = list(ALLOWED_HOSTS) + [host for host in required_hosts if host not in ALLOWED_HOSTS]
     
     app.add_middleware(
         TrustedHostMiddleware,

@@ -1,185 +1,319 @@
-# middlewares/rate_limit_middleware.py
-import os
-import logging
 import json
-from jose import jwt
+import logging
+import os
+from dataclasses import dataclass
+from typing import Optional
+
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from jose import jwt
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.status import HTTP_429_TOO_MANY_REQUESTS
-from sqlalchemy.future import select
-from database.db_enterprise import get_primary_session as get_async_db
-from models.models import User
-from utils.metrics import REQUESTS_TOTAL, RATE_LIMIT_HITS  # métricas centralizadas
 
-# ---------------- Logger JSON ----------------
+from utils.metrics import REQUESTS_TOTAL, RATE_LIMIT_HITS
+from utils.rate_limit import (
+    RateLimitDecision,
+    RateLimitRule,
+    build_rate_limit_headers,
+    evaluate_rate_limits,
+)
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record):
         if isinstance(record.msg, dict):
             record.msg = json.dumps(record.msg)
         return super().format(record)
 
+
 logger = logging.getLogger("rate_limit_middleware")
-if not logger.hasHandlers():
+if not logger.handlers:
     logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
-    ch = logging.StreamHandler()
-    ch.setFormatter(JsonFormatter())
-    logger.addHandler(ch)
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter())
+    logger.addHandler(handler)
 
-# ---------------- Configuración ----------------
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 JWT_SECRET = os.getenv("JWT_SECRET_KEY", os.getenv("JWT_SECRET", "default-jwt-secret-change-in-production"))
-if not JWT_SECRET or JWT_SECRET == "default-jwt-secret-change-in-production":
-    logger.warning("JWT_SECRET no configurado o usando valor por defecto. Configure JWT_SECRET en producción.")
-JWT_ALGORITHM = "HS256"
-
-# ---------------- Planes base ----------------
-DEFAULT_PLAN_LIMITS = {
-    "demo": {"max_requests": 5, "window_seconds": 60},
-    "basic": {"max_requests": 20, "window_seconds": 60},
-    "pro": {"max_requests": 100, "window_seconds": 60},
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+BYPASS_METHODS = frozenset({"OPTIONS", "HEAD"})
+PUBLIC_PATHS = {
+    "/",
+    "/health",
+    "/api/health",
+    "/metrics",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/api/csrf-token",
+    "/api/unified-chat/health",
+    "/api/unified-chat/info",
+    "/unified-chat/health",
+    "/unified-chat/info",
 }
 
-# ---------------- LUA Script para atomicidad ----------------
-LUA_RATE_LIMIT = """
-local current = redis.call("INCR", KEYS[1])
-if current == 1 then
-    redis.call("EXPIRE", KEYS[1], ARGV[1])
-end
-return current
-"""
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+@dataclass(frozen=True)
+class EndpointPolicy:
+    name: str
+    prefixes: tuple[str, ...]
+    methods: frozenset[str]
+    rules: tuple[RateLimitRule, ...]
+
+
+POLICIES = (
+    EndpointPolicy(
+        name="auth",
+        prefixes=(
+            "/api/auth/login",
+            "/api/auth/register",
+            "/api/auth/refresh",
+            "/api/auth/oauth",
+        ),
+        methods=frozenset({"POST"}),
+        rules=(
+            RateLimitRule(
+                name="auth_ip",
+                scope="ip",
+                max_requests=_env_int("RATE_LIMIT_AUTH_IP_MAX_REQUESTS", 10),
+                window_seconds=_env_int("RATE_LIMIT_AUTH_IP_WINDOW_SECONDS", 60),
+                block_seconds=_env_int("RATE_LIMIT_AUTH_IP_BLOCK_SECONDS", 300),
+            ),
+        ),
+    ),
+    EndpointPolicy(
+        name="chat_http",
+        prefixes=(
+            "/api/unified-chat/message",
+            "/api/unified-chat/message/json",
+            "/api/unified-chat/stt",
+            "/api/unified-chat/tts",
+            "/api/unified-chat/voice/message",
+            "/unified-chat/message",
+            "/unified-chat/message/json",
+            "/unified-chat/stt",
+            "/unified-chat/tts",
+            "/unified-chat/voice/message",
+        ),
+        methods=frozenset({"POST"}),
+        rules=(
+            RateLimitRule(
+                name="chat_ip",
+                scope="ip",
+                max_requests=_env_int("RATE_LIMIT_CHAT_IP_MAX_REQUESTS", 120),
+                window_seconds=_env_int("RATE_LIMIT_CHAT_IP_WINDOW_SECONDS", 60),
+                block_seconds=_env_int("RATE_LIMIT_CHAT_IP_BLOCK_SECONDS", 120),
+            ),
+            RateLimitRule(
+                name="chat_user",
+                scope="user",
+                max_requests=_env_int("RATE_LIMIT_CHAT_USER_MAX_REQUESTS", 40),
+                window_seconds=_env_int("RATE_LIMIT_CHAT_USER_WINDOW_SECONDS", 60),
+                block_seconds=_env_int("RATE_LIMIT_CHAT_USER_BLOCK_SECONDS", 120),
+            ),
+        ),
+    ),
+    EndpointPolicy(
+        name="ai_processing",
+        prefixes=(
+            "/api/images/analyze",
+            "/api/documents/analyze",
+            "/api/documents/generate",
+            "/api/recordings/",
+            "/api/scheduled-recordings/",
+            "/api/voice-notes/",
+        ),
+        methods=MUTATING_METHODS,
+        rules=(
+            RateLimitRule(
+                name="ai_processing_ip",
+                scope="ip",
+                max_requests=_env_int("RATE_LIMIT_AI_IP_MAX_REQUESTS", 60),
+                window_seconds=_env_int("RATE_LIMIT_AI_IP_WINDOW_SECONDS", 60),
+                block_seconds=_env_int("RATE_LIMIT_AI_IP_BLOCK_SECONDS", 180),
+            ),
+            RateLimitRule(
+                name="ai_processing_user",
+                scope="user",
+                max_requests=_env_int("RATE_LIMIT_AI_USER_MAX_REQUESTS", 20),
+                window_seconds=_env_int("RATE_LIMIT_AI_USER_WINDOW_SECONDS", 60),
+                block_seconds=_env_int("RATE_LIMIT_AI_USER_BLOCK_SECONDS", 180),
+            ),
+        ),
+    ),
+    EndpointPolicy(
+        name="mutating_api",
+        prefixes=("/api/",),
+        methods=MUTATING_METHODS,
+        rules=(
+            RateLimitRule(
+                name="mutating_ip",
+                scope="ip",
+                max_requests=_env_int("RATE_LIMIT_MUTATING_IP_MAX_REQUESTS", 240),
+                window_seconds=_env_int("RATE_LIMIT_MUTATING_IP_WINDOW_SECONDS", 60),
+                block_seconds=_env_int("RATE_LIMIT_MUTATING_IP_BLOCK_SECONDS", 60),
+            ),
+            RateLimitRule(
+                name="mutating_user",
+                scope="user",
+                max_requests=_env_int("RATE_LIMIT_MUTATING_USER_MAX_REQUESTS", 120),
+                window_seconds=_env_int("RATE_LIMIT_MUTATING_USER_WINDOW_SECONDS", 60),
+                block_seconds=_env_int("RATE_LIMIT_MUTATING_USER_BLOCK_SECONDS", 60),
+            ),
+        ),
+    ),
+)
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Middleware global de rate limiting avanzado por usuario/IP/plan"""
+    def _client_ip(self, request: Request) -> str:
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
+        if request.client and request.client.host:
+            return request.client.host
+        return "unknown"
 
-    def __init__(self, app, redis_url: str = REDIS_URL):
-        super().__init__(app)
-        self.redis_url = redis_url
-
-    async def _get_redis(self):
-        try:
-            from services.redis_service import get_redis as get_redis_enterprise
-
-            redis_client = await get_redis_enterprise()
-            if redis_client is None:
-                return None
-            try:
-                await redis_client.ping()
-            except Exception:
-                return None
-            return redis_client
-        except Exception as e:
-            logger.error({"event": "redis_connect_error", "error": str(e)})
-            return None
-
-    def _get_user_id_from_jwt(self, request: Request):
+    def _extract_user_id(self, request: Request) -> Optional[str]:
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             return None
         if not JWT_SECRET or JWT_SECRET == "default-jwt-secret-change-in-production":
             return None
-        token = auth_header.split(" ")[1]
-        try:
-            # Sintonizado con sub (string/UUID) para consistencia con el resto del sistema
-            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-            return payload.get("sub")
-        except Exception as e:
-            logger.debug(f"JWT decode error in RateLimitMiddleware: {e}")
+        token = auth_header.split(" ", 1)[1].strip()
+        if not token:
             return None
-
-    async def _get_plan_limits(self, user_id: str):
-        if not user_id:
-            return DEFAULT_PLAN_LIMITS["demo"]
         try:
-            from sqlalchemy import text
-            session = await get_async_db()
-            async with session:
-                result = await session.execute(
-                    text("SELECT id, email, username, is_active FROM users WHERE id = :user_id"),
-                    {"user_id": user_id}
-                )
-                row = result.first()
-                if row:
-                    return DEFAULT_PLAN_LIMITS["demo"]
-        except Exception as e:
-            logger.warning(f"Error fetching plan limits: {e}")
-            return DEFAULT_PLAN_LIMITS["demo"]
-        return DEFAULT_PLAN_LIMITS["demo"]
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        except Exception:
+            return None
+        subject = payload.get("sub")
+        return str(subject) if subject else None
 
-    async def dispatch(self, request: Request, call_next):
-        endpoint = request.url.path
-        if endpoint in {"/api/auth/refresh", "/api/auth/login", "/api/auth/register", "/api/auth/oauth"}:
-            return await call_next(request)
-        redis_client = await self._get_redis()
+    def _is_public_path(self, path: str) -> bool:
+        if path in PUBLIC_PATHS:
+            return True
+        return path.startswith("/docs/") or path.startswith("/redoc/")
 
-        ip = request.client.host if request.client else "unknown"
-        user_id = self._get_user_id_from_jwt(request)
-        if user_id is None:
-            user_id = ip
-            limits = DEFAULT_PLAN_LIMITS["demo"]
-            plan_name = "demo"
-        else:
-            limits = await self._get_plan_limits(user_id)
-            plan_name = limits.get("name", "demo")
+    def _match_policy(self, path: str, method: str) -> Optional[EndpointPolicy]:
+        for policy in POLICIES:
+            if method not in policy.methods:
+                continue
+            if any(path.startswith(prefix) for prefix in policy.prefixes):
+                return policy
+        return None
 
-        if not redis_client:
-            # Fail-open if Redis is not available
-            return await call_next(request)
+    def _pick_header_decision(self, decisions: list[RateLimitDecision]) -> Optional[RateLimitDecision]:
+        eligible = [decision for decision in decisions if decision.identifier]
+        if not eligible:
+            return None
+        return min(
+            eligible,
+            key=lambda decision: (
+                decision.remaining / max(decision.limit, 1),
+                decision.remaining,
+                decision.retry_after,
+            ),
+        )
 
-        key = f"rate:{user_id}:{endpoint}"
-        max_requests = limits.get("max_requests", 5)
-        window_seconds = limits.get("window_seconds", 60)
-
-        try:
-            current = await redis_client.eval(LUA_RATE_LIMIT, 1, key, window_seconds)
-            if current > max_requests:
-                ttl = await redis_client.ttl(key)
-                ttl = max(ttl or 0, 0)
-                try:
-                    RATE_LIMIT_HITS.labels(endpoint=endpoint, user_type=str(plan_name)).inc()
-                except Exception:
-                    pass
-
-                return JSONResponse(
-                    status_code=HTTP_429_TOO_MANY_REQUESTS,
-                    content={
-                        "detail": "Demasiadas solicitudes. Intenta de nuevo más tarde.",
-                        "retry_after": ttl
-                    }
-                )
-        except Exception as e:
-            # Fail-open: permitir request si Redis falla
-            logger.error({"event": "redis_error", "user_id": user_id, "endpoint": endpoint, "error": str(e)})
-            return await call_next(request)
-
-        # Registrar request total (labels correctos)
+    def _record_metric(self, request: Request, status_code: int, user_type: str) -> None:
         try:
             REQUESTS_TOTAL.labels(
                 method=request.method,
-                endpoint=endpoint,
-                status_code="pending",
-                user_type=str(plan_name),
+                endpoint=request.url.path,
+                status_code=str(status_code),
+                user_type=user_type,
             ).inc()
         except Exception:
             pass
 
-        try:
-            response = await call_next(request)
-            try:
-                REQUESTS_TOTAL.labels(
-                    method=request.method,
-                    endpoint=endpoint,
-                    status_code=str(getattr(response, "status_code", "200")),
-                    user_type=str(plan_name),
-                ).inc()
-            except Exception:
-                pass
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            if "EndOfStream" in error_msg or "WouldBlock" in error_msg:
-                logger.warning({"event": "client_disconnected_during_rate_limit", "path": endpoint, "method": request.method})
-                raise
-            raise
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        method = request.method.upper()
 
+        if method in BYPASS_METHODS or self._is_public_path(path):
+            response = await call_next(request)
+            self._record_metric(request, getattr(response, "status_code", 200), "public")
+            return response
+
+        policy = self._match_policy(path, method)
+        user_id = self._extract_user_id(request)
+        ip_address = self._client_ip(request)
+
+        if policy is not None:
+            try:
+                decisions = await evaluate_rate_limits(
+                    namespace=policy.name,
+                    identifiers={"ip": ip_address, "user": user_id},
+                    rules=policy.rules,
+                )
+                blocked = next((decision for decision in decisions if not decision.allowed), None)
+                if blocked is not None:
+                    try:
+                        RATE_LIMIT_HITS.labels(endpoint=path, user_type=blocked.scope).inc()
+                    except Exception:
+                        pass
+                    self._record_metric(request, HTTP_429_TOO_MANY_REQUESTS, blocked.scope)
+                    logger.warning(
+                        {
+                            "event": "rate_limited_request",
+                            "path": path,
+                            "method": method,
+                            "policy": policy.name,
+                            "scope": blocked.scope,
+                            "rule": blocked.rule_name,
+                            "retry_after": blocked.retry_after,
+                            "ip": ip_address,
+                            "user_id": user_id,
+                            "backend": blocked.backend,
+                        }
+                    )
+                    return JSONResponse(
+                        status_code=HTTP_429_TOO_MANY_REQUESTS,
+                        headers=build_rate_limit_headers(blocked),
+                        content={
+                            "detail": "Demasiadas solicitudes. Intenta nuevamente más tarde.",
+                            "policy": policy.name,
+                            "scope": blocked.scope,
+                            "rule": blocked.rule_name,
+                            "retry_after": blocked.retry_after,
+                            "blocked": blocked.blocked,
+                        },
+                    )
+            except Exception as exc:
+                logger.error(
+                    {
+                        "event": "rate_limit_middleware_error",
+                        "path": path,
+                        "method": method,
+                        "ip": ip_address,
+                        "user_id": user_id,
+                        "error": str(exc),
+                    },
+                    exc_info=True,
+                )
+                decisions = []
+        else:
+            decisions = []
+
+        response = await call_next(request)
+        header_decision = self._pick_header_decision(decisions)
+        if header_decision is not None:
+            for key, value in build_rate_limit_headers(header_decision).items():
+                response.headers[key] = value
+            response.headers["X-RateLimit-Backend"] = header_decision.backend
+
+        self._record_metric(
+            request,
+            getattr(response, "status_code", 200),
+            "authenticated" if user_id else "anonymous",
+        )
+        return response
 

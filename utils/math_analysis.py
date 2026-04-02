@@ -312,9 +312,10 @@ class MathematicalAnalyzer:
                 }
                 
                 if mode == PrecisionMode.SAFE:
-                    # Add bounds checking and validation
-                    result = {k: max(0, v) if k in ["total_revenue", "total_costs", "profit", "break_even_units"] 
-                             else v for k, v in result.items()}
+                    result = {
+                        k: max(0, v) if k in ["total_revenue", "total_costs", "break_even_units"] else v
+                        for k, v in result.items()
+                    }
                     result["profit_margin_percent"] = max(-100, min(100, result["profit_margin_percent"]))
             
             execution_time = (time.perf_counter() - start_time) * 1000

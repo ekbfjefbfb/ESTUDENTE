@@ -68,7 +68,10 @@ class AntiAbuseService:
             async def fetch_plan():
                 key = self._get_plan_key(user_id)
                 plan = await redis_client.get(key)
-                user_plan = plan.decode('utf-8') if plan else "demo"
+                if isinstance(plan, bytes):
+                    user_plan = plan.decode("utf-8")
+                else:
+                    user_plan = plan or "demo"
                 if user_plan not in PLAN_CONFIGS:
                     user_plan = "demo"
                 return user_plan

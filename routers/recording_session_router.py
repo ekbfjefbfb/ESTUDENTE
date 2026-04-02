@@ -15,10 +15,15 @@ from utils.auth import get_current_user, verify_token
 from database.db_enterprise import get_primary_session
 from services.recording_session_service import recording_session_service
 from models.models import RecordingSession, RecordingSessionType, RecordingSessionStatus
+from utils.rate_limit import RateLimitRule, evaluate_rate_limits
 
 logger = logging.getLogger("recording_session_router")
 
 router = APIRouter(prefix="/api/recordings", tags=["Recording Sessions"])
+_RECORDING_WS_CONNECT_RULES = (
+    RateLimitRule(name="recording_ws_connect_ip", scope="ip", max_requests=20, window_seconds=60, block_seconds=120),
+    RateLimitRule(name="recording_ws_connect_user", scope="user", max_requests=8, window_seconds=60, block_seconds=120),
+)
 
 # =============================================
 # MODELOS Pydantic
@@ -128,6 +133,27 @@ async def recording_websocket(websocket: WebSocket, session_id: str):
 
     if not user_id:
         await websocket.close(code=1008)
+        return
+
+    decisions = await evaluate_rate_limits(
+        namespace="recording_ws_connect",
+        identifiers={
+            "ip": websocket.client.host if websocket.client and websocket.client.host else "unknown",
+            "user": str(user_id),
+        },
+        rules=_RECORDING_WS_CONNECT_RULES,
+    )
+    blocked = next((decision for decision in decisions if not decision.allowed), None)
+    if blocked is not None:
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": "rate_limited",
+                "scope": blocked.scope,
+                "retry_after_seconds": blocked.retry_after,
+            }
+        )
+        await websocket.close(code=1013)
         return
 
     logger.info(f"🎙️ WS Unificado conectado: session={session_id}, user={user_id}")

@@ -42,6 +42,7 @@ from routers.chat_search import _normalize_message_text
 from utils.auth import get_current_user
 from services.voice_ws_session import VoiceWsConfig, VoiceWsSession
 from services.groq_ai_service import chat_with_ai
+from utils.rate_limit import RateLimitRule, evaluate_rate_limits
 from routers.chat_ws_utils import (
     _ws_auth_user_id, _ws_send_json, _ws_heartbeat,
     _estimate_duration_ms_from_bytes, _tail_bytes_for_pcm16
@@ -49,6 +50,10 @@ from routers.chat_ws_utils import (
 
 logger = logging.getLogger("unified_chat_router")
 router = APIRouter(prefix="/unified-chat", tags=["Chat IA"])
+_VOICE_WS_CONNECT_RULES = (
+    RateLimitRule(name="voice_ws_connect_ip", scope="ip", max_requests=20, window_seconds=60, block_seconds=120),
+    RateLimitRule(name="voice_ws_connect_user", scope="user", max_requests=8, window_seconds=60, block_seconds=120),
+)
 
 
 # ============== HTTP ENDPOINTS ==============
@@ -245,6 +250,28 @@ async def voice_stream_ws(websocket: WebSocket):
         await websocket.close(code=1008)
         return
 
+    decisions = await evaluate_rate_limits(
+        namespace="voice_ws_connect",
+        identifiers={
+            "ip": websocket.client.host if websocket.client and websocket.client.host else "unknown",
+            "user": str(user_id),
+        },
+        rules=_VOICE_WS_CONNECT_RULES,
+    )
+    blocked = next((decision for decision in decisions if not decision.allowed), None)
+    if blocked is not None:
+        await _ws_send_json(
+            websocket,
+            {
+                "type": "error",
+                "message": "rate_limited",
+                "scope": blocked.scope,
+                "retry_after_seconds": blocked.retry_after,
+            },
+        )
+        await websocket.close(code=1013)
+        return
+
     session = VoiceWsSession(
         send_json=lambda payload: _ws_send_json(websocket, payload),
         chat_with_ai=chat_with_ai,
@@ -260,7 +287,7 @@ async def voice_stream_ws(websocket: WebSocket):
 
     heartbeat_task = None
     try:
-        heartbeat_task = asyncio.create_task(_ws_heartbeat(websocket))
+        heartbeat_task = asyncio.create_task(_ws_heartbeat(websocket, str(user_id)))
         while True:
             try:
                 msg = await websocket.receive()

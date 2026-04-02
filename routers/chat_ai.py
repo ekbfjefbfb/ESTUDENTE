@@ -27,6 +27,7 @@ async def get_ai_response_with_streaming(
     user_context: Dict[str, Any],
     websocket: WebSocket,
     request_id: str,
+    images: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Obtiene respuesta de IA con streaming de tokens via WebSocket.
@@ -59,12 +60,19 @@ async def get_ai_response_with_streaming(
     # Obtener historial de conversación
     conversation_history = await get_conversation_history(user_id, limit=10)
     
-    # Construir mensajes: system + historial + mensaje actual
-    messages = [{"role": "system", "content": system_content}]
-    messages.extend(conversation_history)
-    # Asegurar que el último mensaje sea el actual (podría estar ya en historial)
-    if not conversation_history or conversation_history[-1].get("content") != user_message:
-        messages.append({"role": "user", "content": user_message})
+    # Construir mensaje del usuario (con o sin archivos adjuntos)
+    if images:
+        # Vision request with files
+        user_msg = build_message_with_files(
+            message=user_message,
+            image_contents=images,
+            text_contents=[]
+        )
+        messages.append(user_msg)
+    else:
+        # Regular text-only request
+        if not conversation_history or conversation_history[-1].get("content") != user_message:
+            messages.append({"role": "user", "content": user_message})
 
     full_text = ""
     try:

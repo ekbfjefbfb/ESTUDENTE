@@ -23,10 +23,15 @@ from routers.chat_ws_utils import (
 from services.hub_memory_service import hub_memory_service
 from services.youtube_transcript_service import youtube_transcript_service
 from services.browser_mcp_service import browser_mcp_service
+from utils.rate_limit import RateLimitRule, evaluate_rate_limits
 
 logger = logging.getLogger("chat_ws_handlers")
 
 _MAX_MESSAGE_CHARS = 8000
+_WS_CONNECT_RULES = (
+    RateLimitRule(name="chat_ws_connect_ip", scope="ip", max_requests=30, window_seconds=60, block_seconds=120),
+    RateLimitRule(name="chat_ws_connect_user", scope="user", max_requests=10, window_seconds=60, block_seconds=120),
+)
 
 
 async def handle_chat_websocket(websocket: WebSocket, user_id: str):
@@ -101,6 +106,29 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
             logger.warning(f"User ID mismatch: token={token_user_id}, path={user_id}")
             await _ws_send_json(websocket, {"type": "error", "message": "forbidden_user_id_mismatch"})
             await websocket.close(code=1008)
+            return
+
+        decisions = await evaluate_rate_limits(
+            namespace="chat_ws_connect",
+            identifiers={
+                "ip": websocket.client.host if websocket.client and websocket.client.host else "unknown",
+                "user": str(token_user_id),
+            },
+            rules=_WS_CONNECT_RULES,
+        )
+        blocked = next((decision for decision in decisions if not decision.allowed), None)
+        if blocked is not None:
+            await _ws_send_json(
+                websocket,
+                {
+                    "type": "error",
+                    "message": "rate_limited",
+                    "error_code": "rate_limited",
+                    "scope": blocked.scope,
+                    "retry_after_seconds": blocked.retry_after,
+                },
+            )
+            await websocket.close(code=1013)
             return
         
         # Connection lock management
@@ -197,7 +225,8 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     request_id = uuid.uuid4().hex[:12]
     
     user_message = str(message_data.get("message", "") or "").strip()
-    if not user_message:
+    images = message_data.get("images", []) # Extraer lista de imágenes (base64/URLs)
+    if not user_message and not images:
         await _ws_send_json(websocket, {"type": "error", "message": "message_empty"})
         return
     
@@ -267,7 +296,7 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     await _ws_send_status(websocket, "Generando respuesta...", request_id=request_id)
     try:
         ai_result = await get_ai_response_with_streaming(
-            user_id, user_message, user_context, websocket, request_id
+            user_id, user_message, user_context, websocket, request_id, images=images
         )
     except Exception as e:
         logger.exception(f"WebSocket streaming error user_id={user_id}: {e}")

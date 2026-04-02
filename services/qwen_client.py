@@ -316,8 +316,6 @@ async def get_qwen_client() -> QwenClient:
     """
     Obtiene o crea la instancia global de QwenClient (legacy).
     """
-    global _qwen_client
-    
     raise RuntimeError("QwenClient is disabled. This project uses Groq.")
 
 
