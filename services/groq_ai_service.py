@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import logging
 from datetime import datetime
@@ -130,7 +131,12 @@ from config import (
     GROQ_SYSTEM_PROMPT,
     select_groq_model,
     get_max_tokens_for_model,
+    GROQ_TOOL_SEARCH_MAX_ROUNDS,
+    GROQ_TOOL_SEARCH_MAX_CALLS,
+    GROQ_SEARCH_API_MAX_CONCURRENT,
 )
+
+_search_api_semaphore = asyncio.Semaphore(GROQ_SEARCH_API_MAX_CONCURRENT)
 
 # Legacy aliases for backwards compatibility
 GROQ_LLM_FAST_MODEL = GROQ_MODEL_FAST
@@ -415,6 +421,65 @@ async def _get_user_personal_context(user_id: str) -> Optional[str]:
     )
 
 
+def _groq_search_web_tool_def() -> Dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": (
+                "Busca en internet (APIs Tavily/Serper): noticias, precios, clima, hechos verificables, nombres, fechas. "
+                "Úsala cuando haga falta información externa o no tengas certeza. Puedes llamarla varias veces con consultas más "
+                "específicas si la primera no basta. No digas que no puedes buscar: si hace falta comprobar, llama. "
+                "Si no hay resultados, dilo con honestidad; no inventes ni rellenes lagunas con suposiciones."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Consulta de búsqueda (refina en llamadas siguientes si hace falta)",
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    }
+
+
+async def _run_search_web_for_tool(*, query: str, user_for_search: str) -> str:
+    from services.tavily_search_service import tavily_search_service
+    from services.serper_search_service import serper_search_service
+
+    q = (query or "").strip()
+    if not q:
+        q = "."
+
+    async with _search_api_semaphore:
+        search_results, meta = await tavily_search_service.search_with_meta(
+            query=q, user_id=user_for_search, include_images=False
+        )
+        if meta.get("status") != "ok":
+            logger.warning(
+                "tavily_search_failed status=%s user=%s",
+                meta.get("status"),
+                user_for_search,
+            )
+            search_results, meta = await serper_search_service.search_with_meta(
+                query=q, user_id=user_for_search, include_images=False
+            )
+
+    if not search_results:
+        return (
+            "No se encontraron resultados en esta búsqueda o las APIs no respondieron. "
+            "Indícalo al usuario; no inventes datos."
+        )
+    snippets = [
+        f"- {r.get('title', 'Sin título')}\n  {r.get('snippet', '')}\n  (Fuente: {r.get('url', '')})"
+        for r in search_results
+    ]
+    return ("Resultados recuperados de la web:\n\n" + "\n\n".join(snippets))[:6000]
+
+
 async def _execute_chat_core(
     messages: List[Dict[str, Any]],
     user: Optional[str],
@@ -500,100 +565,114 @@ async def _execute_chat_core(
     }
     
     if use_web_search and not stream:
-        kwargs["tools"] = [{
-            "type": "function",
-            "function": {
-                "name": "search_web",
-                "description": (
-                    "Busca en internet (APIs Tavily/Serper) datos actuales: noticias, precios, clima, hechos, nombres, fechas. "
-                    "Úsala cuando el usuario pida información externa, cuando no tengas certeza sin comprobar, "
-                    "o cuando los datos puedan estar desactualizados. No digas que no puedes buscar en la web: "
-                    "si necesitas comprobar algo, llama a esta herramienta. Sé honesto con el resultado (vacío = dilo)."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "La busqueda o pregunta exacta (en base a la conversacion)"
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }
-        }]
+        kwargs["tools"] = [_groq_search_web_tool_def()]
         kwargs["tool_choice"] = "auto"
-    
+
     # 8. Ejecutar con retry y fallback
     try:
         completion = await _call_groq_with_retry(create_fn, kwargs)
-        
-        # 8.1 Interceptar Tool Calls (Búsqueda Web)
-        response_message = completion.choices[0].message
-        if getattr(response_message, "tool_calls", None):
-            for tool_call in response_message.tool_calls:
-                if tool_call.function.name == "search_web":
-                    import json
-                    from services.tavily_search_service import tavily_search_service
-                    from services.serper_search_service import serper_search_service
-                    
-                    try:
-                        args = json.loads(tool_call.function.arguments)
-                        query = args.get("query", "")
-                        logger.info(f"LLM tool invocation: search_web(query='{query}')")
-                        
-                        # PRIORITY: Tavily
-                        user_for_search = user or "tool_search"
-                        search_results, meta = await tavily_search_service.search_with_meta(
-                            query=query, user_id=user_for_search, include_images=False
-                        )
-                        
-                        # FALLBACK: Serper
-                        if meta.get("status") != "ok":
-                            logger.warning(f"Tavily search failed ({meta.get('status')}), falling back to Serper")
-                            search_results, meta = await serper_search_service.search_with_meta(
-                                query=query, user_id=user_for_search, include_images=False
-                            )
-                        
-                        # Format Output
-                        if not search_results:
-                            search_result_text = "No se encontraron resultados o las APIs de búsqueda están agotadas."
-                        else:
-                            snippets = [
-                                f"- {r.get('title', 'Sin título')}\n  {r.get('snippet', '')}\n  (Fuente: {r.get('url', '')})"
-                                for r in search_results
-                            ]
-                            search_result_text = "Resultados recuperados de la web:\n\n" + "\n\n".join(snippets)
-                        
-                        logger.info(f"Search retrieved {len(search_results)} primary sources")
-                        
-                        msg_dump = response_message.model_dump(exclude_unset=True) if hasattr(response_message, "model_dump") else response_message.dict(exclude_unset=True)
-                        messages.append(msg_dump)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "content": search_result_text[:6000]  # Hard cap
-                        })
-                        
-                    except Exception as e:
-                        logger.error(f"Error executing search_web tool: {e}")
-                        msg_dump = response_message.model_dump(exclude_unset=True) if hasattr(response_message, "model_dump") else response_message.dict(exclude_unset=True)
-                        messages.append(msg_dump)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": getattr(tool_call, "id", "unknown"),
-                            "name": "search_web",
-                            "content": f"Búsqueda falló temporalmente: {e}"
-                        })
 
-            # Llamada de inyección final con resultado
-            kwargs["messages"] = messages
-            kwargs.pop("tools", None)
-            kwargs.pop("tool_choice", None)
-            # Re-ejecutar ignorando caídas de timeout para dar margen a la búsqueda
-            kwargs["timeout"] = TIMEOUT_SECONDS + 15 
-            completion = await _call_groq_with_retry(create_fn, kwargs)
+        # 8.1 Multi-turn search_web: varias rondas Groq↔herramienta; límites por petición + semáforo global (alta carga)
+        if use_web_search and not stream:
+            user_for_search = str(user or "tool_search")
+            tool_def = [_groq_search_web_tool_def()]
+            max_rounds = GROQ_TOOL_SEARCH_MAX_ROUNDS
+            max_calls = GROQ_TOOL_SEARCH_MAX_CALLS
+            total_calls = 0
+
+            for round_num in range(max_rounds):
+                rm = completion.choices[0].message
+                tcs = getattr(rm, "tool_calls", None) or []
+                if not tcs:
+                    break
+
+                msg_dump = (
+                    rm.model_dump(exclude_unset=True)
+                    if hasattr(rm, "model_dump")
+                    else rm.dict(exclude_unset=True)
+                )
+                messages.append(msg_dump)
+
+                for tc in tcs:
+                    fn = getattr(tc.function, "name", "") or ""
+                    tc_id = getattr(tc, "id", None) or "unknown"
+                    if fn != "search_web":
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "name": fn,
+                            "content": "Herramienta no disponible en esta sesión.",
+                        })
+                        continue
+                    if total_calls >= max_calls:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "name": "search_web",
+                            "content": (
+                                "Límite de búsquedas web por petición alcanzado (protección de carga multiusuario). "
+                                "Responde solo con lo ya obtenido; no inventes datos."
+                            ),
+                        })
+                        continue
+                    total_calls += 1
+                    try:
+                        args = json.loads(tc.function.arguments or "{}")
+                        query = str(args.get("query") or "").strip()
+                        logger.info(
+                            "search_web round=%s call=%s/%s user=%s q=%r",
+                            round_num,
+                            total_calls,
+                            max_calls,
+                            user_for_search,
+                            query[:200],
+                        )
+                        text = await _run_search_web_for_tool(
+                            query=query, user_for_search=user_for_search
+                        )
+                    except Exception as exc:
+                        logger.exception("search_web execution failed: %s", exc)
+                        text = f"Error en búsqueda: {exc}. No inventes datos."
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "name": "search_web",
+                        "content": text,
+                    })
+
+                kwargs["messages"] = messages
+                kwargs["model"] = model
+                kwargs["tools"] = tool_def
+                kwargs["tool_choice"] = "auto"
+                kwargs["timeout"] = TIMEOUT_SECONDS + 15
+                completion = await _call_groq_with_retry(create_fn, kwargs)
+
+            rm_final = completion.choices[0].message
+            if getattr(rm_final, "tool_calls", None):
+                logger.warning(
+                    "search_web still requesting tools after rounds=%s user=%s",
+                    max_rounds,
+                    user_for_search,
+                )
+                messages.append(
+                    rm_final.model_dump(exclude_unset=True)
+                    if hasattr(rm_final, "model_dump")
+                    else rm_final.dict(exclude_unset=True)
+                )
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Sistema: límite de rondas de búsqueda alcanzado. "
+                        "Responde en texto final usando solo datos ya obtenidos; no solicites más herramientas. "
+                        "Si falta información, dilo con honestidad; no supongas ni inventes."
+                    ),
+                })
+                kwargs["messages"] = messages
+                kwargs["model"] = model
+                kwargs.pop("tools", None)
+                kwargs.pop("tool_choice", None)
+                kwargs["timeout"] = TIMEOUT_SECONDS + 25
+                completion = await _call_groq_with_retry(create_fn, kwargs)
 
     except Exception as e:
         logger.error(f"Groq API failed with model {model}: {e}")

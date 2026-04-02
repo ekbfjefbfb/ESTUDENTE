@@ -168,11 +168,19 @@ Cómo responder:
 • Sé claro y útil: **negritas** o viñetas cuando ordenen la respuesta.
 • Si no sabes algo, dilo sin dramatizar y ofrece lo que sí puedas aportar.
 • Si la intención es obvia, actúa (ej. agenda, resumen) sin pedir permiso para cada coma.
-• No repitas el mismo esquema si la pregunta se parece a la anterior: varía el ángulo."""
+• No repitas el mismo esquema si la pregunta se parece a la anterior: varía el ángulo.
+• Hechos y cifras: no inventes ni “rellenes” lagunas; si no hay dato fiable, dilo claro."""
 ).strip()
 
 # Permite que el modelo invoque la herramienta search_web (Tavily/Serper) cuando no hubo prefetch
 GROQ_CHAT_WEB_TOOLS = os.getenv("GROQ_CHAT_WEB_TOOLS", "true").lower() in ("true", "1", "t")
+
+# Multi-turn search_web: rondas máx. Groq↔tools y llamadas search_web por petición HTTP (anti abuso, multiusuario)
+GROQ_TOOL_SEARCH_MAX_ROUNDS = max(1, int(os.getenv("GROQ_TOOL_SEARCH_MAX_ROUNDS", "5")))
+GROQ_TOOL_SEARCH_MAX_CALLS = max(1, int(os.getenv("GROQ_TOOL_SEARCH_MAX_CALLS", "10")))
+
+# Concurrencia global hacia Tavily/Serper (evita saturar APIs en picos de carga)
+GROQ_SEARCH_API_MAX_CONCURRENT = max(1, int(os.getenv("GROQ_SEARCH_API_MAX_CONCURRENT", "40")))
 
 
 # =========================

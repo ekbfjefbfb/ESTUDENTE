@@ -346,6 +346,7 @@ def _build_system_prompt(
         "\nINFORMACIÓN EXTERNA:\n"
         "Si arriba hay RESULTADOS DE BÚSQUEDA, provienen de internet (Tavily/Serper) y son datos reales para esta petición. "
         "Intégralos en la respuesta; no digas que no puedes buscar ni que no tienes acceso si ya están listados. "
+        "El backend puede limitar búsquedas por petición en picos de carga: si el usuario necesita más y no hay datos, dilo, no inventes. "
         "Si no hay resultados de búsqueda en el contexto y necesitas datos actuales, dilo con honestidad: no inventes cifras, "
         "fechas ni noticias. Ante duda, reconócela.\n"
     )
