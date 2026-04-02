@@ -120,7 +120,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 # - 80% de las peticiones van aquí
 GROQ_MODEL_FAST = os.getenv(
     "GROQ_MODEL_FAST",
-    "openai/gpt-oss-20b"  # 20B params, rápido y eficiente
+    "llama-3.1-8b-instant"  # Llama 3.1 8B, ultra rápido
 ).strip()
 
 # --- MODELO REASONING: RAZONAMIENTO COMPLEJO (~120B parámetros) ---
@@ -133,7 +133,7 @@ GROQ_MODEL_FAST = os.getenv(
 # - Mensajes largos (>800 chars) o con código
 GROQ_MODEL_REASONING = os.getenv(
     "GROQ_MODEL_REASONING",
-    "openai/gpt-oss-120b"  # 120B params, razonamiento profundo
+    "llama-3.3-70b-versatile"  # Llama 3.3 70B, razonamiento de nivel GPT-4
 ).strip()
 
 # Esfuerzo de razonamiento: low | medium | high
@@ -146,10 +146,9 @@ GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "medium").strip()
 # - Analizar documentos escaneados (PDFs como imágenes)
 # - Reconocer texto en imágenes (OCR visual)
 # - Interpretar gráficos, diagramas, fotos
-# ÚNICO modelo que acepta imágenes en Groq
 GROQ_MODEL_VISION = os.getenv(
     "GROQ_MODEL_VISION",
-    "meta-llama/llama-3.2-11b-vision-preview"  # Meta/Llama con visión
+    "meta-llama/llama-4-scout-17b-16e-instruct"  # Meta/Llama 4 con visión (Scout)
 ).strip()
 
 # --- LÍMITES DE TOKENS ---
