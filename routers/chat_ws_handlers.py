@@ -222,6 +222,7 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     import uuid
     from services.agent_service import agent_manager
     from utils.agent_stream_bridge import run_agent_with_streaming
+    from services.orchestration_service import scout
     
     start_ts = datetime.utcnow()
     request_id = uuid.uuid4().hex[:12]
@@ -242,12 +243,12 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     )
     logger.info(f"chat_ws_start request_id={request_id} user_id={user_id} web_search={should_web_search}")
     
-    # --- INTERCEPCIÓN AGÉNTICA (Nivel Dios) ---
-    if user_message.lower().startswith("/agent"):
-        # Limpiar el comando del mensaje
-        task_desc = user_message[6:].strip() or "Hola, ¿en qué pueden ayudarme hoy?"
+    # --- ORQUESTACIÓN AUTÓNOMA (Nivel Dios) ---
+    # El Scout decide si necesitamos agentes o chat normal
+    if scout.should_use_agents(user_message):
+        task_desc = user_message.strip()
         
-        await _ws_send_status(websocket, "Iniciando Orquestación de Agentes...", request_id=request_id)
+        await _ws_send_status(websocket, "Orquestando Equipo de Expertos...", request_id=request_id)
         
         # Callback para enviar tokens de los agentes al WebSocket
         def on_agent_token(token: str):
@@ -262,18 +263,18 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
             )
 
         try:
-            # Ejecutar el equipo de agentes con el puente de streaming
+            # Ejecutar el equipo de agentes con aislamiento de user_id
             await run_agent_with_streaming(
-                lambda: agent_manager.run_complex_task(task_desc),
+                lambda: agent_manager.run_complex_task(task_desc, user_id=user_id),
                 on_agent_token
             )
             
             await _ws_send_json(websocket, {"type": "done", "request_id": request_id})
-            return # Finalizar aquí para peticiones agénticas
+            return # Finalizar aquí para peticiones agénticas automáticas
         except Exception as e:
-            logger.error(f"Error en flujo agéntico: {e}")
-            await _ws_send_json(websocket, {"type": "error", "message": "agent_failure", "request_id": request_id})
-            return
+            logger.error(f"Error en orquestación autónoma: {e}")
+            # Fallback silencioso al flujo de chat normal si los agentes fallan
+            logger.warning("Fallo en agentes, realizando fallback a chat normal...")
     
     # Get user context
     user_context = await get_user_context_for_chat(user_id)
