@@ -7,7 +7,9 @@ con imports antiguos; no se inicializa ni realiza llamadas externas.
 """
 
 import logging
-from typing import Optional
+import base64
+from pathlib import Path
+from typing import Optional, List, Dict, Any, AsyncGenerator
 
 logger = logging.getLogger(__name__)
 

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketState
 
 from utils.auth import get_current_user, verify_token
+from database.db_enterprise import get_primary_session
 from services.recording_session_service import recording_session_service
 from models.models import RecordingSession, RecordingSessionType, RecordingSessionStatus
 
