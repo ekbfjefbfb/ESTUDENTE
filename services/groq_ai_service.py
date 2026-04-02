@@ -754,5 +754,26 @@ async def chat_with_ai_vision(
     if hasattr(result, '__aiter__'):
         return result
     
-    # Si es string (caso normal), sanitizar
-    return sanitize_ai_text(result or "")
+async def chat_agentic(
+    task_description: str,
+    user_id: str = "default"
+) -> str:
+    """
+    Ruta de Inteligencia Superior: Invoca al equipo de expertos agénticos de AutoGen.
+    Fácil de llamar desde cualquier servicio del backend.
+    """
+    try:
+        from services.agent_service import agent_manager
+        logger.info(f"groq_ai_service: Iniciando Orquestación Agéntica Unificada [USER:{user_id}]")
+        
+        result = await agent_manager.run_complex_task(task_description, user_id=user_id)
+        
+        if result and hasattr(result, "summary"):
+            return result.summary
+            
+        return "Tarea completada por el equipo agéntico."
+    except Exception as e:
+        logger.error(f"Error en chat_agentic unificado: {e}")
+        # Fallback a chat normal si falla la orquestación compleja
+        messages = [{"role": "user", "content": task_description}]
+        return await chat_with_ai(messages, user=user_id)

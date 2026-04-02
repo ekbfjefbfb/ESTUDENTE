@@ -316,6 +316,44 @@ class SmartCache:
             logger.error(f"❌ Error getting smart cache stats: {e}")
             return {}
     
+    async def set_agentic(
+        self, 
+        key: str, 
+        value: Any, 
+        user_id: str = "default",
+        ttl: int = 3600
+    ) -> bool:
+        """
+        Guarda en cache procesando el valor con agentes para extraer contexto.
+        Útil para guardar documentos largos o conversaciones complejas.
+        """
+        try:
+            if isinstance(value, str) and len(value) > 1000:
+                from services.agent_service import agent_manager
+                
+                task_desc = f"""
+                Analiza este contenido y genera un resumen técnico ultra-conciso y 5 etiquetas clave para búsqueda semántica.
+                Contenido: {value[:5000]}
+                
+                Responde en JSON: {{"summary": "...", "tags": ["...", ...]}}
+                """
+                
+                logger.info(f"smart_cache: Procesamiento Agéntico de Contexto iniciado [USER:{user_id}]")
+                result = await agent_manager.run_complex_task(task_desc, user_id=user_id)
+                
+                # Guardar el valor original + los metadatos agénticos
+                enhanced_value = {
+                    "original": value,
+                    "agent_context": result.summary if hasattr(result, "summary") else None,
+                    "processed_at": datetime.utcnow().isoformat()
+                }
+                return await self.set(key, enhanced_value, ttl)
+                
+            return await self.set(key, value, ttl)
+        except Exception as e:
+            logger.error(f"Error en set_agentic: {e}")
+            return await self.set(key, value, ttl)
+
     async def optimize(self) -> Dict[str, Any]:
         """
         Optimiza el cache basado en patrones de acceso

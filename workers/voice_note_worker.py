@@ -192,87 +192,57 @@ async def process_summarization_job(
     job: VoiceNoteProcessingJob,
     voice_note: VoiceNote
 ) -> dict:
-    """Procesa job de generación de resumen"""
+    """Procesa job de generación de resumen usando Agentes"""
     
     if not AI_AVAILABLE:
-        return {
-            "success": False,
-            "error": "ai_service_unavailable",
-            "summary": None
-        }
+        return {"success": False, "error": "ai_service_unavailable"}
     
     try:
         transcript = voice_note.transcript or ""
         if not transcript.strip():
-            return {
-                "success": False,
-                "error": "no_transcript_available",
-                "summary": None
-            }
+            return {"success": False, "error": "no_transcript_available"}
         
-        # Prompt para resumen
-        prompt = f"""Resume la siguiente transcripción de nota de voz.
-        Identifica los puntos clave, acciones pendientes, y organiza la información.
+        from services.agent_service import agent_manager
+        
+        task_desc = f"""
+        Resume esta transcripción de nota de voz.
+        Identifica los puntos clave y organiza la información de forma ejecutiva.
         
         Transcripción:
-        {transcript[:8000]}  # Limitar para no exceder contexto
+        {transcript[:10000]}
+        """
         
-        Genera un resumen estructurado en español."""
-        
-        response = await chat_with_ai(
-            message=prompt,
-            user_id=voice_note.user_id,
-            system_prompt="Eres un asistente especializado en resumir notas de voz."
-        )
+        logger.info(f"voice_worker: Resumen Agéntico iniciado para {voice_note.id}")
+        result = await agent_manager.run_complex_task(task_desc, user_id=voice_note.user_id)
         
         return {
             "success": True,
-            "summary": response.get("response", ""),
-            "model": response.get("model", "unknown")
+            "summary": result.summary if hasattr(result, "summary") else "Resumen generado.",
+            "model": "agentic_team_v9"
         }
         
     except Exception as e:
-        logger.error(f"Error en summarization: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "summary": None
-        }
+        logger.error(f"Error en summarization agéntica: {e}")
+        return {"success": False, "error": str(e)}
 
 
 async def process_extraction_job(
     job: VoiceNoteProcessingJob,
     voice_note: VoiceNote
 ) -> dict:
-    """Procesa job de extracción de items (tareas, etc)"""
-    
-    if not AI_AVAILABLE:
-        return {
-            "success": False,
-            "error": "ai_service_unavailable",
-            "items": [],
-            "topics": [],
-            "entities": []
-        }
+    """Procesa job de extracción de items usando Agentes"""
     
     try:
+        from services.agent_service import agent_manager
         transcript = voice_note.transcript or ""
-        if not transcript.strip():
-            return {
-                "success": False,
-                "error": "no_transcript_available",
-                "items": [],
-                "topics": [],
-                "entities": []
-            }
         
-        # Prompt para extracción
-        prompt = f"""Analiza esta transcripción y extrae:
+        task_desc = f"""
+        Analiza esta transcripción y extrae:
         1. Items de acción (tareas, recordatorios, deadlines)
         2. Temas principales
-        3. Entidades nombradas (personas, lugares, organizaciones)
+        3. Entidades (personas, lugares)
         
-        Responde SOLO en JSON con este formato:
+        Responde exclusivamente en JSON válido:
         {{
             "items": [{{"type": "task|reminder|deadline", "content": "...", "due_date": "ISO or null"}}],
             "topics": ["tema1", "tema2"],
@@ -280,44 +250,33 @@ async def process_extraction_job(
         }}
         
         Transcripción:
-        {transcript[:8000]}"""
+        {transcript[:10000]}
+        """
         
-        response = await chat_with_ai(
-            message=prompt,
-            user_id=voice_note.user_id,
-            system_prompt="Eres un extractor de información estructurada. Responde solo JSON válido."
-        )
+        logger.info(f"voice_worker: Extracción Agéntica iniciada para {voice_note.id}")
+        result = await agent_manager.run_complex_task(task_desc, user_id=voice_note.user_id)
         
-        # Parsear respuesta
+        # Parsear el JSON de la respuesta del agente
         try:
-            result_text = response.get("response", "{}")
             import json
-            result = json.loads(result_text)
+            import re
+            # Limpiar posibles bloques markdown
+            clean_content = re.sub(r'```json|```', '', result.summary).strip()
+            data = json.loads(clean_content)
             
             return {
                 "success": True,
-                "items": result.get("items", []),
-                "topics": result.get("topics", []),
-                "entities": result.get("entities", []),
+                "items": data.get("items", []),
+                "topics": data.get("topics", []),
+                "entities": data.get("entities", []),
             }
-        except json.JSONDecodeError:
-            return {
-                "success": False,
-                "error": "invalid_json_response",
-                "items": [],
-                "topics": [],
-                "entities": []
-            }
-        
+        except Exception as parse_e:
+            logger.error(f"Error parseando JSON agéntico: {parse_e}")
+            return {"success": False, "error": "agentic_json_parse_error"}
+            
     except Exception as e:
-        logger.error(f"Error en extracción: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "items": [],
-            "topics": [],
-            "entities": []
-        }
+        logger.error(f"Error en extracción agéntica: {e}")
+        return {"success": False, "error": str(e)}
 
 
 async def process_full_pipeline_job(

@@ -209,29 +209,46 @@ class RecordingSessionService:
 
     # _generate_ai_summary eliminado: se usa _extract_session_items que procesa todo el transcript.
 
-    async def _extract_session_items(self, transcript: str) -> Dict[str, Any]:
-        """Extrae items usando el motor de extracción."""
+    async def _extract_session_items(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+        """Extrae items y resumen usando el equipo de agentes de AutoGen."""
         try:
-            from notes_grpc.extractor import extract_note_segmented
-            from notes_grpc.groq_client import GroqClient
+            from services.agent_service import agent_manager
+            import json
+            import re
 
-            client = GroqClient()
-            extracted = await extract_note_segmented(client=client, transcript=transcript, title_hint="")
+            task_desc = f"""
+            Analiza esta sesión grabada y genera un informe ejecutivo.
+            
+            Transcripción completa:
+            {transcript[:15000]}
+            
+            Tu objetivo es extraer:
+            1. Un resumen ejecutivo del contenido.
+            2. Puntos clave (Key Points).
+            3. Tareas accionables (Action Items).
+            
+            Responde exclusivamente en JSON válido con esta estructura:
+            {{
+                "summary": "Resumen ejecutivo aquí...",
+                "key_points": ["punto1", "punto2"],
+                "tasks": [{{"text": "tarea1", "due_date": "ISO o null", "priority": "high|medium|low"}}]
+            }}
+            """
 
+            logger.info(f"recording_service: Extracción Agéntica iniciada [USER:{user_id}]")
+            result = await agent_manager.run_complex_task(task_desc, user_id=user_id)
+            
+            # Limpiar y parsear JSON
+            clean_content = re.sub(r'```json|```', '', result.summary).strip()
+            data = json.loads(clean_content)
+            
             return {
-                "summary": extracted.summary,
-                "key_points": extracted.key_points,
-                "tasks": [
-                    {
-                        "text": t.text,
-                        "due_date": t.due_date.isoformat() if getattr(t, "due_date", None) else None,
-                        "priority": getattr(t, "priority", None),
-                    }
-                    for t in (extracted.tasks or [])
-                ],
+                "summary": data.get("summary", ""),
+                "key_points": data.get("key_points", []),
+                "tasks": data.get("tasks", []),
             }
         except Exception as e:
-            logger.error(f"Error en extracción de items: {e}")
+            logger.error(f"Error en extracción agéntica de sesión: {e}")
             return {}
 
     async def list_user_sessions(self, user_id: str, limit: int = 20, offset: int = 0) -> List[RecordingSession]:
