@@ -42,36 +42,37 @@ class DocumentServiceEnterprise:
             logger.warning("Stability AI no disponible - documentos sin imágenes generadas")
             return None
     
-    async def _enhance_content_with_ai(self, user_message: str, doc_type: str) -> str:
-        """Mejora el contenido usando Groq API"""
+    async def _enhance_content_with_ai(self, user_message: str, doc_type: str, user_id: str = "default") -> str:
+        """Mejora y expande el contenido usando el Equipo de Agentes de AutoGen"""
         try:
-            enhancement_prompt = f"""
-            Mejora y expande este contenido para crear un {doc_type} profesional:
+            from services.agent_service import agent_manager
             
-            "{user_message}"
+            task_desc = f"""
+            Crea el contenido profesional para un documento de tipo {doc_type}.
+            Basado en este mensaje del usuario: "{user_message}"
             
             Requisitos:
-            - Estructura clara y profesional
-            - Contenido detallado y útil
-            - Formato apropiado para {doc_type}
-            - Mínimo 500 palabras
-            - Incluye secciones relevantes
-            
-            Genera contenido mejorado:
+            - Estructura clara y profesional (Títulos, Secciones)
+            - Contenido detallado y especializado
+            - Mínimo 600 palabras
+            - Tono formal y ejecutivo
             """
             
-            messages = [{"role": "user", "content": enhancement_prompt}]
+            logger.info(f"document_service: Generación Agéntica iniciada para {doc_type} (USER:{user_id})")
             
-            enhanced = await chat_with_ai(
-                messages=messages,
-                temperature=0.7,
-                max_tokens=2000
-            )
+            # Ejecución síncrona en el orquestador
+            # Nota: Aquí no usamos streaming por WebSocket porque es una generación de archivo de fondo
+            result = await agent_manager.run_complex_task(task_desc, user_id=user_id)
             
-            return enhanced.strip()
+            # Extraer el contenido final de la conversación
+            if result and hasattr(result, "summary"):
+                return result.summary
+                
+            # Fallback a la última respuesta si no hay summary
+            return "Contenido generado por el equipo de expertos agénticos."
             
         except Exception as e:
-            logger.error(f"Error mejorando contenido con IA: {e}")
+            logger.error(f"Error en generación agéntica de documento: {e}")
             return user_message  # Fallback al contenido original
     
     async def _generate_title(self, content: str) -> str:

@@ -147,6 +147,48 @@ async def perform_web_search(
     
     return [], {"provider": "none", "meta": {"status": "failed"}}
 
+async def perform_agentic_research(user_id: str, query: str) -> str:
+    """
+    Realiza una investigación profunda usando el equipo de agentes.
+    1) Busca en la web. 2) Los agentes sintetizan el informe.
+    """
+    try:
+        from services.agent_service import agent_manager
+        
+        # Primero obtenemos las fuentes crudas
+        sources, _ = await perform_web_search(user_id, query)
+        
+        if not sources:
+            return "No se encontraron fuentes confiables para esta investigación."
+            
+        # Contexto de búsqueda para los agentes
+        context = "\n".join([f"- [{s.get('title')}]({s.get('url')}): {s.get('content', '')[:300]}" for s in sources[:5]])
+        
+        task_desc = f"""
+        Realiza una investigación profunda sobre: "{query}"
+        Utiliza estas fuentes como base:
+        {context}
+        
+        Tu objetivo:
+        - Sintetizar los puntos clave de todas las fuentes.
+        - Identificar tendencias o datos críticos.
+        - Generar un informe estructurado y profesional.
+        """
+        
+        logger.info(f"chat_search: Iniciando Investigación Agéntica (USER:{user_id})")
+        
+        # Ejecutar ciclo agéntico
+        result = await agent_manager.run_complex_task(task_desc, user_id=user_id)
+        
+        if result and hasattr(result, "summary"):
+            return result.summary
+            
+        return "Informe generado tras el análisis agéntico de las fuentes."
+        
+    except Exception as e:
+        logger.error(f"Error en investigación agéntica: {e}")
+        return f"Investigación fallida sobre: {query}"
+
 
 def prioritize_sources_with_images(sources: List[Dict[str, Any]], max_sources: int = 5) -> List[Dict[str, Any]]:
     """Prioriza fuentes con imágenes"""
