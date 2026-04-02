@@ -59,7 +59,12 @@ async def get_ai_response_with_streaming(
 
     # Obtener historial de conversación
     conversation_history = await get_conversation_history(user_id, limit=10)
-    
+
+    # Inicializar lista de mensajes con el sistema y contexto previo
+    messages = []
+    if system_content:
+        messages.append({"role": "system", "content": system_content})
+
     # Construir mensaje del usuario (con o sin archivos adjuntos)
     if images:
         # Vision request with files
