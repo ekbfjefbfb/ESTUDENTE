@@ -236,28 +236,16 @@ class SmartCache:
         tags: Optional[list[Any]] = None
     ) -> Any:
         """
-        Obtiene del cache o ejecuta factory si no existe
-        
-        Args:
-            key: Clave del cache
-            factory: Función para generar el valor
-            ttl: Time to live
-            tags: Tags para categorización
-        
-        Returns:
-            Valor del cache o generado
+        Obtiene del cache o ejecuta factory si no existe de forma resiliente.
         """
         try:
-            # Intentar obtener del cache
+            # 1. Intentar obtener del cache
             value = await self.get(key)
             
             if value is not None:
-                logger.debug(f"✅ Cache hit for key: {key}")
                 return value
             
-            # Si no existe, generar
-            logger.debug(f"❌ Cache miss for key: {key}, generating...")
-            
+            # 2. Generar valor (Cache Miss)
             if asyncio.iscoroutinefunction(factory):
                 value = await factory()
             else:
@@ -265,21 +253,23 @@ class SmartCache:
                 if inspect.isawaitable(value):
                     value = await value
             
-            # Guardar en cache
-            await self.set(key, value, ttl, tags)
+            # 3. Guardar en cache si tenemos valor
+            if value is not None:
+                await self.set(key, value, ttl, tags)
             
             return value
             
         except Exception as e:
-            logger.error(f"❌ Error in get_or_set: {e}")
-            # En caso de error, intentar generar el valor
-            if asyncio.iscoroutinefunction(factory):
-                value = await factory()
-            else:
-                value = factory()
-                if inspect.isawaitable(value):
-                    value = await value
-            return value
+            logger.exception(f"❌ Error crítico en get_or_set (key={key}): {e}")
+            # En caso de error, intentar una última vez sin cache para no bloquear al usuario
+            try:
+                if asyncio.iscoroutinefunction(factory):
+                    return await factory()
+                val = factory()
+                return await val if inspect.isawaitable(val) else val
+            except Exception as final_e:
+                logger.error(f"💥 Fallo total en factory tras error de cache: {final_e}")
+                return None
     
     async def get_stats(self) -> Dict[str, Any]:
         """
