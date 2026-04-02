@@ -120,7 +120,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 # - 80% de las peticiones van aquí
 GROQ_MODEL_FAST = os.getenv(
     "GROQ_MODEL_FAST",
-    "llama-3.1-8b-instant"  # Llama 3.1 8B, ultra rápido
+    "llama-3.3-70b-versatile"  # Llama 3.3 70B, ultra potente y rápido
 ).strip()
 
 # --- MODELO REASONING: RAZONAMIENTO COMPLEJO (~120B parámetros) ---
@@ -133,12 +133,12 @@ GROQ_MODEL_FAST = os.getenv(
 # - Mensajes largos (>800 chars) o con código
 GROQ_MODEL_REASONING = os.getenv(
     "GROQ_MODEL_REASONING",
-    "llama-3.3-70b-versatile"  # Llama 3.3 70B, razonamiento de nivel GPT-4
+    "qwen/qwen3-32b"  # Qwen 3 32B, razonamiento profundo
 ).strip()
 
 # Esfuerzo de razonamiento: low | medium | high
 # Afecta cuánto "piensa" el modelo antes de responder
-GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "medium").strip()
+GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "default").strip()
 
 # --- MODELO VISION: ANÁLISIS DE IMÁGENES (Meta/Llama) ---
 # CASOS DE USO:
@@ -153,9 +153,14 @@ GROQ_MODEL_VISION = os.getenv(
 
 # --- LÍMITES DE TOKENS ---
 # Máximo tokens en respuesta para cada tipo
-GROQ_MAX_TOKENS_FAST = int(os.getenv("GROQ_MAX_TOKENS_FAST", "512"))      # Respuestas cortas
-GROQ_MAX_TOKENS_REASONING = int(os.getenv("GROQ_MAX_TOKENS_REASONING", "1024"))  # Respuestas largas
-GROQ_MAX_TOKENS_VISION = int(os.getenv("GROQ_MAX_TOKENS_VISION", "768"))  # Descripción de imágenes
+GROQ_MAX_TOKENS_FAST = int(os.getenv("GROQ_MAX_TOKENS_FAST", "1024"))      # Respuestas cortas
+GROQ_MAX_TOKENS_REASONING = 4096  # Qwen 3 razonamiento profundo
+GROQ_MAX_TOKENS_VISION = int(os.getenv("GROQ_MAX_TOKENS_VISION", "1024")) # Descripción de imágenes
+
+# --- PARÁMETROS IA ---
+TEMPERATURE_REASONING = 0.6  # Qwen 3 precisión
+TOP_P = 0.95  # Qwen 3 balanceado
+REASONING_EFFORT = "default" # Qwen 3 esfuerzo
 
 # --- SYSTEM PROMPT BASE ---
 # Este prompt se añade a TODAS las conversaciones

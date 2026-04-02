@@ -278,8 +278,9 @@ async def _groq_stream_async(
     *,
     model: str,
     messages: List[Dict[str, Any]],
-    temperature: float,
     max_tokens: int,
+    temperature: float = 0.7,
+    top_p: float = 1.0,
 ) -> AsyncGenerator[str, None]:
     client = _get_groq_client()
     queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
@@ -290,11 +291,10 @@ async def _groq_stream_async(
             kwargs = {
                 "model": model,
                 "messages": messages,
-                "temperature": temperature,
+                "temperature": temperature if model != GROQ_LLM_REASONING_MODEL else TEMPERATURE_REASONING,
                 "max_tokens": max_tokens,
                 "max_completion_tokens": max_tokens,
-                "top_p": 1,
-                "reasoning_effort": GROQ_LLM_REASONING_EFFORT if model == GROQ_LLM_REASONING_MODEL else None,
+                "top_p": top_p if model != GROQ_LLM_REASONING_MODEL else TOP_P,
                 "stream": True,
                 "stop": None,
                 "timeout": TIMEOUT_SECONDS,
@@ -558,7 +558,6 @@ async def _execute_chat_core(
         "temperature": temperature,
         "max_tokens": max_tokens,
         "top_p": 1,
-        "reasoning_effort": GROQ_LLM_REASONING_EFFORT if model == GROQ_LLM_REASONING_MODEL else None,
         "stream": False,
         "stop": None,
         "timeout": TIMEOUT_SECONDS,
