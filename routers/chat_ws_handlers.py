@@ -220,6 +220,8 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     from services.groq_ai_service import get_context_info
     import time
     import uuid
+    from services.agent_service import agent_manager
+    from utils.agent_stream_bridge import run_agent_with_streaming
     
     start_ts = datetime.utcnow()
     request_id = uuid.uuid4().hex[:12]
@@ -239,6 +241,39 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
         user_id=user_id, message=user_message, force=force_web
     )
     logger.info(f"chat_ws_start request_id={request_id} user_id={user_id} web_search={should_web_search}")
+    
+    # --- INTERCEPCIÓN AGÉNTICA (Nivel Dios) ---
+    if user_message.lower().startswith("/agent"):
+        # Limpiar el comando del mensaje
+        task_desc = user_message[6:].strip() or "Hola, ¿en qué pueden ayudarme hoy?"
+        
+        await _ws_send_status(websocket, "Iniciando Orquestación de Agentes...", request_id=request_id)
+        
+        # Callback para enviar tokens de los agentes al WebSocket
+        def on_agent_token(token: str):
+            asyncio.run_coroutine_threadsafe(
+                _ws_send_json(websocket, {
+                    "type": "token", 
+                    "token": token,
+                    "request_id": request_id,
+                    "agent_mode": True
+                }),
+                asyncio.get_event_loop()
+            )
+
+        try:
+            # Ejecutar el equipo de agentes con el puente de streaming
+            await run_agent_with_streaming(
+                lambda: agent_manager.run_complex_task(task_desc),
+                on_agent_token
+            )
+            
+            await _ws_send_json(websocket, {"type": "done", "request_id": request_id})
+            return # Finalizar aquí para peticiones agénticas
+        except Exception as e:
+            logger.error(f"Error en flujo agéntico: {e}")
+            await _ws_send_json(websocket, {"type": "error", "message": "agent_failure", "request_id": request_id})
+            return
     
     # Get user context
     user_context = await get_user_context_for_chat(user_id)
