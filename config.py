@@ -171,6 +171,9 @@ Cómo responder:
 • No repitas el mismo esquema si la pregunta se parece a la anterior: varía el ángulo."""
 ).strip()
 
+# Permite que el modelo invoque la herramienta search_web (Tavily/Serper) cuando no hubo prefetch
+GROQ_CHAT_WEB_TOOLS = os.getenv("GROQ_CHAT_WEB_TOOLS", "true").lower() in ("true", "1", "t")
+
 
 # =========================
 # 🎯 HELPERS DE SELECCIÓN DE MODELO

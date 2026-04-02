@@ -176,11 +176,17 @@ def build_context_prompt(user_context: Dict[str, Any]) -> str:
     
     web_search_results = user_context.get("web_search_results")
     if web_search_results:
-        prompt_parts.append("🌐 RESULTADOS DE BÚSQUEDA:")
-        for r in web_search_results[:3]:
+        prompt_parts.append(
+            "🌐 RESULTADOS DE BÚSQUEDA (APIs; úsalos como base, cita fuente cuando puedas):"
+        )
+        for i, r in enumerate(web_search_results[:5], 1):
             title = r.get("title", "Sin título")
-            snippet = r.get("snippet", "")
-            prompt_parts.append(f"  - {title}: {snippet[:100]}")
+            snippet = str(r.get("snippet") or "")[:900]
+            url = str(r.get("url") or "").strip()
+            line = f"  [{i}] {title}\n     {snippet}"
+            if url:
+                line += f"\n     URL: {url}"
+            prompt_parts.append(line)
     
     youtube_transcript = user_context.get("youtube_transcript")
     if youtube_transcript:

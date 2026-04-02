@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional
 
 from fastapi import WebSocket
 from services.groq_ai_service import chat_with_ai, chat_with_ai_vision, should_refresh_context, get_context_info
+from config import GROQ_CHAT_WEB_TOOLS
 from services.conversational_memory_service import (
     add_message,
     get_conversation_history,
@@ -87,7 +88,8 @@ async def get_ai_response_http(
     user_message: str,
     user_context: Dict[str, Any],
     fast_reasoning: bool = True,
-    file_content: Optional[Dict[str, Any]] = None
+    file_content: Optional[Dict[str, Any]] = None,
+    use_web_tools: Optional[bool] = None,
 ) -> str:
     """
     Obtiene respuesta de IA sin streaming (para endpoints HTTP).
@@ -95,6 +97,8 @@ async def get_ai_response_http(
     
     Args:
         file_content: Optional dict with 'images' and 'texts' from processed files
+        use_web_tools: Si True, el modelo puede invocar search_web (Groq) cuando no hubo prefetch.
+            None = automático: activo si GROQ_CHAT_WEB_TOOLS y no hay web_search_results en contexto.
     """
     should_refresh_context(user_id, [{"role": "user", "content": user_message}])
     
@@ -126,7 +130,10 @@ async def get_ai_response_http(
     # Construir mensajes: system + historial
     messages = [{"role": "system", "content": system_content}]
     messages.extend(conversation_history)
-    
+
+    if use_web_tools is None:
+        use_web_tools = bool(GROQ_CHAT_WEB_TOOLS) and not bool(user_context.get("web_search_results"))
+
     # Construir mensaje del usuario (con o sin archivos adjuntos)
     if file_content and (file_content.get("images") or file_content.get("texts")):
         # Vision request with files
@@ -136,24 +143,25 @@ async def get_ai_response_http(
             text_contents=file_content.get("texts", [])
         )
         messages.append(user_msg)
-        
+
         # Use vision-capable model
         response = await chat_with_ai_vision(
-            messages=messages, 
-            user=user_id, 
-            fast_reasoning=fast_reasoning, 
-            stream=False
+            messages=messages,
+            user=user_id,
+            fast_reasoning=fast_reasoning,
+            stream=False,
+            use_web_search=use_web_tools,
         )
     else:
         # Regular text-only request
         if not conversation_history or conversation_history[-1].get("content") != user_message:
             messages.append({"role": "user", "content": user_message})
-        
         response = await chat_with_ai(
-            messages=messages, 
-            user=user_id, 
-            fast_reasoning=fast_reasoning, 
-            stream=False
+            messages=messages,
+            user=user_id,
+            fast_reasoning=fast_reasoning,
+            stream=False,
+            use_web_search=use_web_tools,
         )
     
     # Guardar respuesta de la IA en el historial
@@ -212,11 +220,17 @@ def _build_context_prompt(user_context: Dict[str, Any]) -> str:
     
     web_search_results = user_context.get("web_search_results")
     if web_search_results:
-        prompt_parts.append("🌐 RESULTADOS DE BÚSQUEDA:")
-        for r in web_search_results[:3]:
+        prompt_parts.append(
+            "🌐 RESULTADOS DE BÚSQUEDA (APIs reales; úsalos como base, cita fuente cuando puedas):"
+        )
+        for i, r in enumerate(web_search_results[:5], 1):
             title = r.get("title", "Sin título")
-            snippet = r.get("snippet", "")
-            prompt_parts.append(f"  - {title}: {snippet[:100]}")
+            snippet = str(r.get("snippet") or "")[:900]
+            url = str(r.get("url") or "").strip()
+            line = f"  [{i}] {title}\n     {snippet}"
+            if url:
+                line += f"\n     URL: {url}"
+            prompt_parts.append(line)
     
     youtube_transcript = user_context.get("youtube_transcript")
     if youtube_transcript:
@@ -328,6 +342,14 @@ def _build_system_prompt(
     # --- CONTEXTO DEL USUARIO ---
     context_block = f"\nCONTEXTO ACTIVO DEL USUARIO:\n{context_prompt}\n" if context_prompt else ""
 
+    web_honesty = (
+        "\nINFORMACIÓN EXTERNA:\n"
+        "Si arriba hay RESULTADOS DE BÚSQUEDA, provienen de internet (Tavily/Serper) y son datos reales para esta petición. "
+        "Intégralos en la respuesta; no digas que no puedes buscar ni que no tienes acceso si ya están listados. "
+        "Si no hay resultados de búsqueda en el contexto y necesitas datos actuales, dilo con honestidad: no inventes cifras, "
+        "fechas ni noticias. Ante duda, reconócela.\n"
+    )
+
     # Ensamblar en orden lógico
     parts = [
         identity,
@@ -339,6 +361,7 @@ def _build_system_prompt(
         length_rule,
         style,
         images_block,
+        web_honesty,
         context_block,
     ]
     return "".join(p for p in parts if p)

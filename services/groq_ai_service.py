@@ -504,7 +504,12 @@ async def _execute_chat_core(
             "type": "function",
             "function": {
                 "name": "search_web",
-                "description": "Busca informacion actualizada, clima, noticias o datos en internet. Usar SIEMPRE que no sepas algo reciente o pida informacion real.",
+                "description": (
+                    "Busca en internet (APIs Tavily/Serper) datos actuales: noticias, precios, clima, hechos, nombres, fechas. "
+                    "Úsala cuando el usuario pida información externa, cuando no tengas certeza sin comprobar, "
+                    "o cuando los datos puedan estar desactualizados. No digas que no puedes buscar en la web: "
+                    "si necesitas comprobar algo, llama a esta herramienta. Sé honesto con el resultado (vacío = dilo)."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {

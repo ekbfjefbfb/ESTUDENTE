@@ -9,20 +9,38 @@ from typing import Dict, Any, List
 
 logger = logging.getLogger("chat_search")
 
+# Palabras / patrones que sugieren datos externos (ES + EN)
+_WEB_SEARCH_TRIGGERS = [
+    "busca", "buscar", "búsqueda", "encuentra", "encontrar", "investiga", "investigar",
+    "qué es", "que es", "quien es", "quién es", "quién fue", "quien fue",
+    "como se", "cómo se", "donde", "dónde", "cuando", "cuándo",
+    "noticias", "actualidad", "hoy", "ahora", "última hora", "ultima hora",
+    "precio", "costo", "cuanto cuesta", "cuánto cuesta", "cotización", "bolsa",
+    "imagen", "imágenes", "foto", "fotos",
+    "weather", "clima", "temperatura",
+    "search", "google", "internet", "online", "web ", "lookup", "look up",
+    "latest", "update", "current", "reciente", "actualizado",
+    "verify", "verifica", "verificar", "comprueba", "fuente", "referencia", "source",
+    "wiki", "wikipedia", "reddit",
+    "who is", "what is", "when did", "where is", "how much", "how many",
+    "stock", "earnings", "released",
+]
 
-def _should_web_search(*, user_id: str, message: str) -> bool:
-    """Determina si se debe hacer búsqueda web basado en el mensaje"""
+
+def _should_web_search(*, user_id: str, message: str, force: bool = False) -> bool:
+    """Determina si se debe hacer búsqueda web (prefetch) según el mensaje o force."""
+    if force:
+        return True
     msg = str(message or "").lower()
-    triggers = [
-        "busca", "buscar", "encuentra", "encontrar",
-        "qué es", "que es", "quien es", "quién es",
-        "como se", "cómo se", "donde", "dónde",
-        "noticias", "actualidad", "hoy", "ahora",
-        "precio", "costo", "cuanto cuesta", "cuánto cuesta",
-        "imagen", "imágenes", "foto", "fotos",
-        "weather", "clima", "temperatura"
-    ]
-    return any(t in msg for t in triggers)
+    if any(t in msg for t in _WEB_SEARCH_TRIGGERS):
+        return True
+    # Años recientes → hechos que cambian (noticias, versiones, leyes)
+    if re.search(r"\b20[2-3]\d\b", msg):
+        return True
+    # Preguntas largas suelen ser factuales
+    if msg.rstrip().endswith("?") and len(msg) > 45:
+        return True
+    return False
 
 
 def _should_include_images_in_search(message: str) -> bool:
@@ -57,6 +75,10 @@ def _should_use_semantic_cache(message: str) -> bool:
         "temperatura", "precio", "precios", "cotización", "dólar", "euro"
     ]
     if any(kw in msg for kw in temporal_keywords):
+        return False
+    if _should_web_search(user_id="", message=msg):
+        return False
+    if msg.rstrip().endswith("?") and len(msg) > 45:
         return False
     return True
 

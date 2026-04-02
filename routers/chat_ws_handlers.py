@@ -205,7 +205,10 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
         await _ws_send_json(websocket, {"type": "error", "message": f"message_too_long_max_{_MAX_MESSAGE_CHARS}"})
         return
     
-    should_web_search = _should_web_search(user_id=user_id, message=user_message)
+    force_web = bool(message_data.get("web_search") or message_data.get("search_web"))
+    should_web_search = _should_web_search(
+        user_id=user_id, message=user_message, force=force_web
+    )
     logger.info(f"chat_ws_start request_id={request_id} user_id={user_id} web_search={should_web_search}")
     
     # Get user context

@@ -95,13 +95,15 @@ async def unified_chat_message(
     files: Optional[List[UploadFile]] = File(None),
     user: dict = Depends(get_current_user),
     stream: bool = Query(False),
+    force_web_search: bool = Form(False),
 ):
     """Chat con IA - multipart/form-data (campo de texto `message` + archivos opcionales)."""
     return await handle_chat_message(
         message=_normalize_message_text(message),
         files=files,
         user=user,
-        stream=stream
+        stream=stream,
+        force_web_search=force_web_search,
     )
 
 

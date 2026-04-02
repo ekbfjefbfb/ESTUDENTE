@@ -13,7 +13,14 @@ from fastapi import UploadFile, File, Depends, HTTPException, APIRouter
 from routers.chat_schemas import ChatResponse, STTResponse, TTSResponse, VoiceChatResponse, ChatMessageRequest
 from routers.chat_context import get_user_context_for_chat, build_context_prompt
 from routers.chat_progress import save_user_progress, _sanitize_structured_data
-from routers.chat_search import perform_web_search, _should_web_search, prioritize_sources_with_images, _should_use_semantic_cache, _normalize_message_text
+from routers.chat_search import (
+    perform_web_search,
+    _should_web_search,
+    _should_include_images_in_search,
+    prioritize_sources_with_images,
+    _should_use_semantic_cache,
+    _normalize_message_text,
+)
 from routers.chat_ai import get_ai_response_http
 from routers.chat_ws_utils import _estimate_duration_ms_from_bytes, _sanitize_sources_images, _build_rich_response
 from services.groq_voice_service import transcribe_audio_groq, text_to_speech_groq
@@ -58,6 +65,7 @@ async def handle_chat_message(
     files: Optional[List[UploadFile]],
     user: dict,
     stream: bool = False,
+    force_web_search: bool = False,
 ) -> ChatResponse:
     """Handle chat message HTTP endpoint"""
     user_id = user["user_id"]
@@ -80,7 +88,9 @@ async def handle_chat_message(
             logger.error(f"Error processing files: {e}")
             # Continue without files if processing fails
     
-    should_web_search = _should_web_search(user_id=user_id, message=normalized_message)
+    should_web_search = _should_web_search(
+        user_id=user_id, message=normalized_message, force=force_web_search
+    )
     logger.info(
         f"chat_http_start request_id={request_id} user_id={user_id} "
         f"message_len={len(normalized_message or '')} web_search={should_web_search} has_files={bool(file_content)}"
@@ -115,7 +125,7 @@ async def handle_chat_message(
         search_sources, search_meta = await perform_web_search(
             user_id=user_id,
             query=normalized_message,
-            include_images=_should_web_search(user_id=user_id, message=normalized_message)
+            include_images=_should_include_images_in_search(normalized_message),
         )
         sources = prioritize_sources_with_images(search_sources, max_sources=5)
         if search_sources:
@@ -183,7 +193,8 @@ async def handle_chat_message_json(
         message=request.message,
         files=None,
         user=user,
-        stream=False
+        stream=False,
+        force_web_search=bool(getattr(request, "web_search", False)),
     )
 
 
