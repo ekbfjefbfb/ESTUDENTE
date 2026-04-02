@@ -30,6 +30,11 @@ def upgrade() -> None:
     """
     conn = op.get_bind()
 
+    # FK agent_interactions_agent_id_fkey references personal_agents(agent_id) and can
+    # pin ix_personal_agents_agent_id. Drop child before parent (idempotent; CASCADE).
+    conn.execute(sa.text('DROP TABLE IF EXISTS "agent_interactions" CASCADE'))
+    conn.execute(sa.text('DROP TABLE IF EXISTS "personal_agents" CASCADE'))
+
     # =========================================================
     # PHASE 1: DROP ALL TABLES WITH POTENTIALLY STALE SCHEMAS
     # Using CASCADE to handle remaining foreign keys.
