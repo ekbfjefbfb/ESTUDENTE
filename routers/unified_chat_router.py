@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, WebSocket, Depends, HTTPException, WebSocketDisconnect
-from fastapi import UploadFile, File
+from fastapi import UploadFile, File, Form, Query
 
 # Schemas
 from routers.chat_schemas import (
@@ -91,12 +91,12 @@ async def chat_health():
 
 @router.post("/message", response_model=ChatResponse)
 async def unified_chat_message(
-    message: str,
+    message: str = Form(""),
     files: Optional[List[UploadFile]] = File(None),
     user: dict = Depends(get_current_user),
-    stream: bool = False,
+    stream: bool = Query(False),
 ):
-    """Chat con IA - multipart/form-data"""
+    """Chat con IA - multipart/form-data (campo de texto `message` + archivos opcionales)."""
     return await handle_chat_message(
         message=_normalize_message_text(message),
         files=files,

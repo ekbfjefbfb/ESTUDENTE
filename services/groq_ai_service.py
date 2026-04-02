@@ -9,6 +9,7 @@ import inspect
 
 import anyio
 from groq import Groq
+from sqlalchemy.exc import ProgrammingError
 
 import re
 
@@ -364,29 +365,35 @@ async def _get_user_personal_context_db(user_id: str) -> Optional[str]:
             if row.interests:
                 parts.append(f"Intereses: {row.interests}")
             
-            # 2. Agenda pendiente (máx 3 items)
-            tasks_query = text("""
-                SELECT item_type, title, due_date 
-                FROM agenda_items 
-                WHERE user_id = :uid AND status != 'done' AND due_date IS NOT NULL
-                ORDER BY due_date ASC LIMIT 3
-            """)
-            tasks = (await session.execute(tasks_query, {"uid": user_id})).fetchall()
-            if tasks:
-                parts.append("Pendiente:")
-                for t in tasks:
-                    parts.append(f"- [{t.item_type}] {t.title} ({t.due_date})")
-            
+            # 2. Agenda pendiente (máx 3 items) — tablas opcionales si migración las eliminó
+            try:
+                tasks_query = text("""
+                    SELECT item_type, title, due_date 
+                    FROM agenda_items 
+                    WHERE user_id = :uid AND status != 'done' AND due_date IS NOT NULL
+                    ORDER BY due_date ASC LIMIT 3
+                """)
+                tasks = (await session.execute(tasks_query, {"uid": user_id})).fetchall()
+                if tasks:
+                    parts.append("Pendiente:")
+                    for t in tasks:
+                        parts.append(f"- [{t.item_type}] {t.title} ({t.due_date})")
+            except ProgrammingError:
+                pass
+
             # 3. Sesiones recientes (máx 1)
-            sessions_query = text("""
-                SELECT class_name, topic_hint 
-                FROM agenda_sessions 
-                WHERE user_id = :uid 
-                ORDER BY created_at DESC LIMIT 1
-            """)
-            sess = (await session.execute(sessions_query, {"uid": user_id})).first()
-            if sess:
-                parts.append(f"Clase reciente: {sess.class_name} - {sess.topic_hint or 'sin tema'}")
+            try:
+                sessions_query = text("""
+                    SELECT class_name, topic_hint 
+                    FROM agenda_sessions 
+                    WHERE user_id = :uid 
+                    ORDER BY created_at DESC LIMIT 1
+                """)
+                sess = (await session.execute(sessions_query, {"uid": user_id})).first()
+                if sess:
+                    parts.append(f"Clase reciente: {sess.class_name} - {sess.topic_hint or 'sin tema'}")
+            except ProgrammingError:
+                pass
             
             return "\n".join(parts) if len(parts) > 1 else None
         finally:
