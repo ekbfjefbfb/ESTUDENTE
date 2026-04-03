@@ -54,7 +54,8 @@ async def get_ai_response_with_streaming(
         user_name_line=user_name_line,
         images_line=images_line,
         wants_detail=wants_detail,
-        context_prompt=context_prompt
+        context_prompt=context_prompt,
+        is_fallback_mode=bool(user_context.get("agent_timed_out"))
     )
 
     # Obtener historial de conversación
@@ -136,7 +137,8 @@ async def get_ai_response_http(
         user_name_line=user_name_line,
         images_line=images_line,
         wants_detail=wants_detail,
-        context_prompt=context_prompt
+        context_prompt=context_prompt,
+        is_fallback_mode=bool(user_context.get("agent_timed_out"))
     )
 
     # Obtener historial de conversación
