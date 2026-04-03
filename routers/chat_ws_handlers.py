@@ -243,14 +243,23 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     request_id = uuid.uuid4().hex[:12]
     
     user_message = str(message_data.get("message", "") or "").strip()
-    images = message_data.get("images", []) # Extraer lista de imágenes (base64/URLs)
-    if not user_message and not images:
+    images_raw = message_data.get("images", []) # Base64 o URLs
+    docs_raw = message_data.get("documents", []) or message_data.get("files", [])
+    
+    if not user_message and not images_raw and not docs_raw:
         await _ws_send_json(websocket, {"type": "error", "message": "message_empty"})
         return
     
     if len(user_message) > _MAX_MESSAGE_CHARS:
         await _ws_send_json(websocket, {"type": "error", "message": f"message_too_long_max_{_MAX_MESSAGE_CHARS}"})
         return
+
+    # Procesar MEDIA (Imágenes y Documentos)
+    from utils.file_processing import process_base64_files
+    image_contents, text_contents = await process_base64_files(
+        images_base64=images_raw,
+        docs_base64=docs_raw
+    )
     
     force_web = bool(message_data.get("web_search") or message_data.get("search_web"))
     # Get user context (NOW BEFORE SCOUT for contextual decisions)
@@ -377,7 +386,8 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     await _ws_send_status(websocket, "Generando respuesta...", request_id=request_id)
     try:
         ai_result = await get_ai_response_with_streaming(
-            user_id, user_message, user_context, websocket, request_id, images=images
+            user_id, user_message, user_context, websocket, request_id, 
+            images=image_contents, documents=text_contents
         )
     except Exception as e:
         import traceback

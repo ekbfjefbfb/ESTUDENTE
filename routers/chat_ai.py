@@ -28,6 +28,7 @@ async def get_ai_response_with_streaming(
     websocket: WebSocket,
     request_id: str,
     images: Optional[List[Dict[str, Any]]] = None,
+    documents: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Obtiene respuesta de IA con streaming de tokens via WebSocket.
@@ -70,11 +71,11 @@ async def get_ai_response_with_streaming(
     messages.extend(conversation_history)
 
     # Construir mensaje actual del usuario
-    if images:
+    if images or documents:
         user_msg = build_message_with_files(
             message=user_message,
-            image_contents=images,
-            text_contents=[]
+            image_contents=images or [],
+            text_contents=documents or []
         )
         messages.append(user_msg)
     else:
