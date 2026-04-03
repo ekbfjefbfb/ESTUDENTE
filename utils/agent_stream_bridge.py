@@ -37,7 +37,18 @@ class AgentStreamBridge:
                 ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
                 clean_data = ansi_escape.sub('', data)
                 
-                if self.on_new_token and clean_data.strip():
+                # DETECCIÓN DE HERRAMIENTAS (Nivel Dios)
+                if "Suggested tool Call" in clean_data or "suggested_assistant_action" in clean_data.lower():
+                    tool_match = re.search(r"name='([^']+)'", clean_data) or re.search(r"action: ([^\s]+)", clean_data.lower())
+                    tool_name = tool_match.group(1) if tool_match else "herramienta técnica"
+                    if self.on_new_token:
+                        self.on_new_token(f"\n🔍 [Investigando]: Buscando información con {tool_name}...")
+                
+                elif "Execute tool Call" in clean_data or "executing_tool" in clean_data.lower():
+                    if self.on_new_token:
+                        self.on_new_token(" ⚙️ [Procesando]: Analizando resultados...")
+
+                elif self.on_new_token and clean_data.strip() and not clean_data.startswith(" "):
                     self.on_new_token(f"\n🤖 [Agente]: {clean_data}")
             
             self.old_stdout.write(data)
@@ -66,12 +77,12 @@ async def run_agent_with_streaming(agent_task_fn: Callable, on_token: Callable[[
     # Tarea de latido para mantener el WebSocket vivo
     async def heartbeat_worker(stop_event: asyncio.Event):
         while not stop_event.is_set():
-            await asyncio.sleep(8) # Latido cada 8 segundos
+            await asyncio.sleep(6) # Latido cada 6 segundos para máxima resiliencia
             if not stop_event.is_set():
                 elapsed = time.time() - last_activity_time[0]
-                if elapsed >= 8:
-                    # Enviar señal de vida discreta al frontend
-                    on_token(" . ") # Punto de carga o status
+                if elapsed >= 6:
+                    # Enviar señal de vida discreta al frontend (pulso de carga)
+                    on_token(" .") 
     
     stop_heartbeat = asyncio.Event()
     heartbeat_task = asyncio.create_task(heartbeat_worker(stop_heartbeat))

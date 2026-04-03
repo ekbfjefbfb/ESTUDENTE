@@ -5,6 +5,8 @@ from autogen import AssistantAgent, UserProxyAgent
 from pathlib import Path
 from autogen.coding import LocalCommandLineCodeExecutor
 import config
+from services.tavily_search_service import tavily_search_service
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,23 @@ class AgentManager:
         user_dir.mkdir(exist_ok=True)
         return user_dir
 
+    async def search_web(self, query: str, user_id: str = "agent_research") -> str:
+        """
+        Herramienta de búsqueda autónoma para el agente.
+        Consulta Tavily/Serper y devuelve un resumen de los hallazgos.
+        """
+        logger.info(f"Agente solicitando búsqueda web: {query}")
+        results, meta = await tavily_search_service.search_with_meta(query=query, user_id=user_id)
+        
+        if not results:
+            return "No se encontraron resultados relevantes en la web para esta consulta."
+            
+        formatted = []
+        for r in results[:5]:
+            formatted.append(f"- {r.get('title')}: {r.get('snippet')} (Fuente: {r.get('url')})")
+        
+        return "\n".join(formatted)
+
     def create_team(self, user_id: str) -> tuple[UserProxyAgent, AssistantAgent]:
         """
         Crea un equipo básico aislado para un usuario específico.
@@ -54,12 +73,12 @@ class AgentManager:
             REGLAS DE ORO:
             1. Usa bloques de código con lenguaje específico: ```python ... ``` cuando generes código funcional.
             2. Sé extremadamente conciso. Prioriza la ejecución sobre las explicaciones largas.
-            3. Si el código falla, analiza el error y corrige en el siguiente paso.
-            4. Si la tarea está terminada con éxito, escribe 'TERMINATE'.
-            5. No uses placeholders. Todo el código debe ser funcional y autónomo.
+            3. USA LA HERRAMIENTA 'search_web' si necesitas investigar documentación, noticias, precios o hechos antes de dar una respuesta.
+            4. Si el código falla, analiza el error y corrige en el siguiente paso.
+            5. Si la tarea está terminada con éxito, escribe 'TERMINATE'.
             6. Mantén la fluidez técnica basada en el contexto previo de la charla.
             
-            Tu objetivo es la RESOLUCIÓN de problemas con precisión absoluta.""",
+            Tu objetivo es la RESOLUCIÓN de problemas con información veraz y código preciso.""",
             llm_config=self.llm_config,
         )
         
@@ -75,6 +94,31 @@ class AgentManager:
             },
             system_message="""Eres el ejecutor. Tu Única tarea es correr código. 
             Si el código da error, detente. Si el asistente dice TERMINATE, termina."""
+        )
+        
+        # --- REGISTRO DE HERRAMIENTAS (Tools) ---
+        from autogen import register_function
+        
+        # Definir el wrapper para inyectar el user_id correcto
+        def search_web_tool(query: str) -> str:
+            # Dado que AutoGen 0.2.x es síncrono, corremos la tarea asíncrona de búsqueda
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Estamos en el hilo principal del backend, hay que usar threadsafe o run_sync si es bloqueante
+                # Pero AutoGen corre en initiate_chat, usualmente en un thread aparte ya.
+                from concurrent.futures import ThreadPoolExecutor
+                import nest_asyncio
+                nest_asyncio.apply()
+                return loop.run_until_complete(self.search_web(query, user_id=user_id))
+            else:
+                return asyncio.run(self.search_web(query, user_id=user_id))
+
+        register_function(
+            search_web_tool,
+            caller=assistant,
+            executor=user_proxy,
+            name="search_web",
+            description="Busca en internet información actualizada (precios, noticias, documentación, hechos).",
         )
         
         return user_proxy, assistant
