@@ -37,19 +37,27 @@ class AgentStreamBridge:
                 ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
                 clean_data = ansi_escape.sub('', data)
                 
-                # DETECCIÓN DE HERRAMIENTAS (Nivel Dios)
+                # DETECCIÓN DE HERRAMIENTAS Y ESTADOS (Nivel Dios Académico)
                 if "Suggested tool Call" in clean_data or "suggested_assistant_action" in clean_data.lower():
                     tool_match = re.search(r"name='([^']+)'", clean_data) or re.search(r"action: ([^\s]+)", clean_data.lower())
-                    tool_name = tool_match.group(1) if tool_match else "herramienta técnica"
-                    if self.on_new_token:
-                        self.on_new_token(f"\n🔍 [Investigando]: Buscando información con {tool_name}...")
+                    tool_name = tool_match.group(1) if tool_match else "herramienta"
+                    
+                    if "search_web" in tool_name:
+                        msg = "\n🔍 [Investigando]: Buscando fuentes académicas..."
+                    elif "executor" in tool_name or "code" in tool_name:
+                        msg = "\n📐 [Calculando]: Verificando fórmulas matemáticas..."
+                    else:
+                        msg = f"\n⚙️ [Procesando]: Usando {tool_name}..."
+                    
+                    if self.on_new_token: self.on_new_token(msg)
                 
                 elif "Execute tool Call" in clean_data or "executing_tool" in clean_data.lower():
-                    if self.on_new_token:
-                        self.on_new_token(" ⚙️ [Procesando]: Analizando resultados...")
+                    if self.on_new_token: self.on_new_token(" ✨ [Finalizando]: Preparando explicación clara...")
 
                 elif self.on_new_token and clean_data.strip() and not clean_data.startswith(" "):
-                    self.on_new_token(f"\n🤖 [Agente]: {clean_data}")
+                    # Mensajes del tutor sin el prefijo "Agente" para que se sienta más personal
+                    tutor_msg = clean_data.replace("expert_", "Tutor ").replace("assistant", "Tutor")
+                    self.on_new_token(f"\n🧠 [Tutor]: {tutor_msg}")
             
             self.old_stdout.write(data)
         finally:

@@ -26,13 +26,13 @@ class ScoutOrchestrator:
                 history_text = "\n".join([f"{m['role'].upper()}: {m['content'][:100]}" for m in history[-3:]])
                 history_context = f"\nContexto reciente:\n{history_text}\n"
 
-            prompt = f"""Analiza el mensaje del usuario y responde únicamente con 'AGENT' si requiere:
-            - Escribir o ejecutar código.
-            - Una investigación profunda o multi-paso.
-            - Un razonamiento complejo que requiera varios expertos.
-            - Una continuación técnica de una tarea anterior compleja.
+            prompt = f"""Responde 'AGENT' solo si requiere:
+            - RESOLVER problemas matemáticos o científicos.
+            - EXPLICAR conceptos académicos complejos paso a paso.
+            - Investigar datos técnicos o históricos en internet.
+            - Ejecutar programas o simulaciones.
             {history_context}
-            De lo contrario, responde 'CHAT'. Solo una palabra.
+            De lo contrario (charla simple, saludos), responde 'CHAT'. Solo una palabra (AGENT o CHAT).
             
             Mensaje actual: "{user_message}"
             """
