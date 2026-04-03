@@ -123,6 +123,57 @@ async def process_uploaded_files(
     return image_contents, text_contents
 
 
+async def process_base64_files(
+    images_base64: Optional[List[str]] = None,
+    docs_base64: Optional[List[str]] = None,
+    max_images: int = MAX_IMAGES_PER_REQUEST
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Process base64 encoded images and documents for Groq AI.
+    Used for JSON-based chat requests.
+    """
+    image_contents = []
+    text_contents = []
+    
+    if images_base64:
+        for idx, b64_str in enumerate(images_base64):
+            if idx >= max_images: break
+            if not b64_str: continue
+            
+            try:
+                # Basic check for data URI vs raw base64
+                if "," in b64_str:
+                    header, data = b64_str.split(",", 1)
+                    mime_type = header.split(":", 1)[1].split(";", 1)[0]
+                else:
+                    mime_type = "image/jpeg" # Default fallback
+                    data = b64_str
+                
+                image_contents.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{data}"}
+                })
+                logger.info(f"Processed base64 image ({mime_type})")
+            except Exception as e:
+                logger.error(f"Error processing base64 image: {e}")
+
+    if docs_base64:
+        for idx, b64_str in enumerate(docs_base64):
+            if not b64_str: continue
+            try:
+                if "," in b64_str:
+                    _, data = b64_str.split(",", 1)
+                else:
+                    data = b64_str
+                
+                decoded = base64.b64decode(data).decode('utf-8', errors='ignore')
+                text_contents.append(f"[Documento JSON {idx+1}]\n{decoded[:5000]}")
+            except Exception as e:
+                logger.error(f"Error processing base64 doc: {e}")
+                
+    return image_contents, text_contents
+
+
 def build_message_with_files(
     message: str,
     image_contents: List[Dict[str, Any]],

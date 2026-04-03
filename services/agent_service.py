@@ -131,7 +131,11 @@ class AgentManager:
         # Enriquecer el mensaje inicial con contexto del historial si existe
         full_task = task_description
         if history:
-            history_text = "\n".join([f"{m['role'].upper()}: {m['content'][:300]}" for m in history[-5:]])
+            # Blindaje: Extraer role y content con seguridad (evitar NoneType)
+            history_text = "\n".join([
+                f"{str(m.get('role') or 'user').upper()}: {str(m.get('content') or '')[:300]}" 
+                for m in history[-5:]
+            ])
             full_task = f"--- CONTEXTO PREVIO DE LA CHARLA ---\n{history_text}\n\n--- NUEVA TAREA ---\n{task_description}"
 
         logger.info(f"Iniciando tarea agéntica con historial [USER:{user_id}]: {task_description[:50]}...")

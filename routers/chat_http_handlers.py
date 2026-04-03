@@ -70,6 +70,7 @@ async def handle_chat_message(
     user: dict = None,
     stream: bool = False,
     force_web_search: bool = False,
+    pre_processed_file_content: Optional[Dict[str, Any]] = None,
 ) -> ChatResponse:
     """Handle chat message HTTP endpoint"""
     user_id = user["user_id"]
@@ -84,7 +85,7 @@ async def handle_chat_message(
     if documents: all_files.extend(documents)
 
     # Process uploaded files (images and documents)
-    file_content = None
+    file_content = pre_processed_file_content
     if all_files:
         try:
             image_contents, text_contents = await process_uploaded_files(all_files)
@@ -208,14 +209,30 @@ async def handle_chat_message_json(
     user: dict,
 ) -> ChatResponse:
     """Handle chat message JSON endpoint"""
+    # Procesar archivos base64 del JSON si existen
+    from utils.file_processing import process_base64_files
+    
+    image_contents, text_contents = await process_base64_files(
+        images_base64=request.images,
+        docs_base64=request.documents or request.files
+    )
+    
+    pre_file_content = None
+    if image_contents or text_contents:
+        pre_file_content = {
+            "images": image_contents,
+            "texts": text_contents
+        }
+
     return await handle_chat_message(
         message=request.message,
         files=None,
-        images=None, # In JSON context, files covers both usually, but schemas have dedicated fields
+        images=None, 
         documents=None,
         user=user,
         stream=False,
         force_web_search=bool(getattr(request, "web_search", False)),
+        pre_processed_file_content=pre_file_content
     )
 
 
