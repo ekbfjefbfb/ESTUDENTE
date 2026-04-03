@@ -1,6 +1,7 @@
 import sys
 import io
 import asyncio
+import inspect
 from typing import Callable, Any, Optional
 
 class AgentStreamBridge:
@@ -56,7 +57,13 @@ async def run_agent_with_streaming(agent_task_fn: Callable, on_token: Callable[[
     loop = asyncio.get_event_loop()
     
     with bridge:
+        def _run_sync():
+            out = agent_task_fn()
+            if inspect.iscoroutine(out):
+                return asyncio.run(out)
+            return out
+
         # Ejecución en el pool de hilos del sistema
-        result = await loop.run_in_executor(None, agent_task_fn)
+        result = await loop.run_in_executor(None, _run_sync)
         
     return result

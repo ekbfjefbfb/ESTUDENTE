@@ -385,6 +385,10 @@ async def _get_user_personal_context_db(user_id: str) -> Optional[str]:
                     for t in tasks:
                         parts.append(f"- [{t.item_type}] {t.title} ({t.due_date})")
             except ProgrammingError:
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
                 pass
 
             # 3. Sesiones recientes (máx 1)
@@ -399,6 +403,10 @@ async def _get_user_personal_context_db(user_id: str) -> Optional[str]:
                 if sess:
                     parts.append(f"Clase reciente: {sess.class_name} - {sess.topic_hint or 'sin tema'}")
             except ProgrammingError:
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
                 pass
             
             return "\n".join(parts) if len(parts) > 1 else None

@@ -5,6 +5,7 @@ Separado de unified_chat_router.py para reducir responsabilidades
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -264,13 +265,26 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
 
         try:
             # Ejecutar el equipo de agentes con aislamiento de user_id
-            await run_agent_with_streaming(
-                lambda: agent_manager.run_complex_task(task_desc, user_id=user_id),
-                on_agent_token
+            agent_timeout_s = int(os.getenv("AGENT_TIMEOUT_SECONDS", "60"))
+            await asyncio.wait_for(
+                run_agent_with_streaming(
+                    lambda: agent_manager.run_complex_task(task_desc, user_id=user_id),
+                    on_agent_token,
+                ),
+                timeout=agent_timeout_s,
             )
             
             await _ws_send_json(websocket, {"type": "done", "request_id": request_id})
             return # Finalizar aquí para peticiones agénticas automáticas
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Agent timeout request_id={request_id} user_id={user_id} timeout_s={os.getenv('AGENT_TIMEOUT_SECONDS', '60')}"
+            )
+            await _ws_send_status(
+                websocket,
+                "El agente tardó demasiado; usando modo chat normal...",
+                request_id=request_id,
+            )
         except Exception as e:
             logger.error(f"Error en orquestación autónoma: {e}")
             # Fallback silencioso al flujo de chat normal si los agentes fallan

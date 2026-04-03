@@ -579,6 +579,12 @@ async def get_async_db():
     session = await get_primary_session()
     try:
         yield session
+    except Exception:
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         await session.close()
 
