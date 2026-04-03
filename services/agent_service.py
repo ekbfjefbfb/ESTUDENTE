@@ -52,13 +52,14 @@ class AgentManager:
             name=f"expert_{user_id}",
             system_message=f"""Eres un Ingeniero Senior de Software (Nivel Dios) para el usuario {user_id}.
             REGLAS DE ORO:
-            1. Solo usa bloques de código con lenguaje específico: ```python ... ```. NUNCA dejes un bloque sin lenguaje.
-            2. Sé extremadamente conciso. Cada palabra cuenta. Evita explicaciones largas para no agotar la cuota de Groq (Error 429).
+            1. Usa bloques de código con lenguaje específico: ```python ... ``` cuando generes código funcional.
+            2. Sé extremadamente conciso. Prioriza la ejecución sobre las explicaciones largas.
             3. Si el código falla, analiza el error y corrige en el siguiente paso.
             4. Si la tarea está terminada con éxito, escribe 'TERMINATE'.
             5. No uses placeholders. Todo el código debe ser funcional y autónomo.
+            6. Mantén la fluidez técnica basada en el contexto previo de la charla.
             
-            Tu objetivo es la EFICIENCIA y la PRECISIÓN absoluta.""",
+            Tu objetivo es la RESOLUCIÓN de problemas con precisión absoluta.""",
             llm_config=self.llm_config,
         )
         
@@ -78,18 +79,24 @@ class AgentManager:
         
         return user_proxy, assistant
 
-    async def run_complex_task(self, task_description: str, user_id: str = "default"):
+    async def run_complex_task(self, task_description: str, user_id: str = "default", history: list = None):
         """
-        Inicia una sesión de colaboración aislada para un usuario.
+        Inicia una sesión de colaboración aislada para un usuario con memoria contextual.
         """
         user_proxy, assistant = self.create_team(user_id)
         
-        logger.info(f"Iniciando tarea agéntica [USER:{user_id}]: {task_description[:50]}...")
+        # Enriquecer el mensaje inicial con contexto del historial si existe
+        full_task = task_description
+        if history:
+            history_text = "\n".join([f"{m['role'].upper()}: {m['content'][:300]}" for m in history[-5:]])
+            full_task = f"--- CONTEXTO PREVIO DE LA CHARLA ---\n{history_text}\n\n--- NUEVA TAREA ---\n{task_description}"
+
+        logger.info(f"Iniciando tarea agéntica con historial [USER:{user_id}]: {task_description[:50]}...")
         
         # Ejecución síncrona en hilo separado (AutoGen 0.2 es bloqueante)
         result = user_proxy.initiate_chat(
             assistant,
-            message=task_description,
+            message=full_task,
         )
         
         return result

@@ -239,14 +239,18 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
         return
     
     force_web = bool(message_data.get("web_search") or message_data.get("search_web"))
+    # Get user context (NOW BEFORE SCOUT for contextual decisions)
+    user_context = await get_user_context_for_chat(user_id)
+    chat_history = user_context.get("chat_history", [])
+
     should_web_search = _should_web_search(
         user_id=user_id, message=user_message, force=force_web
     )
     logger.info(f"chat_ws_start request_id={request_id} user_id={user_id} web_search={should_web_search}")
-    
+
     # --- ORQUESTACIÓN AUTÓNOMA (Nivel Dios) ---
-    # El Scout decide si necesitamos agentes o chat normal
-    if scout.should_use_agents(user_message):
+    # El Scout decide si necesitamos agentes o chat normal usando el HISTORIAL
+    if scout.should_use_agents(user_message, history=chat_history):
         task_desc = user_message.strip()
         
         await _ws_send_status(websocket, "Orquestando Equipo de Expertos...", request_id=request_id)
@@ -269,7 +273,7 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
             agent_timeout_s = int(os.getenv("AGENT_TIMEOUT_SECONDS", "120"))
             await asyncio.wait_for(
                 run_agent_with_streaming(
-                    lambda: agent_manager.run_complex_task(task_desc, user_id=user_id),
+                    lambda: agent_manager.run_complex_task(task_desc, user_id=user_id, history=chat_history),
                     on_agent_token,
                 ),
                 timeout=agent_timeout_s,
@@ -290,9 +294,6 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
             logger.error(f"Error en orquestación autónoma: {e}")
             # Fallback silencioso al flujo de chat normal si los agentes fallan
             logger.warning("Fallo en agentes, realizando fallback a chat normal...")
-    
-    # Get user context
-    user_context = await get_user_context_for_chat(user_id)
     
     # Web search
     ddg_sources: List[Dict[str, Any]] = []

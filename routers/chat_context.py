@@ -6,10 +6,11 @@ import logging
 import os
 import time
 from datetime import datetime, date, timedelta
-from typing import Dict, Any
-
+from typing import Dict, Any, List
 from sqlalchemy import select, and_
 from models.models import User, SessionItem, RecordingSession
+from services.hub_memory_service import hub_memory_service
+from utils.auth import get_current_user
 
 logger = logging.getLogger("chat_context")
 
@@ -130,6 +131,23 @@ async def _get_user_full_context(user_id: str) -> Dict[str, Any]:
     return context
 
 
+async def _get_recent_chat_history(user_id: str, limit: int = 5) -> List[Dict[str, str]]:
+    """Recupera los últimos mensajes de la conversación para memoria contextual."""
+    try:
+        recent_ids = await hub_memory_service.get_recent(user_id=user_id, limit=limit)
+        
+        history = []
+        # Los recibimos del más nuevo al más viejo, los invertimos para el prompt
+        for mid in reversed(recent_ids):
+            mem = await hub_memory_service.get_memory(memory_id=mid)
+            if mem:
+                history.append({"role": "user", "content": mem.get("query", "")})
+                history.append({"role": "assistant", "content": mem.get("text", "")})
+        return history
+    except Exception as e:
+        logger.warning(f"No se pudo recuperar historial reciente: {e}")
+        return []
+
 async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
     """Contexto requerido por chat (HTTP y WebSocket) con caching."""
     now = time.monotonic()
@@ -141,6 +159,10 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
             return dict(ctx)
     
     context = await _get_user_full_context(user_id)
+    
+    # Inyectar historial reciente (Memoria Contextual)
+    context["chat_history"] = await _get_recent_chat_history(user_id)
+    
     _USER_CONTEXT_CACHE[user_id] = {"ts": now, "ctx": context}
     return context
 
@@ -197,5 +219,13 @@ def build_context_prompt(user_context: Dict[str, Any]) -> str:
     if web_extract:
         prompt_parts.append("📄 CONTENIDO WEB EXTRAÍDO:")
         prompt_parts.append(f"  {web_extract[:500]}")
+    
+    # --- MEMORIA CONTEXTUAL (HISTORIAL) ---
+    chat_history = user_context.get("chat_history", [])
+    if chat_history:
+        prompt_parts.append("\n💬 HILO DE CONVERSACIÓN RECIENTE (Para fluidez):")
+        for msg in chat_history:
+            role = "TÚ" if msg["role"] == "assistant" else "USUARIO"
+            prompt_parts.append(f"  {role}: {msg['content'][:300]}")
     
     return "\n".join(prompt_parts)

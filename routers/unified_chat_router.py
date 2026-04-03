@@ -98,14 +98,18 @@ async def chat_health():
 async def unified_chat_message(
     message: str = Form(""),
     files: Optional[List[UploadFile]] = File(None),
+    images: Optional[List[UploadFile]] = File(None),
+    documents: Optional[List[UploadFile]] = File(None),
     user: dict = Depends(get_current_user),
     stream: bool = Query(False),
     force_web_search: bool = Form(False),
 ):
-    """Chat con IA - multipart/form-data (campo de texto `message` + archivos opcionales)."""
+    """Chat con IA - multipart/form-data (campo de texto `message` + imágenes/documentos)."""
     return await handle_chat_message(
         message=_normalize_message_text(message),
         files=files,
+        images=images,
+        documents=documents,
         user=user,
         stream=stream,
         force_web_search=force_web_search,

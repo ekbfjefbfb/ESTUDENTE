@@ -14,20 +14,27 @@ class ScoutOrchestrator:
         self.client = Groq(api_key=config.GROQ_API_KEY)
         self.model = config.GROQ_MODEL_FAST # Usamos Llama 3.1 8B para máxima velocidad
         
-    def should_use_agents(self, user_message: str) -> bool:
+    def should_use_agents(self, user_message: str, history: list = None) -> bool:
         """
         Analiza el mensaje y decide la ruta óptima.
         Retorna True si requiere agentes (AutoGen).
         """
         try:
+            # Construir contexto del historial si existe
+            history_context = ""
+            if history:
+                history_text = "\n".join([f"{m['role'].upper()}: {m['content'][:100]}" for m in history[-3:]])
+                history_context = f"\nContexto reciente:\n{history_text}\n"
+
             prompt = f"""Analiza el mensaje del usuario y responde únicamente con 'AGENT' si requiere:
             - Escribir o ejecutar código.
             - Una investigación profunda o multi-paso.
             - Un razonamiento complejo que requiera varios expertos.
-            
+            - Una continuación técnica de una tarea anterior compleja.
+            {history_context}
             De lo contrario, responde 'CHAT'. Solo una palabra.
             
-            Mensaje: "{user_message}"
+            Mensaje actual: "{user_message}"
             """
             
             response = self.client.chat.completions.create(

@@ -9,6 +9,8 @@ from pydantic import BaseModel
 class ChatMessageRequest(BaseModel):
     message: str
     files: Optional[List[str]] = None
+    images: Optional[List[str]] = None  # Soporte explícito para imágenes (Base64 o URLs)
+    documents: Optional[List[str]] = None # Soporte para documentos adicionales
     session_id: Optional[str] = None
     # True = forzar prefetch Tavily/Serper antes de llamar al modelo
     web_search: bool = False

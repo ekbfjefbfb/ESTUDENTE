@@ -26,6 +26,8 @@ from routers.chat_ws_utils import _estimate_duration_ms_from_bytes, _sanitize_so
 from services.groq_voice_service import transcribe_audio_groq, text_to_speech_groq
 from services.groq_ai_service import get_context_info
 from services.hub_memory_service import hub_memory_service
+from services.orchestration_service import scout
+from services.agent_service import agent_manager
 from utils.auth import get_current_user
 from utils.file_processing import process_uploaded_files, build_message_with_files, is_vision_request
 from models.models import RecordingSession, RecordingSessionType, SessionItem
@@ -62,8 +64,10 @@ def _safe_meta(meta: Any) -> Dict[str, Any]:
 
 async def handle_chat_message(
     message: str,
-    files: Optional[List[UploadFile]],
-    user: dict,
+    files: Optional[List[UploadFile]] = None,
+    images: Optional[List[UploadFile]] = None,
+    documents: Optional[List[UploadFile]] = None,
+    user: dict = None,
     stream: bool = False,
     force_web_search: bool = False,
 ) -> ChatResponse:
@@ -73,11 +77,17 @@ async def handle_chat_message(
     request_id = _new_request_id()
     t0 = time.monotonic()
     
+    # Combine all file sources for processing
+    all_files = []
+    if files: all_files.extend(files)
+    if images: all_files.extend(images)
+    if documents: all_files.extend(documents)
+
     # Process uploaded files (images and documents)
     file_content = None
-    if files:
+    if all_files:
         try:
-            image_contents, text_contents = await process_uploaded_files(files)
+            image_contents, text_contents = await process_uploaded_files(all_files)
             if image_contents or text_contents:
                 file_content = {
                     "images": image_contents,
@@ -132,14 +142,23 @@ async def handle_chat_message(
             user_context = dict(user_context)
             user_context["web_search_results"] = list(search_sources)[:5]
     
-    # Get AI response (with file content if present)
-    ai_text = await get_ai_response_http(
-        user_id, 
-        normalized_message, 
-        user_context, 
-        fast_reasoning=True,
-        file_content=file_content
-    )
+    # Get AI response (with file content and robust HISTORY)
+    chat_history = user_context.get("chat_history", [])
+    
+    # Scout Intelligent Decision
+    if scout.should_use_agents(normalized_message, history=chat_history):
+        from utils.agent_stream_bridge import run_agent_with_streaming
+        # For HTTP, we can't stream tokens as easily, but we run the agent task
+        ai_text = await agent_manager.run_complex_task(normalized_message, user_id=user_id, history=chat_history)
+        if hasattr(ai_text, "summary"): ai_text = ai_text.summary
+    else:
+        ai_text = await get_ai_response_http(
+            user_id, 
+            normalized_message, 
+            user_context, 
+            fast_reasoning=True,
+            file_content=file_content
+        )
     structured = _sanitize_structured_data({"response": ai_text, "tasks": [], "plan": [], "actions": [], "is_stream": False})
     
     logger.info(
@@ -192,6 +211,8 @@ async def handle_chat_message_json(
     return await handle_chat_message(
         message=request.message,
         files=None,
+        images=None, # In JSON context, files covers both usually, but schemas have dedicated fields
+        documents=None,
         user=user,
         stream=False,
         force_web_search=bool(getattr(request, "web_search", False)),
