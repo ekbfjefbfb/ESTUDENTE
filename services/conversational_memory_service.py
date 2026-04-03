@@ -31,14 +31,12 @@ async def add_message(user_id: str, role: str, content: str, topic: Optional[str
     try:
         key = _conversation_key(user_id)
         
-        # Detectar cambio de tema
+        # Registrar cambio de tema sin borrar historial
         if topic:
             topic_key = _topic_hash_key(user_id)
             current_topic = await get_cache(topic_key)
             if current_topic and current_topic != topic:
-                # Cambio de tema - limpiar historial
-                logger.info(f"Topic change detected for user {user_id}: {current_topic} -> {topic}")
-                await clear_conversation(user_id)
+                logger.info(f"Nuevo tema detectado para user {user_id}: {topic}")
             await set_cache(topic_key, topic, ttl=_TTL_SECONDS)
         
         # Obtener historial actual

@@ -60,14 +60,16 @@ async def get_ai_response_with_streaming(
     # Obtener historial de conversación
     conversation_history = await get_conversation_history(user_id, limit=10)
 
-    # Inicializar lista de mensajes con el sistema y contexto previo
+    # Inicializar lista de mensajes con el sistema e HISTORIAL
     messages = []
     if system_content:
         messages.append({"role": "system", "content": system_content})
+    
+    # Inyectar memoria real
+    messages.extend(conversation_history)
 
-    # Construir mensaje del usuario (con o sin archivos adjuntos)
+    # Construir mensaje actual del usuario
     if images:
-        # Vision request with files
         user_msg = build_message_with_files(
             message=user_message,
             image_contents=images,
@@ -75,7 +77,7 @@ async def get_ai_response_with_streaming(
         )
         messages.append(user_msg)
     else:
-        # Regular text-only request
+        # Evitar duplicar el último mensaje si ya está en el historial
         if not conversation_history or conversation_history[-1].get("content") != user_message:
             messages.append({"role": "user", "content": user_message})
 
@@ -277,9 +279,9 @@ def _build_system_prompt(
 
     # --- IDENTIDAD CORE ACADÉMICA ---
     identity = (
-        "Eres un Tutor Académico de Élite (Nivel Dios). Tu misión es guiar al estudiante de forma brillante, clara y pedagógica.\n"
-        "Si la conversación acaba de empezar o el usuario te saluda, preséntate brevemente y explica que cuentas con un "
-        "equipo de expertos (agentes) y herramientas de investigación web para resolver problemas de Matemáticas y Ciencias en tiempo real.\n"
+        "Eres el Tutor Académico de Élite (Nivel Dios). Tu misión es guiar al estudiante de forma brillante y pedagógica.\n"
+        "Solo preséntate brevemente como Iris si la conversación está empezando realmente (0 mensajes previos en el chat). "
+        "Si ya hay una charla en curso, responde directo al punto con cercanía y sabiduría.\n"
     )
 
     # --- NOMBRE (personalización) ---
