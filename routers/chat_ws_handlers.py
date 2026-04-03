@@ -282,18 +282,31 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
             await _ws_send_json(websocket, {"type": "done", "request_id": request_id})
             return # Finalizar aquí para peticiones agénticas automáticas
         except asyncio.TimeoutError:
-            logger.warning(
-                f"Agent timeout request_id={request_id} user_id={user_id} timeout_s={os.getenv('AGENT_TIMEOUT_SECONDS', '60')}"
-            )
+            logger.warning(f"Agent timeout request_id={request_id} user_id={user_id}")
+            # 1. Mensaje Pedagógico (Voz de Iris)
             await _ws_send_status(
                 websocket,
-                "👨‍🏫 [Tutor]: El equipo tardó demasiado; procederé yo mismo con la clase...",
+                "✨ [Iris]: Mi equipo está analizando mucha información. Procederé yo misma con la clase para no hacerte esperar...",
                 request_id=request_id,
             )
+            # El flujo continuará hacia el chat normal abajo.
         except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
             logger.error(f"Error en orquestación autónoma: {e}")
-            # Fallback silencioso al flujo de chat normal si los agentes fallan
-            logger.warning("Fallo en agentes, realizando fallback a chat normal...")
+            
+            # 1. Informar al usuario sutilmente
+            await _ws_send_status(websocket, "✨ [Iris]: Reajustando mi equipo para darte la mejor respuesta...", request_id=request_id)
+            
+            # 2. Información Técnica (Desarrollo)
+            if os.getenv("DEBUG", "true").lower() == "true":
+                await _ws_send_json(websocket, {
+                    "type": "error", 
+                    "message": "agent_failure", 
+                    "detail": str(e),
+                    "traceback": error_detail[-500:],
+                    "request_id": request_id
+                })
     
     # Web search
     ddg_sources: List[Dict[str, Any]] = []
@@ -351,8 +364,26 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
             user_id, user_message, user_context, websocket, request_id, images=images
         )
     except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
         logger.exception(f"WebSocket streaming error user_id={user_id}: {e}")
-        await _ws_send_json(websocket, {"type": "error", "message": "llm_error", "request_id": request_id})
+        
+        # 1. Mensaje Pedagógico (Voz de Iris)
+        pedagogical_msg = (
+            "\n✨ [Iris]: ¡Vaya! Mi equipo de expertos ha tenido un tropiezo procesando esta idea compleja. "
+            "Pero no te preocupes, Iris está analizando qué ha pasado. ¿Podrías intentar reformular la pregunta? Estoy aquí para ayudarte."
+        )
+        await _ws_send_json(websocket, {"type": "token", "content": pedagogical_msg, "request_id": request_id})
+        
+        # 2. Información Técnica (Solo para Desarrollo)
+        if os.getenv("DEBUG", "true").lower() == "true":
+            await _ws_send_json(websocket, {
+                "type": "error", 
+                "message": "debug_info", 
+                "detail": str(e),
+                "traceback": error_detail[-500:], # Últimos 500 caracteres para no saturar
+                "request_id": request_id
+            })
         return
     
     text = str(ai_result.get("text") or "")
