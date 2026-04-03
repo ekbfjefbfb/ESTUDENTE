@@ -16,6 +16,7 @@ class AgentStreamBridge:
         self.old_stdout = sys.stdout
         self.string_io = io.StringIO()
         self._is_writing = False # Guardián de recursión
+        self._buffer = ""
         
     def __enter__(self):
         sys.stdout = self
@@ -23,6 +24,16 @@ class AgentStreamBridge:
         
     def __exit__(self, exc_type, exc_val, exc_tb):
         sys.stdout = self.old_stdout
+
+    def _flush_buffer(self):
+        """Envía el contenido acumulado al frontend."""
+        if not self._buffer:
+            return
+        # Limpieza Discreta: Regresamos a "Tutor" para los prefijos
+        msg = self._buffer.replace("iris_", "").replace("expert_", "").strip()
+        if msg and self.on_new_token:
+            self.on_new_token(msg)
+        self._buffer = ""
         
     def write(self, data: str):
         if self._is_writing:
@@ -37,7 +48,7 @@ class AgentStreamBridge:
                 ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
                 clean_data = ansi_escape.sub('', data)
                 
-                # FILTRO DE IDENTIDADES (Limpieza Total de AutoGen)
+                # FILTRO DE IDENTIDADES (Limpieza Silenciosa)
                 is_internal_noise = False
                 noise_patterns = [
                     "(to ", "----------------", ">>>>", "TERMINATE", 
@@ -46,7 +57,7 @@ class AgentStreamBridge:
                 if any(m in clean_data for m in noise_patterns):
                     is_internal_noise = True
                 
-                # DETECCIÓN DE EVENTOS PRIORITARIOS (Iris Status)
+                # DETECCIÓN DE EVENTOS PRIORITARIOS (Status Genéricos)
                 priority_markers = ["Suggested tool Call", "Execute tool Call"]
                 is_priority = any(m in clean_data for m in priority_markers)
 
@@ -55,10 +66,10 @@ class AgentStreamBridge:
                     if "Suggested tool Call" in clean_data:
                         tool_match = re.search(r"name='([^']+)'", clean_data)
                         tool_name = tool_match.group(1) if tool_match else "herramienta"
-                        msg = "\n🔍 [Iris]: Investigando fuentes académicas..." if "search_web" in tool_name else f"\n⚙️ [Iris]: Resolviendo con mi sabiduría..."
+                        msg = "\n🔍 [Tutor]: Investigando fuentes..." if "search_web" in tool_name else f"\n⚙️ [Tutor]: Resolviendo con mi equipo..."
                         if self.on_new_token: self.on_new_token(msg)
                     elif "Execute tool Call" in clean_data:
-                        if self.on_new_token: self.on_new_token(" ✨ [Iris]: Preparando tu explicación maestra...")
+                        if self.on_new_token: self.on_new_token(" ✨ [Tutor]: Estructurando tu respuesta...")
                 
                 elif not is_internal_noise:
                     self._buffer += clean_data
@@ -75,7 +86,7 @@ class AgentStreamBridge:
 async def run_agent_with_streaming(agent_task_fn: Callable, on_token: Callable[[str], Any]):
     """
     Wrapper de Nivel Dios para ejecutar la tarea agéntica con latidos de corazón (Heartbeat).
-    Evita timeouts en el frontend inyectando señales de vida periódicas.
+    Iris inyecta señales de vida periódicas de forma discreta.
     """
     bridge = AgentStreamBridge(on_token)
     loop = asyncio.get_event_loop()
@@ -95,8 +106,8 @@ async def run_agent_with_streaming(agent_task_fn: Callable, on_token: Callable[[
             if not stop_event.is_set():
                 elapsed = time.time() - last_activity_time[0]
                 if elapsed >= 10:
-                    # Enviar señal de vida pedagógica de Iris
-                    on_token("\n✨ [Iris]: Sigo aquí, Iris está conectando conceptos complejos para ti...")
+                    # Enviar señal de vida pedagógica discreta
+                    on_token("\n✨ [Tutor]: Sigo aquí, conectando conceptos para ti...")
                     last_activity_time[0] = time.time() # Reset para no saturar
                 elif elapsed >= 5:
                     on_token(" .") 
