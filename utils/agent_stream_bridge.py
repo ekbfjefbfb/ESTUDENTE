@@ -37,36 +37,38 @@ class AgentStreamBridge:
                 ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
                 clean_data = ansi_escape.sub('', data)
                 
-                # DETECCIÓN DE EVENTOS PRIORITARIOS (Flush inmediato)
-                priority_markers = [
-                    "Suggested tool Call", "suggested_assistant_action", 
-                    "Execute tool Call", "executing_tool"
+                # FILTRO DE IDENTIDADES (Limpieza Total de AutoGen)
+                is_internal_noise = False
+                noise_patterns = [
+                    "(to ", "----------------", ">>>>", "TERMINATE", 
+                    "proxy_", "iris_", "expert_", "exitcode:", "code_execution_config"
                 ]
-                is_priority = any(m in clean_data or m in clean_data.lower() for m in priority_markers)
+                if any(m in clean_data for m in noise_patterns):
+                    is_internal_noise = True
+                
+                # DETECCIÓN DE EVENTOS PRIORITARIOS (Iris Status)
+                priority_markers = ["Suggested tool Call", "Execute tool Call"]
+                is_priority = any(m in clean_data for m in priority_markers)
 
                 if is_priority:
-                    self._flush_buffer() # Enviar lo que haya antes del estado
-                    
-                    if "Suggested tool Call" in clean_data or "suggested_assistant_action" in clean_data.lower():
-                        tool_match = re.search(r"name='([^']+)'", clean_data) or re.search(r"action: ([^\s]+)", clean_data.lower())
+                    self._flush_buffer() 
+                    if "Suggested tool Call" in clean_data:
+                        tool_match = re.search(r"name='([^']+)'", clean_data)
                         tool_name = tool_match.group(1) if tool_match else "herramienta"
-                        msg = "\n🔍 [Investigando]: Buscando fuentes..." if "search_web" in tool_name else f"\n⚙️ [Procesando]: Usando {tool_name}..."
+                        msg = "\n🔍 [Iris]: Investigando fuentes académicas..." if "search_web" in tool_name else f"\n⚙️ [Iris]: Resolviendo con mi sabiduría..."
                         if self.on_new_token: self.on_new_token(msg)
-                    
-                    elif "Execute tool Call" in clean_data or "executing_tool" in clean_data.lower():
-                        if self.on_new_token: self.on_new_token(" ✨ [Finalizando]: Preparando explicación...")
+                    elif "Execute tool Call" in clean_data:
+                        if self.on_new_token: self.on_new_token(" ✨ [Iris]: Preparando tu explicación maestra...")
                 
-                else:
-                    # ACUMULAR EN BUFFER: Si no es prioridad, agrupamos tokens
+                elif not is_internal_noise:
                     self._buffer += clean_data
-                    # Flush si hay salto de línea o buffer > 50 chars para mantener la fluidez
-                    if "\n" in self._buffer or len(self._buffer) > 50:
+                    if "\n" in self._buffer or len(self._buffer) > 60:
                         self._flush_buffer()
             
             self.old_stdout.write(data)
         finally:
             self._is_writing = False
-        
+
     def flush(self):
         self.old_stdout.flush()
 
@@ -92,8 +94,11 @@ async def run_agent_with_streaming(agent_task_fn: Callable, on_token: Callable[[
             await asyncio.sleep(6) # Latido cada 6 segundos para máxima resiliencia
             if not stop_event.is_set():
                 elapsed = time.time() - last_activity_time[0]
-                if elapsed >= 6:
-                    # Enviar señal de vida discreta al frontend (pulso de carga)
+                if elapsed >= 10:
+                    # Enviar señal de vida pedagógica de Iris
+                    on_token("\n✨ [Iris]: Sigo aquí, Iris está conectando conceptos complejos para ti...")
+                    last_activity_time[0] = time.time() # Reset para no saturar
+                elif elapsed >= 5:
                     on_token(" .") 
     
     stop_heartbeat = asyncio.Event()

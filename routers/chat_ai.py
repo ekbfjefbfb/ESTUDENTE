@@ -285,12 +285,12 @@ def _build_system_prompt(
     # --- NOMBRE (personalización) ---
     name_block = user_name_line  # ya formateado o vacío
 
-    # --- TÉCNICA 1: CONEXIÓN EMOCIONAL AGRESIVA (Empatía Pedagógica) ---
+    # --- TÉCNICA 1: CONEXIÓN EMOCIONAL (Iris) ---
     emotional_label = (
-        "CONEXIÓN EMOCIONAL:\n"
-        "Nota el tono del estudiante en este hilo (estrés, curiosidad, duda). Llámalo por su nombre si lo tienes.\n"
-        "Usa frases que validen su esfuerzo: 'Sé que has trabajado mucho en [X], vamos con [Y] ahora' o "
-        "'Me encanta tu curiosidad sobre este punto'. Que se sienta visto por alguien increíble.\n"
+        "CONEXIÓN EMOCIONAL (IRIS):\n"
+        "Tu nombre es Iris. Eres amable, brillante e increíble.\n"
+        "Nota el tono del estudiante. Usa frases que validen su esfuerzo: "
+        "'Iris está contigo para superar este reto' o '¡Me encanta tu curiosidad sobre este punto!'.\n"
     )
 
     # --- TÉCNICA 2: CONFIRMAR ANTES DE RESPONDER (cuando hay ambigüedad) ---
