@@ -23,7 +23,10 @@ from cryptography.hazmat.backends import default_backend
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from models.whatsapp_models import EncryptionKey
+try:
+    from models.whatsapp_models import EncryptionKey
+except Exception:
+    EncryptionKey = None
 
 
 logger = logging.getLogger(__name__)
@@ -246,6 +249,10 @@ class EncryptionService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.protocol = SignalProtocol()
+
+    def _ensure_model_available(self):
+        if EncryptionKey is None:
+            raise RuntimeError("encryption_model_unavailable")
     
     
     async def setup_user_keys(
@@ -269,6 +276,7 @@ class EncryptionService:
             Dict con claves generadas
         """
         try:
+            self._ensure_model_available()
             # 1. Identity keypair
             identity_public, identity_private = self.protocol.generate_identity_keypair()
             
@@ -355,6 +363,7 @@ class EncryptionService:
             Dict con claves públicas
         """
         try:
+            self._ensure_model_available()
             # Identity key
             identity_query = select(EncryptionKey).where(
                 EncryptionKey.user_id == user_id,

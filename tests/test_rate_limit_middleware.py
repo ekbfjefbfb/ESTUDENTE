@@ -3,10 +3,10 @@ import importlib
 
 import httpx
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from jose import jwt
-from starlette.testclient import TestClient
 
 import middlewares.rate_limit_middleware as rate_limit_middleware
 from middlewares.rate_limit_middleware import EndpointPolicy, RateLimitMiddleware
@@ -50,7 +50,30 @@ def force_memory_rate_limit_backend(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(rate_limit_utils, "get_redis_client", _fake_get_redis_client)
 
 
-def test_rate_limit_auth_blocks_by_ip(monkeypatch: pytest.MonkeyPatch):
+@pytest_asyncio.fixture
+async def async_client_factory():
+    clients: list[httpx.AsyncClient] = []
+
+    async def _factory(app: FastAPI) -> httpx.AsyncClient:
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        )
+        clients.append(client)
+        return client
+
+    try:
+        yield _factory
+    finally:
+        for client in clients:
+            await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_auth_blocks_by_ip(
+    monkeypatch: pytest.MonkeyPatch,
+    async_client_factory,
+):
     policy = EndpointPolicy(
         name="test-auth-ip",
         prefixes=("/api/auth/login",),
@@ -68,18 +91,22 @@ def test_rate_limit_auth_blocks_by_ip(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(rate_limit_middleware, "POLICIES", (policy,))
 
     app = _build_app()
-    with TestClient(app) as client:
-        headers = {"X-Forwarded-For": "203.0.113.10"}
-        assert client.post("/api/auth/login", headers=headers).status_code == 200
-        assert client.post("/api/auth/login", headers=headers).status_code == 200
+    client = await async_client_factory(app)
+    headers = {"X-Forwarded-For": "203.0.113.10"}
+    assert (await client.post("/api/auth/login", headers=headers)).status_code == 200
+    assert (await client.post("/api/auth/login", headers=headers)).status_code == 200
 
-        blocked = client.post("/api/auth/login", headers=headers)
-        assert blocked.status_code == 429
-        assert blocked.json()["scope"] == "ip"
-        assert int(blocked.headers["Retry-After"]) >= 1
+    blocked = await client.post("/api/auth/login", headers=headers)
+    assert blocked.status_code == 429
+    assert blocked.json()["scope"] == "ip"
+    assert int(blocked.headers["Retry-After"]) >= 1
 
 
-def test_rate_limit_chat_blocks_per_user_but_not_other_users(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.asyncio
+async def test_rate_limit_chat_blocks_per_user_but_not_other_users(
+    monkeypatch: pytest.MonkeyPatch,
+    async_client_factory,
+):
     policy = EndpointPolicy(
         name="test-chat-user",
         prefixes=("/api/unified-chat/message",),
@@ -104,26 +131,26 @@ def test_rate_limit_chat_blocks_per_user_but_not_other_users(monkeypatch: pytest
     monkeypatch.setattr(rate_limit_middleware, "POLICIES", (policy,))
 
     app = _build_app()
-    with TestClient(app) as client:
-        shared_ip_headers = {"X-Forwarded-For": "203.0.113.20"}
-        user_one_headers = {
-            **shared_ip_headers,
-            "Authorization": f"Bearer {_token_for('user-1')}",
-        }
-        user_two_headers = {
-            **shared_ip_headers,
-            "Authorization": f"Bearer {_token_for('user-2')}",
-        }
+    client = await async_client_factory(app)
+    shared_ip_headers = {"X-Forwarded-For": "203.0.113.20"}
+    user_one_headers = {
+        **shared_ip_headers,
+        "Authorization": f"Bearer {_token_for('user-1')}",
+    }
+    user_two_headers = {
+        **shared_ip_headers,
+        "Authorization": f"Bearer {_token_for('user-2')}",
+    }
 
-        assert client.post("/api/unified-chat/message", headers=user_one_headers).status_code == 200
-        assert client.post("/api/unified-chat/message", headers=user_one_headers).status_code == 200
+    assert (await client.post("/api/unified-chat/message", headers=user_one_headers)).status_code == 200
+    assert (await client.post("/api/unified-chat/message", headers=user_one_headers)).status_code == 200
 
-        blocked = client.post("/api/unified-chat/message", headers=user_one_headers)
-        assert blocked.status_code == 429
-        assert blocked.json()["scope"] == "user"
+    blocked = await client.post("/api/unified-chat/message", headers=user_one_headers)
+    assert blocked.status_code == 429
+    assert blocked.json()["scope"] == "user"
 
-        allowed_other_user = client.post("/api/unified-chat/message", headers=user_two_headers)
-        assert allowed_other_user.status_code == 200
+    allowed_other_user = await client.post("/api/unified-chat/message", headers=user_two_headers)
+    assert allowed_other_user.status_code == 200
 
 
 @pytest.mark.asyncio

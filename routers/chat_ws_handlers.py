@@ -36,6 +36,10 @@ _WS_CONNECT_RULES = (
 )
 
 
+def _should_auto_rename_session(session_info: Any) -> bool:
+    return getattr(session_info, "title", None) == "Nueva Conversación"
+
+
 async def handle_chat_websocket(websocket: WebSocket, user_id: str):
     """Handle chat WebSocket connection"""
     heartbeat_task: Optional[asyncio.Task] = None
@@ -231,7 +235,12 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
             logger.debug(f"Heartbeat task cancelled for user_id={user_id}")
 
 
-async def _process_chat_message(websocket: WebSocket, user_id: str, message_data: Dict[str, Any], loop: asyncio.AbstractEventLoop = None):
+async def _process_chat_message(
+    websocket: WebSocket,
+    user_id: str,
+    message_data: Dict[str, Any],
+    loop: Optional[asyncio.AbstractEventLoop] = None,
+):
     """Process a single chat message from WebSocket"""
     from routers.chat_search import _should_web_search, _should_include_images_in_search
     from services.groq_ai_service import get_context_info
@@ -360,7 +369,7 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
                         ChatSession.id == session_id,
                         ChatSession.user_id == user_id,
                     ).first()
-                    if session_info and session_info.title == "Nueva Conversación":
+                    if _should_auto_rename_session(session_info):
                         from utils.background import safe_create_task
 
                         safe_create_task(
@@ -532,7 +541,7 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
             ChatSession.id == session_id,
             ChatSession.user_id == user_id,
         ).first()
-        if session_info and session_info.title == "Nueva Conversación":
+        if _should_auto_rename_session(session_info):
             from utils.background import safe_create_task
             safe_create_task(
                 chat_session_service.auto_rename_session(session_id, user_message),

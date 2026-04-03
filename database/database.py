@@ -5,7 +5,7 @@ Consolidación de acceso a datos para máxima performance y mantenibilidad.
 
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 # Re-exportar desde el sistema enterprise optimizado
 from database.db_enterprise import (
@@ -19,7 +19,6 @@ from database.db_enterprise import (
 from config import DATABASE_URL_SYNC
 
 # Base para modelos SQLAlchemy (Compartida)
-from sqlalchemy.ext.declarative import declarative_base
 Base = declarative_base()
 
 # ===============================================

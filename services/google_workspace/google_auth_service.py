@@ -3,17 +3,29 @@ Google Auth Service - Autenticación completa con Google OAuth2
 Obtiene información del usuario y mantiene acceso permanente
 """
 
+import asyncio
 import logging
 import json
 import os
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple
 import httpx
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import Flow
-from googleapiclient.discovery import build
 import json_log_formatter
+
+try:
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
+    from google_auth_oauthlib.flow import Flow
+    from googleapiclient.discovery import build
+    GOOGLE_WORKSPACE_LIBS_AVAILABLE = True
+    GOOGLE_WORKSPACE_IMPORT_ERROR = None
+except Exception as exc:
+    Credentials = None
+    Request = None
+    Flow = None
+    build = None
+    GOOGLE_WORKSPACE_LIBS_AVAILABLE = False
+    GOOGLE_WORKSPACE_IMPORT_ERROR = exc
 
 from services.smart_cache_service import smart_cache
 from services.redis_service import get_redis_client
@@ -28,7 +40,8 @@ handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("google_auth_service")
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
 
 # =============================================
 # CONFIGURACIÓN GOOGLE OAUTH2
@@ -60,6 +73,21 @@ class GoogleAuthService:
         self.client_secret = GOOGLE_CLIENT_SECRET
         self.redirect_uri = GOOGLE_REDIRECT_URI
         self.scopes = GOOGLE_SCOPES
+
+    def _ensure_available(self):
+        if not GOOGLE_WORKSPACE_LIBS_AVAILABLE:
+            raise RuntimeError(f"google_workspace_unavailable: {GOOGLE_WORKSPACE_IMPORT_ERROR}")
+
+    def _ensure_configured(self):
+        if not self.client_id or not self.client_secret or not self.redirect_uri:
+            raise RuntimeError("google_oauth_not_configured")
+
+    async def _build_service(self, service_name: str, version: str, credentials):
+        self._ensure_available()
+        return await asyncio.to_thread(build, service_name, version, credentials=credentials)
+
+    async def _execute(self, request):
+        return await asyncio.to_thread(request.execute)
         
     def create_authorization_url(self, state: Optional[str] = None) -> Tuple[str, str]:
         """
@@ -69,6 +97,8 @@ class GoogleAuthService:
             Tuple[str, str]: (authorization_url, state)
         """
         try:
+            self._ensure_available()
+            self._ensure_configured()
             flow = Flow.from_client_config(
                 {
                     "web": {
@@ -117,6 +147,8 @@ class GoogleAuthService:
             Dict con información completa del usuario y tokens
         """
         try:
+            self._ensure_available()
+            self._ensure_configured()
             # Intercambiar code por tokens
             flow = Flow.from_client_config(
                 {
@@ -134,7 +166,7 @@ class GoogleAuthService:
             flow.redirect_uri = self.redirect_uri
             
             # Obtener tokens
-            flow.fetch_token(code=code)
+            await asyncio.to_thread(flow.fetch_token, code=code)
             credentials = flow.credentials
             
             # Obtener información del usuario
@@ -161,14 +193,17 @@ class GoogleAuthService:
     async def _get_user_info(self, credentials: Credentials) -> Dict[str, Any]:
         """Obtiene información completa del usuario desde Google APIs."""
         try:
+            self._ensure_available()
             # Usar Google People API para información detallada
-            service = build('people', 'v1', credentials=credentials)
+            service = await self._build_service('people', 'v1', credentials)
             
             # Obtener perfil del usuario
-            profile = service.people().get(
-                resourceName='people/me',
-                personFields='names,emailAddresses,photos,organizations,phoneNumbers,addresses'
-            ).execute()
+            profile = await self._execute(
+                service.people().get(
+                    resourceName='people/me',
+                    personFields='names,emailAddresses,photos,organizations,phoneNumbers,addresses'
+                )
+            )
             
             # Extraer información relevante
             user_info = {
@@ -304,6 +339,7 @@ class GoogleAuthService:
             Credentials válidas o None si no existen
         """
         try:
+            self._ensure_available()
             # Obtener credentials del caché
             credentials_data = await smart_cache.get("google_credentials", user_email)
             
@@ -334,7 +370,7 @@ class GoogleAuthService:
                     "user_email": user_email
                 })
                 
-                credentials.refresh(Request())
+                await asyncio.to_thread(credentials.refresh, Request())
                 
                 # Actualizar en caché
                 updated_credentials_data = credentials_data.copy()
@@ -406,7 +442,7 @@ class GoogleAuthService:
             # Revocar token en Google
             revoke_url = f"https://oauth2.googleapis.com/revoke?token={credentials.token}"
             
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(revoke_url)
             
             # Limpiar caché

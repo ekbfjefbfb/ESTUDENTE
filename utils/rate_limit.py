@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import math
+import os
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -24,6 +25,11 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 logger.setLevel("INFO")
+
+RATE_LIMIT_REDIS_TIMEOUT_SECONDS = max(
+    0.05,
+    float(os.getenv("RATE_LIMIT_REDIS_TIMEOUT_SECONDS", "0.25")),
+)
 
 RATE_LIMIT_EXCEEDED = Counter(
     "rate_limit_exceeded_total",
@@ -215,18 +221,37 @@ async def evaluate_rate_limit(
         )
 
     storage_key = _build_storage_key(namespace, rule, identifier)
-    redis_client = await get_redis_client()
+    try:
+        redis_client = await asyncio.wait_for(
+            get_redis_client(),
+            timeout=RATE_LIMIT_REDIS_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            {
+                "event": "rate_limit_redis_connect_timeout",
+                "namespace": namespace,
+                "rule": rule.name,
+                "scope": rule.scope,
+                "identifier": identifier,
+                "timeout_seconds": RATE_LIMIT_REDIS_TIMEOUT_SECONDS,
+            }
+        )
+        redis_client = None
 
     if redis_client is not None:
         try:
-            result = await cast(Any, redis_client).eval(
-                LUA_RATE_LIMIT,
-                2,
-                storage_key,
-                f"{storage_key}:blocked",
-                rule.max_requests,
-                rule.window_seconds * 1000,
-                rule.block_seconds,
+            result = await asyncio.wait_for(
+                cast(Any, redis_client).eval(
+                    LUA_RATE_LIMIT,
+                    2,
+                    storage_key,
+                    f"{storage_key}:blocked",
+                    rule.max_requests,
+                    rule.window_seconds * 1000,
+                    rule.block_seconds,
+                ),
+                timeout=RATE_LIMIT_REDIS_TIMEOUT_SECONDS,
             )
             decision = RateLimitDecision(
                 allowed=bool(int(result[0])),

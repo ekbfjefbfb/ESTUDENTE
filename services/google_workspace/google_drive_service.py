@@ -3,15 +3,28 @@ Google Drive Service - Gestión completa de archivos en Google Drive
 Crear, subir, descargar, organizar archivos y carpetas automáticamente
 """
 
+import asyncio
 import logging
 import io
 import os
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Union
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload, MediaIoBaseUpload
-from googleapiclient.errors import HttpError
 import json_log_formatter
+
+try:
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload, MediaIoBaseUpload
+    from googleapiclient.errors import HttpError
+    GOOGLE_DRIVE_LIBS_AVAILABLE = True
+    GOOGLE_DRIVE_IMPORT_ERROR = None
+except Exception as exc:
+    build = None
+    MediaIoBaseDownload = None
+    MediaFileUpload = None
+    MediaIoBaseUpload = None
+    HttpError = Exception
+    GOOGLE_DRIVE_LIBS_AVAILABLE = False
+    GOOGLE_DRIVE_IMPORT_ERROR = exc
 
 from services.google_workspace.google_auth_service import google_auth_service
 from services.smart_cache_service import smart_cache
@@ -24,7 +37,8 @@ handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("google_drive_service")
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
 
 class GoogleDriveService:
     """
@@ -47,14 +61,31 @@ class GoogleDriveService:
             'jpg': 'image/jpeg',
             'jpeg': 'image/jpeg'
         }
+
+    async def _execute(self, request):
+        return await asyncio.to_thread(request.execute)
+
+    def _download_file_sync(self, service, file_id: str) -> bytes:
+        request = service.files().get_media(fileId=file_id)
+        file_content = io.BytesIO()
+        downloader = MediaIoBaseDownload(file_content, request)
+
+        done = False
+        while done is False:
+            _, done = downloader.next_chunk()
+
+        file_content.seek(0)
+        return file_content.read()
     
     async def _get_drive_service(self, user_email: str):
         """Obtiene el servicio de Google Drive para un usuario."""
+        if not GOOGLE_DRIVE_LIBS_AVAILABLE:
+            raise RuntimeError(f"google_drive_unavailable: {GOOGLE_DRIVE_IMPORT_ERROR}")
         credentials = await google_auth_service.get_valid_credentials(user_email)
         if not credentials:
             raise ValueError(f"No valid credentials for user: {user_email}")
         
-        return build('drive', 'v3', credentials=credentials)
+        return await asyncio.to_thread(build, 'drive', 'v3', credentials=credentials)
     
     async def create_folder(self, user_email: str, folder_name: str, parent_folder_id: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -79,10 +110,12 @@ class GoogleDriveService:
             if parent_folder_id:
                 folder_metadata['parents'] = [parent_folder_id]
             
-            folder = service.files().create(
-                body=folder_metadata,
-                fields='id, name, parents, createdTime, webViewLink'
-            ).execute()
+            folder = await self._execute(
+                service.files().create(
+                    body=folder_metadata,
+                    fields='id, name, parents, createdTime, webViewLink'
+                )
+            )
             
             logger.info({
                 "event": "folder_created",
@@ -145,11 +178,13 @@ class GoogleDriveService:
             )
             
             # Subir archivo
-            file = service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id, name, parents, size, createdTime, webViewLink, webContentLink'
-            ).execute()
+            file = await self._execute(
+                service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id, name, parents, size, createdTime, webViewLink, webContentLink'
+                )
+            )
             
             logger.info({
                 "event": "file_uploaded",
@@ -193,17 +228,7 @@ class GoogleDriveService:
         """
         try:
             service = await self._get_drive_service(user_email)
-            
-            request = service.files().get_media(fileId=file_id)
-            file_content = io.BytesIO()
-            downloader = MediaIoBaseDownload(file_content, request)
-            
-            done = False
-            while done is False:
-                status, done = downloader.next_chunk()
-            
-            file_content.seek(0)
-            content = file_content.read()
+            content = await asyncio.to_thread(self._download_file_sync, service, file_id)
             
             logger.info({
                 "event": "file_downloaded",
@@ -249,11 +274,13 @@ class GoogleDriveService:
             if query:
                 search_query += f" and name contains '{query}'"
             
-            results = service.files().list(
-                q=search_query,
-                pageSize=max_results,
-                fields="files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, parents)"
-            ).execute()
+            results = await self._execute(
+                service.files().list(
+                    q=search_query,
+                    pageSize=max_results,
+                    fields="files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, parents)"
+                )
+            )
             
             files = results.get('files', [])
             
@@ -323,17 +350,21 @@ class GoogleDriveService:
                     'role': permission_type
                 }
             
-            result = service.permissions().create(
-                fileId=file_id,
-                body=permission,
-                fields='id, type, role, emailAddress'
-            ).execute()
+            result = await self._execute(
+                service.permissions().create(
+                    fileId=file_id,
+                    body=permission,
+                    fields='id, type, role, emailAddress'
+                )
+            )
             
             # Obtener link compartido
-            file_info = service.files().get(
-                fileId=file_id,
-                fields='webViewLink, webContentLink'
-            ).execute()
+            file_info = await self._execute(
+                service.files().get(
+                    fileId=file_id,
+                    fields='webViewLink, webContentLink'
+                )
+            )
             
             logger.info({
                 "event": "file_shared",
@@ -375,7 +406,7 @@ class GoogleDriveService:
         try:
             service = await self._get_drive_service(user_email)
             
-            service.files().delete(fileId=file_id).execute()
+            await self._execute(service.files().delete(fileId=file_id))
             
             logger.info({
                 "event": "file_deleted",
@@ -464,7 +495,7 @@ class GoogleDriveService:
         try:
             service = await self._get_drive_service(user_email)
             
-            about = service.about().get(fields='storageQuota, user').execute()
+            about = await self._execute(service.about().get(fields='storageQuota, user'))
             
             storage_quota = about.get('storageQuota', {})
             user_info = about.get('user', {})

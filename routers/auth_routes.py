@@ -2,13 +2,11 @@
 import os
 import logging
 import re
-from fastapi import APIRouter, Depends, Request, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel, Field, field_validator, AliasChoices
 from typing import Optional
 from jose import jwt, JWTError
 
-from database.db_enterprise import get_primary_session as get_async_db
 from services.auth_service import (
     oauth_login_or_register,
     refresh_access_token_service,
@@ -106,7 +104,6 @@ def sanitize_input(value: str) -> str:
 async def oauth_login(
     data: OAuthSchema,
     request: Request,
-    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     logger.info(f'{{"event": "oauth_login_attempt", "provider": "{data.provider}", "ip": "{request.client.host}"}}')
     env = os.getenv("ENVIRONMENT", "production").lower()
@@ -126,7 +123,7 @@ async def oauth_login(
         name = sanitize_input(data.name) if data.name else None
 
         # Usar Circuit Breaker para proteger contra saturación
-        result = await cb_oauth.call(oauth_login_or_register, db, provider, id_token, name)
+        result = await cb_oauth.call(oauth_login_or_register, None, provider, id_token, name)
         logger.info(f'{{"event": "oauth_login_success", "provider": "{provider}", "ip": "{request.client.host}"}}')
         return result
     except RuntimeError as e:
@@ -169,7 +166,6 @@ async def refresh_token_route(
 async def register_route(
     data: RegisterSchema,
     request: Request,
-    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     # Safe slicing para evitar IndexError con emails cortos
     email_preview = data.email[:3] + "..." + data.email[-6:] if len(data.email) > 9 else data.email[:3] + "..."
@@ -179,7 +175,12 @@ async def register_route(
         password = data.password
         full_name = sanitize_input(data.full_name) if data.full_name else None
 
-        result = await register_email_password_service(email=email, password=password, full_name=full_name, session=db)
+        result = await register_email_password_service(
+            email=email,
+            password=password,
+            full_name=full_name,
+            session=None,
+        )
         logger.info(f'{{"event": "register_success", "ip": "{request.client.host}"}}')
         return result
     except Exception as e:
@@ -196,13 +197,16 @@ async def register_route(
 async def login_route(
     data: LoginSchema,
     request: Request,
-    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     logger.info(f'{{"event": "login_attempt", "ip": "{request.client.host}"}}')
     try:
         email = sanitize_input(data.email)
         password = data.password
-        result = await login_email_password_service(email=email, password=password, session=db)
+        result = await login_email_password_service(
+            email=email,
+            password=password,
+            session=None,
+        )
         logger.info(f'{{"event": "login_success", "ip": "{request.client.host}"}}')
         return result
     except Exception as e:

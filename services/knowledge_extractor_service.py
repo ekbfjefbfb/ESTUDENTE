@@ -22,7 +22,21 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import json
 
-from services.gpt_service import GPTService
+try:
+    from services.gpt_service import GPTService
+except Exception:
+    GPTService = None
+    from services.groq_ai_service import chat_with_ai
+
+    class GPTService:  # type: ignore[override]
+        async def chat_completion(self, messages=None, **kwargs):
+            response = await chat_with_ai(
+                messages=messages or [],
+                user="knowledge_extractor",
+                fast_reasoning=not bool(kwargs.get("search_live")),
+                stream=False,
+            )
+            return str(response or "")
 
 logger = logging.getLogger(__name__)
 

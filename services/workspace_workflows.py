@@ -10,35 +10,35 @@ from typing import Dict, Any
 try:
     from services.gpt_service import gpt_service
     GPT_SERVICE_AVAILABLE = True
-except ImportError:
+except Exception:
     gpt_service = None
     GPT_SERVICE_AVAILABLE = False
 
 try:
     from services.google_workspace.google_docs_service import google_docs_service
     DOCS_SERVICE_AVAILABLE = True
-except ImportError:
+except Exception:
     google_docs_service = None
     DOCS_SERVICE_AVAILABLE = False
 
 try:
     from services.google_workspace.google_sheets_service import google_sheets_service
     SHEETS_SERVICE_AVAILABLE = True
-except ImportError:
+except Exception:
     google_sheets_service = None
     SHEETS_SERVICE_AVAILABLE = False
 
 try:
     from services.google_workspace.google_drive_service import google_drive_service
     DRIVE_SERVICE_AVAILABLE = True
-except ImportError:
+except Exception:
     google_drive_service = None
     DRIVE_SERVICE_AVAILABLE = False
 
 try:
     from services.google_workspace.gmail_service import gmail_service
     GMAIL_SERVICE_AVAILABLE = True
-except ImportError:
+except Exception:
     gmail_service = None
     GMAIL_SERVICE_AVAILABLE = False
 

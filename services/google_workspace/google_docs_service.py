@@ -3,12 +3,22 @@ Google Docs Service - Creación y edición automática de documentos
 Crea, edita y formatea documentos de Google Docs automáticamente
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Union
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 import json_log_formatter
+
+try:
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+    GOOGLE_DOCS_LIBS_AVAILABLE = True
+    GOOGLE_DOCS_IMPORT_ERROR = None
+except Exception as exc:
+    build = None
+    HttpError = Exception
+    GOOGLE_DOCS_LIBS_AVAILABLE = False
+    GOOGLE_DOCS_IMPORT_ERROR = exc
 
 from services.google_workspace.google_auth_service import google_auth_service
 from services.google_workspace.google_drive_service import google_drive_service
@@ -22,7 +32,8 @@ handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("google_docs_service")
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
 
 class GoogleDocsService:
     """
@@ -49,14 +60,29 @@ class GoogleDocsService:
                 "sections": ["Objetivos", "Alcance", "Cronograma", "Recursos", "Riesgos"]
             }
         }
+
+    async def _execute(self, request):
+        return await asyncio.to_thread(request.execute)
+
+    @staticmethod
+    def _document_end_index(document: Dict[str, Any]) -> int:
+        content = document.get('body', {}).get('content', [])
+        if not content:
+            return 1
+        end_index = content[-1].get('endIndex')
+        if isinstance(end_index, int) and end_index > 1:
+            return end_index - 1
+        return 1
     
     async def _get_docs_service(self, user_email: str):
         """Obtiene el servicio de Google Docs para un usuario."""
+        if not GOOGLE_DOCS_LIBS_AVAILABLE:
+            raise RuntimeError(f"google_docs_unavailable: {GOOGLE_DOCS_IMPORT_ERROR}")
         credentials = await google_auth_service.get_valid_credentials(user_email)
         if not credentials:
             raise ValueError(f"No valid credentials for user: {user_email}")
         
-        return build('docs', 'v1', credentials=credentials)
+        return await asyncio.to_thread(build, 'docs', 'v1', credentials=credentials)
     
     async def create_document(self, user_email: str, title: str, 
                             template: Optional[str] = None,
@@ -77,24 +103,26 @@ class GoogleDocsService:
             service = await self._get_docs_service(user_email)
             
             # Crear documento
-            document = service.documents().create(body={'title': title}).execute()
+            document = await self._execute(service.documents().create(body={'title': title}))
             document_id = document['documentId']
             
             # Mover a carpeta específica si se especifica
             if folder_id:
                 drive_service = await google_drive_service._get_drive_service(user_email)
-                drive_service.files().update(
-                    fileId=document_id,
-                    addParents=folder_id,
-                    removeParents='root'
-                ).execute()
+                await self._execute(
+                    drive_service.files().update(
+                        fileId=document_id,
+                        addParents=folder_id,
+                        removeParents='root'
+                    )
+                )
             
             # Aplicar template si se especifica
             if template and template in self.document_templates:
                 await self._apply_template(service, document_id, template)
             
             # Obtener información completa del documento
-            doc_info = service.documents().get(documentId=document_id).execute()
+            doc_info = await self._execute(service.documents().get(documentId=document_id))
             
             logger.info({
                 "event": "document_created",
@@ -195,10 +223,12 @@ class GoogleDocsService:
             index += len(content_text)
         
         # Ejecutar todas las requests
-        service.documents().batchUpdate(
-            documentId=document_id,
-            body={'requests': requests}
-        ).execute()
+        await self._execute(
+            service.documents().batchUpdate(
+                documentId=document_id,
+                body={'requests': requests}
+            )
+        )
     
     async def add_content(self, user_email: str, document_id: str, 
                          content: str, position: str = "end",
@@ -220,10 +250,10 @@ class GoogleDocsService:
             service = await self._get_docs_service(user_email)
             
             # Obtener documento para saber el índice final
-            doc = service.documents().get(documentId=document_id).execute()
+            doc = await self._execute(service.documents().get(documentId=document_id))
             
             if position == "end":
-                index = len(doc['body']['content'][0]['paragraph']['elements'][0]['textRun']['content']) - 1
+                index = self._document_end_index(doc)
             elif position == "beginning":
                 index = 1
             else:
@@ -253,10 +283,12 @@ class GoogleDocsService:
                 })
             
             # Ejecutar requests
-            service.documents().batchUpdate(
-                documentId=document_id,
-                body={'requests': requests}
-            ).execute()
+            await self._execute(
+                service.documents().batchUpdate(
+                    documentId=document_id,
+                    body={'requests': requests}
+                )
+            )
             
             logger.info({
                 "event": "content_added",
@@ -304,10 +336,12 @@ class GoogleDocsService:
                 }
             }]
             
-            result = service.documents().batchUpdate(
-                documentId=document_id,
-                body={'requests': requests}
-            ).execute()
+            result = await self._execute(
+                service.documents().batchUpdate(
+                    documentId=document_id,
+                    body={'requests': requests}
+                )
+            )
             
             # Contar reemplazos
             replacements = 0
@@ -356,8 +390,8 @@ class GoogleDocsService:
             
             # Determinar posición
             if position == "end":
-                doc = service.documents().get(documentId=document_id).execute()
-                index = len(doc['body']['content'][-1]['paragraph']['elements'][0]['textRun']['content'])
+                doc = await self._execute(service.documents().get(documentId=document_id))
+                index = self._document_end_index(doc)
             else:
                 index = int(position)
             
@@ -373,10 +407,12 @@ class GoogleDocsService:
             })
             
             # Ejecutar inserción de tabla
-            result = service.documents().batchUpdate(
-                documentId=document_id,
-                body={'requests': requests}
-            ).execute()
+            result = await self._execute(
+                service.documents().batchUpdate(
+                    documentId=document_id,
+                    body={'requests': requests}
+                )
+            )
             
             # Si hay datos, llenar la tabla
             if data:
@@ -419,10 +455,12 @@ class GoogleDocsService:
                 })
         
         if requests:
-            service.documents().batchUpdate(
-                documentId=document_id,
-                body={'requests': requests}
-            ).execute()
+            await self._execute(
+                service.documents().batchUpdate(
+                    documentId=document_id,
+                    body={'requests': requests}
+                )
+            )
     
     async def get_document_content(self, user_email: str, document_id: str) -> Dict[str, Any]:
         """
@@ -434,7 +472,7 @@ class GoogleDocsService:
         try:
             service = await self._get_docs_service(user_email)
             
-            doc = service.documents().get(documentId=document_id).execute()
+            doc = await self._execute(service.documents().get(documentId=document_id))
             
             # Extraer texto plano
             content = ""

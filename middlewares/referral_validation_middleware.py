@@ -13,9 +13,13 @@ valida los referidos cuando realizan acciones reales en la app.
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from services.invitation_service import InvitationService
 from models.models import User
 import logging
+
+try:
+    from services.invitation_service import InvitationService
+except Exception:
+    InvitationService = None
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +50,8 @@ class ReferralValidationMiddleware(BaseHTTPMiddleware):
             return response
         
         # Verificar si este usuario tiene un referido pendiente
+        if InvitationService is None:
+            return response
         try:
             db: AsyncSession = request.state.db
             await self._validate_referral_if_needed(db, user)
@@ -135,6 +141,8 @@ async def validate_referral_on_action(
     ```
     """
     try:
+        if InvitationService is None:
+            return
         await InvitationService.validate_and_grant_referral_bonus(
             db=db,
             referred_user_id=user_id,

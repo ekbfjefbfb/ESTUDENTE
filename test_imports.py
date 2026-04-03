@@ -33,12 +33,16 @@ def test_imports():
         print("   ✓ Main app OK")
         
         print("\n✅ ALL IMPORTS SUCCESSFUL!")
-        return 0
+        assert True
         
     except Exception as e:
         print(f"\n❌ IMPORT FAILED: {e}")
         traceback.print_exc()
-        return 1
+        raise AssertionError("Import smoke test failed") from e
 
 if __name__ == "__main__":
-    sys.exit(test_imports())
+    try:
+        test_imports()
+    except AssertionError:
+        sys.exit(1)
+    sys.exit(0)

@@ -55,10 +55,13 @@ def _ensure_proto_generated() -> None:
 
 
 _ensure_proto_generated()
+proto_dir = str(Path(__file__).resolve().parents[1] / "proto")
+if proto_dir not in sys.path:
+    sys.path.insert(0, proto_dir)
 
 # Generated from proto/notes.proto (created via grpc_tools.protoc)
-notes_pb2 = importlib.import_module("proto.notes_pb2")
-notes_pb2_grpc = importlib.import_module("proto.notes_pb2_grpc")
+notes_pb2 = importlib.import_module("notes_pb2")
+notes_pb2_grpc = importlib.import_module("notes_pb2_grpc")
 
 
 def _dt_to_ts(dt: datetime) -> Timestamp:

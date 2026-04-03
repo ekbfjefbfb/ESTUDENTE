@@ -1,14 +1,27 @@
+import httpx
 import pytest
-from fastapi.testclient import TestClient
+import pytest_asyncio
 
 from main import app
 from utils.auth import get_current_user
 
 
-@pytest.fixture()
-def client():
-    with TestClient(app) as test_client:
-        yield test_client
+async def _override_current_user(credentials=None, db=None):
+    return {"user_id": "u-1"}
+
+
+@pytest_asyncio.fixture
+async def client():
+    await app.router.startup()
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as test_client:
+            yield test_client
+    finally:
+        await app.router.shutdown()
 
 
 @pytest.fixture(autouse=True)
@@ -18,54 +31,61 @@ def clear_dependency_overrides():
     app.dependency_overrides.clear()
 
 
-def test_root_endpoint_ok(client: TestClient):
-    response = client.get("/")
+@pytest.mark.asyncio
+async def test_root_endpoint_ok(client: httpx.AsyncClient):
+    response = await client.get("/")
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "operational"
     assert body["health"] == "/api/health"
 
 
-def test_api_health_endpoint_ok(client: TestClient):
-    response = client.get("/api/health")
+@pytest.mark.asyncio
+async def test_api_health_endpoint_ok(client: httpx.AsyncClient):
+    response = await client.get("/api/health")
     assert response.status_code == 200
     body = response.json()
     assert "status" in body
     assert "components" in body
 
 
-def test_unified_chat_health_ok(client: TestClient):
-    response = client.get("/api/unified-chat/health")
+@pytest.mark.asyncio
+async def test_unified_chat_health_ok(client: httpx.AsyncClient):
+    response = await client.get("/api/unified-chat/health")
     assert response.status_code == 200
     body = response.json()
     assert body["service"] == "unified-chat"
 
 
-def test_unified_chat_info_limits_are_consistent(client: TestClient):
-    response = client.get("/api/unified-chat/info")
+@pytest.mark.asyncio
+async def test_unified_chat_info_limits_are_consistent(client: httpx.AsyncClient):
+    response = await client.get("/api/unified-chat/info")
     assert response.status_code == 200
     body = response.json()
     assert body["limits"]["max_audio_size_mb"] == 10
 
 
-def test_auth_login_invalid_email_returns_422(client: TestClient):
-    response = client.post(
+@pytest.mark.asyncio
+async def test_auth_login_invalid_email_returns_422(client: httpx.AsyncClient):
+    response = await client.post(
         "/api/auth/login",
         json={"email": "no-email", "password": "12345678"},
     )
     assert response.status_code == 422
 
 
-def test_not_found_contract(client: TestClient):
-    response = client.get("/api/route-that-does-not-exist")
+@pytest.mark.asyncio
+async def test_not_found_contract(client: httpx.AsyncClient):
+    response = await client.get("/api/route-that-does-not-exist")
     assert response.status_code == 404
     body = response.json()
     assert body["error"] == "Not found"
     assert "/api/route-that-does-not-exist" in body["message"]
 
 
-def test_cors_preflight_login_ok(client: TestClient):
-    response = client.options(
+@pytest.mark.asyncio
+async def test_cors_preflight_login_ok(client: httpx.AsyncClient):
+    response = await client.options(
         "/api/auth/login",
         headers={
             "Origin": "http://localhost:3000",
@@ -75,24 +95,27 @@ def test_cors_preflight_login_ok(client: TestClient):
     assert response.status_code == 200
 
 
-def test_context_refresh_allows_same_user(client: TestClient):
-    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u-1"}
-    response = client.post("/api/unified-chat/context/refresh/u-1")
+@pytest.mark.asyncio
+async def test_context_refresh_allows_same_user(client: httpx.AsyncClient):
+    app.dependency_overrides[get_current_user] = _override_current_user
+    response = await client.post("/api/unified-chat/context/refresh/u-1")
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
     assert body["user_id"] == "u-1"
 
 
-def test_context_refresh_blocks_different_user(client: TestClient):
-    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u-1"}
-    response = client.post("/api/unified-chat/context/refresh/u-2")
+@pytest.mark.asyncio
+async def test_context_refresh_blocks_different_user(client: httpx.AsyncClient):
+    app.dependency_overrides[get_current_user] = _override_current_user
+    response = await client.post("/api/unified-chat/context/refresh/u-2")
     assert response.status_code == 403
     assert response.json()["detail"] == "forbidden_user_id_mismatch"
 
 
-def test_csrf_token_endpoint_ok(client: TestClient):
-    response = client.get("/api/csrf-token")
+@pytest.mark.asyncio
+async def test_csrf_token_endpoint_ok(client: httpx.AsyncClient):
+    response = await client.get("/api/csrf-token")
     assert response.status_code == 200
     body = response.json()
     assert "csrf_token" in body

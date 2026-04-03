@@ -3,6 +3,7 @@ Gmail Service - Envío automático de emails con documentos
 Envía documentos, reportes y notificaciones automáticamente por Gmail
 """
 
+import asyncio
 import logging
 import base64
 import mimetypes
@@ -12,9 +13,18 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 import json_log_formatter
+
+try:
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+    GMAIL_LIBS_AVAILABLE = True
+    GMAIL_IMPORT_ERROR = None
+except Exception as exc:
+    build = None
+    HttpError = Exception
+    GMAIL_LIBS_AVAILABLE = False
+    GMAIL_IMPORT_ERROR = exc
 
 from services.google_workspace.google_auth_service import google_auth_service
 from services.google_workspace.google_drive_service import google_drive_service
@@ -28,7 +38,8 @@ handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("gmail_service")
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
 
 class GmailService:
     """
@@ -97,14 +108,19 @@ Gestor de Proyectos IA
                 """
             }
         }
+
+    async def _execute(self, request):
+        return await asyncio.to_thread(request.execute)
     
     async def _get_gmail_service(self, user_email: str):
         """Obtiene el servicio de Gmail para un usuario."""
+        if not GMAIL_LIBS_AVAILABLE:
+            raise RuntimeError(f"gmail_unavailable: {GMAIL_IMPORT_ERROR}")
         credentials = await google_auth_service.get_valid_credentials(user_email)
         if not credentials:
             raise ValueError(f"No valid credentials for user: {user_email}")
         
-        return build('gmail', 'v1', credentials=credentials)
+        return await asyncio.to_thread(build, 'gmail', 'v1', credentials=credentials)
     
     async def send_email(self, user_email: str, to_emails: Union[str, List[str]],
                         subject: str, body: str, html_body: Optional[str] = None,
@@ -163,10 +179,12 @@ Gestor de Proyectos IA
             raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
             
             # Enviar email
-            sent_message = service.users().messages().send(
-                userId='me',
-                body={'raw': raw_message}
-            ).execute()
+            sent_message = await self._execute(
+                service.users().messages().send(
+                    userId='me',
+                    body={'raw': raw_message}
+                )
+            )
             
             logger.info({
                 "event": "email_sent",
@@ -217,8 +235,14 @@ Gestor de Proyectos IA
                 logger.warning({"event": "invalid_attachment", "attachment": attachment})
                 return
             
+            guessed_content_type = mimetypes.guess_type(filename)[0]
+            content_type = content_type or guessed_content_type or 'application/octet-stream'
+            if '/' not in content_type:
+                content_type = 'application/octet-stream'
+            maintype, subtype = content_type.split('/', 1)
+
             # Crear adjunto
-            part = MIMEBase(*content_type.split('/'))
+            part = MIMEBase(maintype, subtype)
             part.set_payload(file_content)
             encoders.encode_base64(part)
             part.add_header(
@@ -422,23 +446,27 @@ Gestor de Proyectos IA
             service = await self._get_gmail_service(user_email)
             
             # Buscar emails enviados
-            results = service.users().messages().list(
-                userId='me',
-                labelIds=['SENT'],
-                maxResults=max_results
-            ).execute()
+            results = await self._execute(
+                service.users().messages().list(
+                    userId='me',
+                    labelIds=['SENT'],
+                    maxResults=max_results
+                )
+            )
             
             messages = results.get('messages', [])
             
             email_list = []
             for message in messages:
                 # Obtener detalles del mensaje
-                msg = service.users().messages().get(
-                    userId='me',
-                    id=message['id'],
-                    format='metadata',
-                    metadataHeaders=['To', 'Subject', 'Date']
-                ).execute()
+                msg = await self._execute(
+                    service.users().messages().get(
+                        userId='me',
+                        id=message['id'],
+                        format='metadata',
+                        metadataHeaders=['To', 'Subject', 'Date']
+                    )
+                )
                 
                 headers = {h['name']: h['value'] for h in msg['payload']['headers']}
                 

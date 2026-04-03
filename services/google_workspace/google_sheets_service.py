@@ -3,12 +3,22 @@ Google Sheets Service - Manipulación automática de hojas de cálculo
 Crea, edita, calcula y genera gráficos en Google Sheets automáticamente
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Union
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 import json_log_formatter
+
+try:
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+    GOOGLE_SHEETS_LIBS_AVAILABLE = True
+    GOOGLE_SHEETS_IMPORT_ERROR = None
+except Exception as exc:
+    build = None
+    HttpError = Exception
+    GOOGLE_SHEETS_LIBS_AVAILABLE = False
+    GOOGLE_SHEETS_IMPORT_ERROR = exc
 
 from services.google_workspace.google_auth_service import google_auth_service
 from services.google_workspace.google_drive_service import google_drive_service
@@ -22,7 +32,8 @@ handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("google_sheets_service")
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
 
 class GoogleSheetsService:
     """
@@ -53,14 +64,19 @@ class GoogleSheetsService:
                 "headers": ["Métrica", "Valor", "Objetivo", "Variación", "Tendencia"]
             }
         }
+
+    async def _execute(self, request):
+        return await asyncio.to_thread(request.execute)
     
     async def _get_sheets_service(self, user_email: str):
         """Obtiene el servicio de Google Sheets para un usuario."""
+        if not GOOGLE_SHEETS_LIBS_AVAILABLE:
+            raise RuntimeError(f"google_sheets_unavailable: {GOOGLE_SHEETS_IMPORT_ERROR}")
         credentials = await google_auth_service.get_valid_credentials(user_email)
         if not credentials:
             raise ValueError(f"No valid credentials for user: {user_email}")
         
-        return build('sheets', 'v4', credentials=credentials)
+        return await asyncio.to_thread(build, 'sheets', 'v4', credentials=credentials)
     
     async def create_spreadsheet(self, user_email: str, title: str,
                                 template: Optional[str] = None,
@@ -87,20 +103,24 @@ class GoogleSheetsService:
             }
             
             # Crear hoja
-            spreadsheet = service.spreadsheets().create(
-                body=spreadsheet_body
-            ).execute()
+            spreadsheet = await self._execute(
+                service.spreadsheets().create(
+                    body=spreadsheet_body
+                )
+            )
             
             spreadsheet_id = spreadsheet['spreadsheetId']
             
             # Mover a carpeta específica si se especifica
             if folder_id:
                 drive_service = await google_drive_service._get_drive_service(user_email)
-                drive_service.files().update(
-                    fileId=spreadsheet_id,
-                    addParents=folder_id,
-                    removeParents='root'
-                ).execute()
+                await google_drive_service._execute(
+                    drive_service.files().update(
+                        fileId=spreadsheet_id,
+                        addParents=folder_id,
+                        removeParents='root'
+                    )
+                )
             
             # Aplicar template si se especifica
             if template and template in self.sheet_templates:
@@ -217,10 +237,12 @@ class GoogleSheetsService:
             })
         
         # Ejecutar requests
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={"requests": requests}
-        ).execute()
+        await self._execute(
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={"requests": requests}
+            )
+        )
     
     async def write_data(self, user_email: str, spreadsheet_id: str,
                         range_name: str, values: List[List[Any]],
@@ -245,12 +267,14 @@ class GoogleSheetsService:
                 'values': values
             }
             
-            result = service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range=range_name,
-                valueInputOption=value_input_option,
-                body=body
-            ).execute()
+            result = await self._execute(
+                service.spreadsheets().values().update(
+                    spreadsheetId=spreadsheet_id,
+                    range=range_name,
+                    valueInputOption=value_input_option,
+                    body=body
+                )
+            )
             
             updated_cells = result.get('updatedCells', 0)
             
@@ -290,10 +314,12 @@ class GoogleSheetsService:
         try:
             service = await self._get_sheets_service(user_email)
             
-            result = service.spreadsheets().values().get(
-                spreadsheetId=spreadsheet_id,
-                range=range_name
-            ).execute()
+            result = await self._execute(
+                service.spreadsheets().values().get(
+                    spreadsheetId=spreadsheet_id,
+                    range=range_name
+                )
+            )
             
             values = result.get('values', [])
             
@@ -400,10 +426,12 @@ class GoogleSheetsService:
                 }
             }]
             
-            service.spreadsheets().batchUpdate(
-                spreadsheetId=spreadsheet_id,
-                body={"requests": requests}
-            ).execute()
+            await self._execute(
+                service.spreadsheets().batchUpdate(
+                    spreadsheetId=spreadsheet_id,
+                    body={"requests": requests}
+                )
+            )
             
             logger.info({
                 "event": "chart_created",
@@ -456,10 +484,12 @@ class GoogleSheetsService:
                 })
             
             if requests:
-                service.spreadsheets().batchUpdate(
-                    spreadsheetId=spreadsheet_id,
-                    body={"requests": requests}
-                ).execute()
+                await self._execute(
+                    service.spreadsheets().batchUpdate(
+                        spreadsheetId=spreadsheet_id,
+                        body={"requests": requests}
+                    )
+                )
             
             logger.info({
                 "event": "formulas_added",

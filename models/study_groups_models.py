@@ -414,7 +414,7 @@ class SessionType(str, enum.Enum):
     PERSONAL = "personal"  # 🤖 IA personal (privado)
 
 
-class ChatSession(Base):
+class StudyGroupChatSession(Base):
     """
     Sesión de chat: puede ser GRUPAL o PERSONAL
     
@@ -422,7 +422,7 @@ class ChatSession(Base):
     - Modo Grupo: Mensajes visibles para todos
     - Modo IA Personal: Chat privado con IA usando contexto del grupo
     """
-    __tablename__ = "chat_sessions"
+    __tablename__ = "study_group_chat_sessions"
     
     # Identificación
     id = Column(String(50), primary_key=True, default=lambda: f"sess_{uuid.uuid4().hex[:12]}")
@@ -468,7 +468,7 @@ class PrivateAIMessage(Base):
     # Identificación
     id = Column(String(50), primary_key=True, default=lambda: f"pvt_{uuid.uuid4().hex[:12]}")
     user_id = Column(String(50), ForeignKey("users.id"), nullable=False, index=True)
-    session_id = Column(String(50), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id = Column(String(50), ForeignKey("study_group_chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     group_id = Column(String(50), ForeignKey("study_groups.id", ondelete="CASCADE"), nullable=False, index=True)
     
     # Mensajes

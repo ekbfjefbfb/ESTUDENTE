@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.websockets import WebSocketState
 
 from utils.auth import get_current_user, verify_token
@@ -37,6 +37,8 @@ class StartSessionRequest(BaseModel):
     language: str = Field(default="es")
 
 class SessionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     title: str
     teacher_name: Optional[str]
@@ -48,9 +50,6 @@ class SessionOut(BaseModel):
     ended_at: Optional[datetime]
     duration_seconds: Optional[int]
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 class ListSessionsResponse(BaseModel):
     sessions: List[SessionOut]

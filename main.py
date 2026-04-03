@@ -419,27 +419,46 @@ async def health_check():
             "ai_models": "unknown"
         }
     }
+
+    async def _check_database() -> str:
+        try:
+            from database.db_enterprise import db_manager, ConnectionType
+
+            primary_engine = db_manager.engines.get(ConnectionType.PRIMARY)
+            if primary_engine is None:
+                return "not_initialized"
+
+            async def _probe() -> None:
+                async with primary_engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+
+            await asyncio.wait_for(_probe(), timeout=0.75)
+            return "healthy"
+        except asyncio.TimeoutError:
+            return "timeout"
+        except Exception as e:
+            return f"unavailable: {str(e)[:100]}"
+
+    async def _check_cache() -> str:
+        try:
+            async def _probe() -> str:
+                redis = await get_redis()
+                if redis is None:
+                    return "unavailable"
+                await redis.ping()
+                return "healthy"
+
+            return await asyncio.wait_for(_probe(), timeout=0.5)
+        except asyncio.TimeoutError:
+            return "timeout"
+        except Exception:
+            return "unavailable"
     
     # Check database (optional - don't fail if unavailable)
-    try:
-        from database.db_enterprise import db_manager, ConnectionType
-        primary_engine = db_manager.engines.get(ConnectionType.PRIMARY)
-        if primary_engine:
-            async with primary_engine.connect() as conn:
-                await conn.execute(text("SELECT 1"))
-            health_status["components"]["database"] = "healthy"
-        else:
-            health_status["components"]["database"] = "not_initialized"
-    except Exception as e:
-        health_status["components"]["database"] = f"unavailable: {str(e)[:100]}"
+    health_status["components"]["database"] = await _check_database()
     
     # Check Redis (optional - don't fail if unavailable)
-    try:
-        redis = await get_redis()
-        await redis.ping()
-        health_status["components"]["cache"] = "healthy"
-    except Exception:
-        health_status["components"]["cache"] = "unavailable"
+    health_status["components"]["cache"] = await _check_cache()
     
     # AI models - always ready if server is running (provider is external)
     health_status["components"]["ai_models"] = "ready"
