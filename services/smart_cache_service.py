@@ -260,16 +260,10 @@ class SmartCache:
             return value
             
         except Exception as e:
-            logger.exception(f"❌ Error crítico en get_or_set (key={key}): {e}")
-            # En caso de error, intentar una última vez sin cache para no bloquear al usuario
-            try:
-                if asyncio.iscoroutinefunction(factory):
-                    return await factory()
-                val = factory()
-                return await val if inspect.isawaitable(val) else val
-            except Exception as final_e:
-                logger.error(f"💥 Fallo total en factory tras error de cache: {final_e}")
-                return None
+            # Si el error viene de la lógica interna de la factory (ej: Auth), 
+            # no queremos cachear el fallo ni devolver None, queremos que el error suba.
+            logger.info(f"⚠️ get_or_set: Error en factory para {key}, re-lanzando.")
+            raise e
     
     async def get_stats(self) -> Dict[str, Any]:
         """

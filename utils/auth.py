@@ -302,10 +302,12 @@ async def get_current_user(
             user_data = await smart_cache.get_or_set(
                 key=cache_key,
                 factory=fetch_and_validate_user,
-                ttl=60
             )
             user = AuthUser(user_data)
-        except ValueError as e:
+        except (ValueError, HTTPException) as e:
+            # Si es HTTPException, ya viene con status_code (ej: 401)
+            if hasattr(e, "status_code"):
+                raise e
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=str(e),
@@ -315,9 +317,10 @@ async def get_current_user(
         # Actualizar última actividad (opcional)
         try:
             if await _users_last_activity_column_exists(db):
+                user_id = user.get("id")
                 await db.execute(
                     text("UPDATE users SET last_activity = NOW() WHERE id = :user_id"),
-                    {"user_id": str(user_id_db)},
+                    {"user_id": str(user_id)},
                 )
                 await db.commit()
         except Exception as e:
