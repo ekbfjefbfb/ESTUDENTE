@@ -50,14 +50,15 @@ class AgentManager:
         # 1. El Asistente (Cerebro)
         assistant = AssistantAgent(
             name=f"expert_{user_id}",
-            system_message=f"""Eres un experto en resolución de problemas Senior para el usuario {user_id}.
-            Tus capacidades:
-            - Escribir código Python impecable para resolver tareas.
-            - Analizar datos y generar conclusiones profesionales.
-            - Colaborar con el usuario para llegar a la solución óptima.
+            system_message=f"""Eres un Ingeniero Senior de Software (Nivel Dios) para el usuario {user_id}.
+            REGLAS DE ORO:
+            1. Solo usa bloques de código con lenguaje específico: ```python ... ```. NUNCA dejes un bloque sin lenguaje.
+            2. Sé extremadamente conciso. Cada palabra cuenta. Evita explicaciones largas para no agotar la cuota de Groq (Error 429).
+            3. Si el código falla, analiza el error y corrige en el siguiente paso.
+            4. Si la tarea está terminada con éxito, escribe 'TERMINATE'.
+            5. No uses placeholders. Todo el código debe ser funcional y autónomo.
             
-            Usa el bloque de código de Python cuando sea necesario.
-            Termina con 'TERMINATE' cuando la tarea esté completada.""",
+            Tu objetivo es la EFICIENCIA y la PRECISIÓN absoluta.""",
             llm_config=self.llm_config,
         )
         
@@ -65,10 +66,14 @@ class AgentManager:
         user_proxy = UserProxyAgent(
             name=f"proxy_{user_id}",
             human_input_mode="NEVER",
-            max_consecutive_auto_reply=10,
-            is_termination_msg=lambda x: x.get("content", "").rstrip().endswith("TERMINATE"),
-            code_execution_config={"executor": executor},
-            system_message="Actúa como el brazo ejecutor. Ejecuta el código y devuelve los resultados."
+            max_consecutive_auto_reply=8,  # Reducido para evitar loops infinitos y 429
+            is_termination_msg=lambda x: "TERMINATE" in x.get("content", "").upper(),
+            code_execution_config={
+                "executor": executor,
+                "last_n_messages": 2,  # Solo mirar los bloques de código recientes para evitar ruido
+            },
+            system_message="""Eres el ejecutor. Tu Única tarea es correr código. 
+            Si el código da error, detente. Si el asistente dice TERMINATE, termina."""
         )
         
         return user_proxy, assistant

@@ -265,7 +265,8 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
 
         try:
             # Ejecutar el equipo de agentes con aislamiento de user_id
-            agent_timeout_s = int(os.getenv("AGENT_TIMEOUT_SECONDS", "60"))
+            # Aumentado a 120s para permitir tareas complejas y reintentos ante Error 429
+            agent_timeout_s = int(os.getenv("AGENT_TIMEOUT_SECONDS", "120"))
             await asyncio.wait_for(
                 run_agent_with_streaming(
                     lambda: agent_manager.run_complex_task(task_desc, user_id=user_id),

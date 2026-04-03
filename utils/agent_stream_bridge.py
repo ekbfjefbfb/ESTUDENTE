@@ -2,6 +2,7 @@ import sys
 import io
 import asyncio
 import inspect
+import time
 from typing import Callable, Any, Optional
 
 class AgentStreamBridge:
@@ -48,22 +49,44 @@ class AgentStreamBridge:
 
 async def run_agent_with_streaming(agent_task_fn: Callable, on_token: Callable[[str], Any]):
     """
-    Wrapper de Nivel Dios para ejecutar la tarea agéntica de forma segura 
-    bajo el puente de streaming.
+    Wrapper de Nivel Dios para ejecutar la tarea agéntica con latidos de corazón (Heartbeat).
+    Evita timeouts en el frontend inyectando señales de vida periódicas.
     """
     bridge = AgentStreamBridge(on_token)
-    
-    # AutoGen 0.2 es mayormente síncrono, lo ejecutamos en un thread para no bloquear el Event Loop
     loop = asyncio.get_event_loop()
+    last_activity_time = [time.time()] # Usar lista para persistencia en clausura
     
-    with bridge:
-        def _run_sync():
-            out = agent_task_fn()
-            if inspect.iscoroutine(out):
-                return asyncio.run(out)
-            return out
+    # Envolver on_token para registrar actividad
+    def on_token_with_activity(token: str):
+        last_activity_time[0] = time.time()
+        on_token(token)
+    
+    bridge.on_new_token = on_token_with_activity
+    
+    # Tarea de latido para mantener el WebSocket vivo
+    async def heartbeat_worker(stop_event: asyncio.Event):
+        while not stop_event.is_set():
+            await asyncio.sleep(8) # Latido cada 8 segundos
+            if not stop_event.is_set():
+                elapsed = time.time() - last_activity_time[0]
+                if elapsed >= 8:
+                    # Enviar señal de vida discreta al frontend
+                    on_token(" . ") # Punto de carga o status
+    
+    stop_heartbeat = asyncio.Event()
+    heartbeat_task = asyncio.create_task(heartbeat_worker(stop_heartbeat))
+    
+    try:
+        with bridge:
+            def _run_sync():
+                import time # Importar dentro para el thread
+                out = agent_task_fn()
+                if inspect.iscoroutine(out):
+                    return asyncio.run(out)
+                return out
 
-        # Ejecución en el pool de hilos del sistema
-        result = await loop.run_in_executor(None, _run_sync)
-        
-    return result
+            result = await loop.run_in_executor(None, _run_sync)
+        return result
+    finally:
+        stop_heartbeat.set()
+        await heartbeat_task # Limpieza de la tarea de latido
