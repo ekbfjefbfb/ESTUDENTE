@@ -8,6 +8,7 @@ import logging
 import os
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+import time
 
 from fastapi import WebSocket, WebSocketDisconnect, HTTPException
 
@@ -161,12 +162,12 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
         
         logger.info(f"WebSocket connected successfully for user_id={user_id}")
         
-        # Start heartbeat con user_id
-        heartbeat_task = asyncio.create_task(_ws_heartbeat(websocket, user_id))
+        # Capturar el bucle de eventos para streaming seguro desde hilos (Agentes)
+        loop = asyncio.get_running_loop()
         
         # Debounce/Deduplicación de mensajes (Evitar repeticiones por ráfaga)
         last_msg_hash = None
-        last_msg_time = 0
+        last_msg_time = 0.0
         
         # Message loop
         while True:
@@ -211,7 +212,7 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
             last_msg_time = current_time
 
             # Process message
-            await _process_chat_message(websocket, user_id, message_data)
+            await _process_chat_message(websocket, user_id, message_data, loop=loop)
             
     except json.JSONDecodeError as e:
         logger.warning(f"WebSocket JSON decode error for user_id={user_id}: {e}")
@@ -229,11 +230,10 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
             logger.debug(f"Heartbeat task cancelled for user_id={user_id}")
 
 
-async def _process_chat_message(websocket: WebSocket, user_id: str, message_data: Dict[str, Any]):
+async def _process_chat_message(websocket: WebSocket, user_id: str, message_data: Dict[str, Any], loop: asyncio.AbstractEventLoop = None):
     """Process a single chat message from WebSocket"""
     from routers.chat_search import _should_web_search, _should_include_images_in_search
     from services.groq_ai_service import get_context_info
-    import time
     import uuid
     from services.agent_service import agent_manager
     from utils.agent_stream_bridge import run_agent_with_streaming
@@ -271,6 +271,7 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
         
         # Callback para enviar tokens de los agentes al WebSocket
         def on_agent_token(token: str):
+            target_loop = loop or asyncio.get_event_loop()
             asyncio.run_coroutine_threadsafe(
                 _ws_send_json(websocket, {
                     "type": "token", 
@@ -278,7 +279,7 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
                     "request_id": request_id,
                     "agent_mode": True
                 }),
-                asyncio.get_event_loop()
+                target_loop
             )
 
         try:
