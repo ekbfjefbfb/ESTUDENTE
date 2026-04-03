@@ -9,8 +9,9 @@ import os
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, WebSocket, Depends, HTTPException, WebSocketDisconnect
 from fastapi import UploadFile, File, Form, Query
+from sqlalchemy.orm import Session
+from database import get_db
 
 # Schemas
 from routers.chat_schemas import (
@@ -40,6 +41,7 @@ from routers.chat_ws_handlers import handle_chat_websocket
 # Utils
 from routers.chat_search import _normalize_message_text
 from utils.auth import get_current_user
+from services.chat_session_service import chat_session_service
 from services.voice_ws_session import VoiceWsConfig, VoiceWsSession
 from services.groq_ai_service import chat_with_ai
 from utils.rate_limit import RateLimitRule, evaluate_rate_limits
@@ -81,17 +83,79 @@ async def chat_info():
     }
 
 
-@router.get("/health")
-async def chat_health():
-    """Health check del servicio de chat"""
+# ============== CHAT SESSION MANAGEMENT ==============
+
+@router.get("/sessions")
+async def list_chat_sessions(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user)
+):
+    """Listar todos los hilos de chat del usuario"""
+    user_id = user["user_id"]
+    sessions = chat_session_service.get_user_sessions(db, user_id)
     return {
-        "status": "healthy",
-        "service": "unified-chat",
-        "version": "6.0",
-        "features": ["text", "voice", "websocket", "context_monitoring"],
-        "git_sha": os.getenv("GIT_SHA", "unknown"),
-        "timestamp": datetime.utcnow().isoformat()
+        "success": True,
+        "sessions": [
+            {
+                "id": s.id,
+                "title": s.title,
+                "topic": s.topic,
+                "updated_at": s.updated_at.isoformat(),
+                "created_at": s.created_at.isoformat()
+            } for s in sessions
+        ]
     }
+
+
+@router.post("/sessions")
+async def create_chat_session(
+    title: Optional[str] = Query("Nueva Conversación"),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user)
+):
+    """Crear un nuevo hilo de chat académico"""
+    user_id = user["user_id"]
+    session = chat_session_service.create_session(db, user_id, title)
+    return {
+        "success": True,
+        "session_id": session.id,
+        "title": session.title
+    }
+
+
+@router.get("/sessions/{session_id}/history")
+async def get_chat_session_history(
+    session_id: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user)
+):
+    """Obtener el historial COMPLETO de un hilo específico para el frontend"""
+    user_id = user["user_id"]
+    history = chat_session_service.get_session_history(db, session_id)
+    
+    return {
+        "success": True,
+        "session_id": session_id,
+        "history": [
+            {
+                "role": m.role,
+                "content": m.content,
+                "media": m.media_metadata,
+                "timestamp": m.created_at.isoformat()
+            } for m in history
+        ]
+    }
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_chat_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user)
+):
+    """Borrar/Archivar un hilo de chat"""
+    chat_session_service.delete_session(db, session_id)
+    return {"success": True, "message": "Sesión eliminada"}
 
 
 @router.post("/message", response_model=ChatResponse)
@@ -103,6 +167,7 @@ async def unified_chat_message(
     user: dict = Depends(get_current_user),
     stream: bool = Query(False),
     force_web_search: bool = Form(False),
+    session_id: Optional[str] = Form(None),
 ):
     """Chat con IA - multipart/form-data (campo de texto `message` + imágenes/documentos)."""
     return await handle_chat_message(
@@ -113,6 +178,7 @@ async def unified_chat_message(
         user=user,
         stream=stream,
         force_web_search=force_web_search,
+        session_id=session_id
     )
 
 

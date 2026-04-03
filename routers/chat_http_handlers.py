@@ -71,6 +71,7 @@ async def handle_chat_message(
     stream: bool = False,
     force_web_search: bool = False,
     pre_processed_file_content: Optional[Dict[str, Any]] = None,
+    session_id: Optional[str] = None,
 ) -> ChatResponse:
     """Handle chat message HTTP endpoint"""
     user_id = user["user_id"]
@@ -146,6 +147,36 @@ async def handle_chat_message(
     # Get AI response (with file content and robust HISTORY)
     chat_history = user_context.get("chat_history", [])
     
+    # PERSISTENCE: Save user message and handle session logic
+    from database import SessionLocal
+    from services.chat_session_service import chat_session_service
+    db = SessionLocal()
+    try:
+        # Resolve session_id
+        if not session_id:
+            # Try to get the most recent session or create a new one
+            sessions = chat_session_service.get_user_sessions(db, user_id, limit=1)
+            if sessions:
+                session_id = sessions[0].id
+            else:
+                new_session = chat_session_service.create_session(db, user_id)
+                session_id = new_session.id
+        
+        # Save user message to database
+        chat_session_service.add_message(
+            db=db,
+            session_id=session_id,
+            user_id=user_id,
+            role="user",
+            content=normalized_message,
+            media_metadata=file_content,
+            request_id=request_id
+        )
+    except Exception as e:
+        logger.error(f"Error persisting user message: {e}")
+    finally:
+        db.close()
+    
     # Scout Intelligent Decision
     if scout.should_use_agents(normalized_message, history=chat_history):
         from utils.agent_stream_bridge import run_agent_with_streaming
@@ -167,6 +198,31 @@ async def handle_chat_message(
         f"duration_ms={int((time.monotonic()-t0)*1000)} "
         f"response_len={len(structured.get('response') or '')}"
     )
+    
+    # PERSISTENCE: Save AI response and detect naming need
+    db = SessionLocal()
+    try:
+        ai_msg = chat_session_service.add_message(
+            db=db,
+            session_id=session_id,
+            user_id=user_id,
+            role="assistant",
+            content=structured.get("response") or "",
+            request_id=request_id
+        )
+        
+        # Simple Naming logic: rename if session title is default and we have history
+        session_info = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        if session_info and session_info.title == "Nueva Conversación":
+            from utils.background import safe_create_task
+            safe_create_task(
+                chat_session_service.auto_rename_session(db, session_id, normalized_message),
+                name=f"rename_session_{session_id}"
+            )
+    except Exception as e:
+        logger.error(f"Error persisting AI response: {e}")
+    finally:
+        db.close()
     
     # Save progress
     from utils.background import safe_create_task
@@ -232,7 +288,8 @@ async def handle_chat_message_json(
         user=user,
         stream=False,
         force_web_search=bool(getattr(request, "web_search", False)),
-        pre_processed_file_content=pre_file_content
+        pre_processed_file_content=pre_file_content,
+        session_id=request.session_id
     )
 
 

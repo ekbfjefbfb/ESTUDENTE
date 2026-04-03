@@ -882,13 +882,63 @@ class UserDocumentIndex(Base):
     related_class = Column(String(200), nullable=True)  # "Cálculo I", "Física"
     keywords = Column(Text, nullable=True)  # JSON array de palabras clave
 
-    # Si el documento sigue existiendo en el dispositivo
-    is_deleted_on_device = Column(Boolean, default=False)
+    user = relationship("User")
 
-    last_sync = Column(DateTime(timezone=True), server_default=func.now())
+
+# =============================================
+# 💬 SISTEMA DE CHAT PERSISTENTE (MULTISESIÓN)
+# =============================================
+
+class ChatSession(Base):
+    """🧠 Hilo de conversación persistente con Iris"""
+    __tablename__ = "chat_sessions"
+
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # Título generado por AI (ej: "Dudas sobre Termodinámica")
+    title = Column(String(200), default="Nueva Conversación", nullable=False)
+    
+    # Estado de la sesión
+    is_active = Column(Boolean, default=True)
+    is_archived = Column(Boolean, default=False)
+    
+    # Metadatos del tema detectado
+    topic = Column(String(100), nullable=True)
+    summary = Column(Text, nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relaciones
+    user = relationship("User")
+    messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan", order_by="ChatMessage.created_at")
+
+class ChatMessage(Base):
+    """✉️ Mensaje individual persistente en un hilo de chat"""
+    __tablename__ = "chat_messages"
+
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String(36), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Contenido
+    role = Column(String(20), nullable=False) # user, assistant, system
+    content = Column(Text, nullable=False)
+    
+    # Soporte para MEDIA (Multipart)
+    # Lista de IDs de archivos o imágenes procesadas vinculadas a este mensaje
+    media_metadata = Column(JSON, default=dict) # {images: [...], docs: [...]}
+    
+    # Metadata técnica
+    request_id = Column(String(36), nullable=True)
+    tokens_used = Column(Integer, default=0)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    user = relationship("User")
+    # Relaciones
+    session = relationship("ChatSession", back_populates="messages")
 
 
 # =============================================

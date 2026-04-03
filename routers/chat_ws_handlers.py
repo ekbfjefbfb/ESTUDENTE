@@ -262,8 +262,37 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     )
     
     force_web = bool(message_data.get("web_search") or message_data.get("search_web"))
-    # Get user context (NOW BEFORE SCOUT for contextual decisions)
-    user_context = await get_user_context_for_chat(user_id)
+    session_id = message_data.get("session_id")
+    
+    # PERSISTENCE: Resolve/Create session and save User Message
+    from database import SessionLocal
+    from services.chat_session_service import chat_session_service
+    from models.models import ChatSession
+    db = SessionLocal()
+    try:
+        if not session_id:
+            # Fallback a la más reciente o crear nueva
+            sessions = chat_session_service.get_user_sessions(db, user_id, limit=1)
+            if sessions:
+                session_id = sessions[0].id
+            else:
+                new_session = chat_session_service.create_session(db, user_id)
+                session_id = new_session.id
+        
+        # Save USER message
+        chat_session_service.add_message(
+            db=db, session_id=session_id, user_id=user_id,
+            role="user", content=user_message,
+            media_metadata={"images": images_raw, "docs": docs_raw},
+            request_id=request_id
+        )
+    except Exception as e:
+        logger.error(f"Error persisting WS user message: {e}")
+    finally:
+        db.close()
+
+    # Get user context (NOW with SQL History if session_id is present)
+    user_context = await get_user_context_for_chat(user_id, session_id=session_id)
     chat_history = user_context.get("chat_history", [])
 
     should_web_search = _should_web_search(
@@ -419,6 +448,28 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     memory_id = str(uuid.uuid4())
     latency_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
     memory_debug = {"latency_ms": latency_ms, "query": user_message.strip()}
+    
+    # PERSISTENCE: Save AI response and detect naming need
+    db = SessionLocal()
+    try:
+        chat_session_service.add_message(
+            db=db, session_id=session_id, user_id=user_id,
+            role="assistant", content=text,
+            request_id=request_id
+        )
+        
+        # Simple Naming logic: rename if session title is default
+        session_info = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        if session_info and session_info.title == "Nueva Conversación":
+            from utils.background import safe_create_task
+            safe_create_task(
+                chat_session_service.auto_rename_session(db, session_id, user_message),
+                name=f"rename_session_{session_id}"
+            )
+    except Exception as e:
+        logger.error(f"Error persisting WS AI response: {e}")
+    finally:
+        db.close()
     
     from utils.background import safe_create_task
     safe_create_task(_persist_memory(user_id, memory_id, text, ddg_sources, user_message, memory_debug), name=f"persist_memory_{request_id}")

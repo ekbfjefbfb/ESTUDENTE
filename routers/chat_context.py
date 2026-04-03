@@ -148,10 +148,29 @@ async def _get_recent_chat_history(user_id: str, limit: int = 5) -> List[Dict[st
         logger.warning(f"No se pudo recuperar historial reciente: {e}")
         return []
 
-async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
-    """Contexto requerido por chat (HTTP y WebSocket) con caching."""
+async def _get_persistent_chat_history(session_id: str, limit: int = 40) -> List[Dict[str, str]]:
+    """Recupera el historial persistente desde PostgreSQL (Base de Datos)."""
+    from database import SessionLocal
+    from services.chat_session_service import chat_session_service
+    db = SessionLocal()
+    try:
+        messages = chat_session_service.get_session_history(db, session_id)
+        # Tomamos los últimos N mensajes para no saturar el prompt
+        history = []
+        for m in messages[-limit:]:
+            history.append({"role": m.role, "content": m.content})
+        return history
+    except Exception as e:
+        logger.error(f"Error recuperando historial persistente para sesión {session_id}: {e}")
+        return []
+    finally:
+        db.close()
+
+async def get_user_context_for_chat(user_id: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    """Contexto requerido por chat (HTTP y WebSocket) con caching y soporte de sesión."""
     now = time.monotonic()
-    cached = _USER_CONTEXT_CACHE.get(user_id)
+    cache_key = f"{user_id}_{session_id or 'none'}"
+    cached = _USER_CONTEXT_CACHE.get(cache_key)
     if isinstance(cached, dict):
         ts = cached.get("ts")
         ctx = cached.get("ctx")
@@ -160,10 +179,15 @@ async def get_user_context_for_chat(user_id: str) -> Dict[str, Any]:
     
     context = await _get_user_full_context(user_id)
     
-    # Inyectar historial reciente (Memoria Contextual)
-    context["chat_history"] = await _get_recent_chat_history(user_id)
+    # Inyectar historial (Priorizar Persistente si hay session_id)
+    if session_id:
+        logger.info(f"Cargando historial persistente para sesión: {session_id}")
+        context["chat_history"] = await _get_persistent_chat_history(session_id)
+    else:
+        # Fallback a memoria volátil
+        context["chat_history"] = await _get_recent_chat_history(user_id)
     
-    _USER_CONTEXT_CACHE[user_id] = {"ts": now, "ctx": context}
+    _USER_CONTEXT_CACHE[cache_key] = {"ts": now, "ctx": context}
     return context
 
 

@@ -1,0 +1,9 @@
+✅ Configuración cargada para entorno: production
+🚀 Backend API v6.0 - Arquitectura Distribuida
+🎯 Features habilitadas: ['permissions_system', 'vision_pipeline', 'semantic_search', 'personal_agents', 'hybrid_chat', 'advanced_analytics']
+🤖 IA: Groq Cloud API
+📡 Endpoint: https://api.groq.com
+� Modelo: auto (fast/reasoning según complejidad)
+🎯 Arquitectura: Backend → Groq API
+�️ Vision Pipeline habilitado (device: auto)
+TOKEN_GENERADO:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhYTVkZThiMi1hODNkLTRhMzktODUwOC1hOTBjOTcwY2MxODIiLCJleHAiOjE3NzUyNDY2MzksImlhdCI6MTc3NTIzOTQzOSwidHlwZSI6ImFjY2VzcyJ9.ahw2S01Xh1I0kXdefzAMhkoxeK6dG8NGSHsieeBb6_E
