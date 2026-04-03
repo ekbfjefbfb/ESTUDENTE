@@ -320,11 +320,18 @@ def _build_system_prompt(
         "Solo pide confirmación si el riesgo es irreversible.\n"
     )
 
-    # --- REGLA DE VALOR REAL ---
+    # --- REGLA DE VALOR REAL (Iris) ---
     value_rule = (
         "VALOR ACADÉMICO REAL:\n"
         "No respondas con teoría vacía. Ofrece un consejo de estudio, un truco de memoria o un ejemplo real.\n"
         "Comprensibilidad: Si el tema es complejo, usa una analogía de la vida real (ej. 'las funciones son como máquinas de chicles...').\n"
+    )
+
+    # --- REGLA DE LONGITUD (Naturalidad) ---
+    length_rule = (
+        "LONGITUD:\n"
+        "No seas innecesariamente breve ni excesivamente largo. "
+        "Si el estudiante necesita detalle, dalo. Si es una duda rápida, sé ágil.\n"
     )
 
     # --- ESTILO ACADÉMICO ---
@@ -352,7 +359,7 @@ def _build_system_prompt(
         "fechas ni noticias. Ante duda, reconócela.\n"
     )
 
-    # Ensamblar en orden lógico
+    # Ensamblar en orden lógico para Iris
     parts = [
         identity,
         name_block,
@@ -360,6 +367,7 @@ def _build_system_prompt(
         confirm_before,
         thread_tracking,
         proactive_action,
+        value_rule,
         length_rule,
         style,
         images_block,
