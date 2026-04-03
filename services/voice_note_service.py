@@ -7,7 +7,6 @@ Features:
 - Sincronización offline-first
 """
 import os
-import io
 import hashlib
 import asyncio
 import logging
@@ -81,7 +80,12 @@ class VoiceNoteService:
         async with await get_primary_session() as session:
             # Idempotencia: buscar por client_record_id
             existing = await session.execute(
-                select(VoiceNote).where(VoiceNote.client_record_id == client_record_id)
+                select(VoiceNote).where(
+                    and_(
+                        VoiceNote.user_id == user_id,
+                        VoiceNote.client_record_id == client_record_id,
+                    )
+                )
             )
             voice_note = existing.scalar_one_or_none()
             
@@ -137,8 +141,18 @@ class VoiceNoteService:
         """
         async with await get_primary_session() as session:
             # Verificar ownership
-            voice_note = await session.get(VoiceNote, voice_note_id)
-            if not voice_note or voice_note.user_id != user_id:
+            voice_note_result = await session.execute(
+                select(VoiceNote)
+                .where(
+                    and_(
+                        VoiceNote.id == voice_note_id,
+                        VoiceNote.user_id == user_id,
+                    )
+                )
+                .with_for_update()
+            )
+            voice_note = voice_note_result.scalar_one_or_none()
+            if not voice_note:
                 raise VoiceNoteError("voice_note_not_found_or_unauthorized")
             
             # Verificar checksum
@@ -197,10 +211,14 @@ class VoiceNoteService:
             # Actualizar contador
             if is_new_chunk:
                 voice_note.total_chunks_received += 1
+                if voice_note.upload_started_at is None:
+                    voice_note.upload_started_at = datetime.utcnow()
+                if voice_note.status == VoiceNoteStatus.DRAFT:
+                    voice_note.status = VoiceNoteStatus.UPLOADING
             
             # Verificar si completamos
             is_complete = voice_note.total_chunks_received >= voice_note.total_chunks_expected
-            if is_complete and voice_note.status == VoiceNoteStatus.DRAFT:
+            if is_complete:
                 voice_note.status = VoiceNoteStatus.UPLOADED
                 voice_note.upload_completed_at = datetime.utcnow()
                 
@@ -243,10 +261,18 @@ class VoiceNoteService:
     
     async def _calculate_audio_checksum(self, voice_note: VoiceNote) -> str:
         """Calcula checksum SHA256 del audio completo (concatenando chunks)"""
-        # En producción: calcular de chunks reales
-        # Simplificación: usar hash de metadatos + chunks
-        data = f"{voice_note.id}:{voice_note.total_bytes}:{voice_note.total_chunks_received}"
-        voice_note.processing_checksum = hashlib.sha256(data.encode()).hexdigest()
+        note_dir = self.storage_dir / voice_note.id
+        digest = hashlib.sha256()
+
+        if note_dir.exists():
+            chunk_files = sorted(note_dir.glob("chunk_*.bin"))
+            for chunk_path in chunk_files:
+                data = await asyncio.to_thread(chunk_path.read_bytes)
+                digest.update(data)
+        else:
+            digest.update(f"{voice_note.id}:{voice_note.total_chunks_received}".encode())
+
+        voice_note.processing_checksum = digest.hexdigest()
         return voice_note.processing_checksum
     
     async def _get_missing_chunks(
@@ -370,6 +396,7 @@ class VoiceNoteService:
             existing = await session.execute(
                 select(VoiceNoteProcessingJob).where(
                     and_(
+                        VoiceNoteProcessingJob.voice_note_id == voice_note_id,
                         VoiceNoteProcessingJob.audio_checksum == audio_checksum,
                         VoiceNoteProcessingJob.job_type == job_type,
                         VoiceNoteProcessingJob.params_hash == params_hash,
@@ -604,13 +631,15 @@ class VoiceNoteService:
     ) -> Dict[str, Any]:
         """Lista notas de voz del usuario"""
         async with await get_primary_session() as session:
-            query = select(VoiceNote).where(VoiceNote.user_id == user_id)
+            filters = [VoiceNote.user_id == user_id]
             
             if not include_deleted:
-                query = query.where(VoiceNote.is_deleted == False)
+                filters.append(VoiceNote.is_deleted == False)
             
             if status:
-                query = query.where(VoiceNote.status == status)
+                filters.append(VoiceNote.status == status)
+
+            query = select(VoiceNote).where(*filters)
             
             # Ordenar por recorded_at desc
             query = query.order_by(desc(VoiceNote.recorded_at))
@@ -625,12 +654,7 @@ class VoiceNoteService:
             
             # Contar total
             count_result = await session.execute(
-                select(VoiceNote).where(
-                    and_(
-                        VoiceNote.user_id == user_id,
-                        VoiceNote.is_deleted == False
-                    )
-                )
+                select(VoiceNote.id).where(*filters)
             )
             total = len(count_result.scalars().all())
             

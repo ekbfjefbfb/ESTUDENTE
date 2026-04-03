@@ -15,7 +15,7 @@ from typing import Optional
 # Añadir root al path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import select, and_, update, cast, String
+from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
 from database.db_enterprise import get_primary_session
@@ -70,61 +70,39 @@ async def acquire_job(session) -> Optional[VoiceNoteProcessingJob]:
     - scheduled_at <= now
     - No lock activo (locked_at > 5 min ago o null)
     """
-    from sqlalchemy import text
-    
-    # Query RAW para evitar problemas de tipo ENUM en PostgreSQL
     five_min_ago = datetime.utcnow() - timedelta(minutes=5)
-    
-    query = text("""
-        SELECT * FROM voice_note_processing_jobs 
-        WHERE status::text IN ('pending', 'retrying')
-          AND scheduled_at <= NOW()
-          AND (locked_at IS NULL OR locked_at < :five_min_ago)
-        ORDER BY priority DESC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-    """)
-    
-    result = await session.execute(query, {"five_min_ago": five_min_ago})
-    row = result.fetchone()
-    
-    if not row:
-        return None
-    
-    # Reconstruir el objeto desde la fila
-    job = VoiceNoteProcessingJob(
-        id=row.id,
-        voice_note_id=row.voice_note_id,
-        job_type=row.job_type,
-        status=row.status,
-        audio_checksum=row.audio_checksum,
-        params_hash=row.params_hash,
-        job_params=row.job_params,
-        result_data=row.result_data,
-        error_info=row.error_info,
-        attempts=row.attempts,
-        max_attempts=row.max_attempts,
-        started_at=row.started_at,
-        completed_at=row.completed_at,
-        duration_ms=row.duration_ms,
-        queue_name=row.queue_name,
-        priority=row.priority,
-        scheduled_at=row.scheduled_at,
-        worker_id=row.worker_id,
-        locked_at=row.locked_at,
-        created_at=row.created_at,
-        updated_at=row.updated_at
+
+    result = await session.execute(
+        select(VoiceNoteProcessingJob)
+        .where(
+            VoiceNoteProcessingJob.status.in_(
+                [
+                    ProcessingJobStatus.PENDING.value,
+                    ProcessingJobStatus.RETRYING.value,
+                ]
+            ),
+            VoiceNoteProcessingJob.scheduled_at <= datetime.utcnow(),
+            or_(
+                VoiceNoteProcessingJob.locked_at.is_(None),
+                VoiceNoteProcessingJob.locked_at < five_min_ago,
+            ),
+        )
+        .order_by(VoiceNoteProcessingJob.priority.desc(), VoiceNoteProcessingJob.created_at.asc())
+        .limit(1)
+        .with_for_update(skip_locked=True)
     )
-    
-    # Lockear el job
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
+
     job.worker_id = WORKER_ID
     job.locked_at = datetime.utcnow()
-    job.status = ProcessingJobStatus.RUNNING.value  # Usar .value para string explícito
-    job.attempts += 1
+    job.status = ProcessingJobStatus.RUNNING.value
+    job.attempts = int(job.attempts or 0) + 1
     job.started_at = datetime.utcnow()
-    
+
     await session.commit()
-    
+    await session.refresh(job)
     return job
 
 
@@ -217,7 +195,7 @@ async def process_summarization_job(
         
         return {
             "success": True,
-            "summary": result.summary if hasattr(result, "summary") else "Resumen generado.",
+            "summary": agent_manager.extract_text(result) or "Resumen generado.",
             "model": "agentic_team_v9"
         }
         
@@ -261,7 +239,11 @@ async def process_extraction_job(
             import json
             import re
             # Limpiar posibles bloques markdown
-            clean_content = re.sub(r'```json|```', '', result.summary).strip()
+            clean_content = re.sub(
+                r"```json|```",
+                "",
+                agent_manager.extract_text(result),
+            ).strip()
             data = json.loads(clean_content)
             
             return {
@@ -380,15 +362,18 @@ async def handle_job_completion(
                 voice_note.transcript = result.get("transcript", "")
                 voice_note.transcript_confidence = result.get("confidence")
                 voice_note.status = VoiceNoteStatus.UPLOADED.value  # Usar .value
+                voice_note.processing_completed_at = datetime.utcnow()
                 
             elif job.job_type == ProcessingJobType.SUMMARIZATION.value:
                 voice_note.summary = result.get("summary")
                 voice_note.summary_model = result.get("model")
+                voice_note.processing_completed_at = datetime.utcnow()
                 
             elif job.job_type == ProcessingJobType.EXTRACTION.value:
                 voice_note.extracted_items = result.get("items", [])
                 voice_note.topics = result.get("topics", [])
                 voice_note.entities = result.get("entities", [])
+                voice_note.processing_completed_at = datetime.utcnow()
                 
             elif job.job_type == ProcessingJobType.FULL_PIPELINE.value:
                 voice_note.transcript = result.get("transcript", "")
@@ -419,8 +404,7 @@ async def handle_job_completion(
             job.status = ProcessingJobStatus.RETRYING.value  # Usar .value
             # Schedule retry con backoff exponencial
             backoff_minutes = 2 ** job.attempts
-            from sqlalchemy import func
-            job.scheduled_at = func.now() + f"{backoff_minutes} minutes"
+            job.scheduled_at = datetime.utcnow() + timedelta(minutes=backoff_minutes)
             logger.warning(f"⚠️ Job {job.id} reintentará en {backoff_minutes}min (attempt {job.attempts})")
         else:
             job.status = ProcessingJobStatus.FAILED.value  # Usar .value

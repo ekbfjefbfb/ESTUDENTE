@@ -77,7 +77,7 @@ class VoiceNote(Base):
     
     # Idempotencia: clave única generada cliente-side para evitar duplicados
     # Formato recomendado: "{user_id}:{device_id}:{timestamp}:{random}"
-    client_record_id = Column(String(255), unique=True, nullable=False, index=True)
+    client_record_id = Column(String(255), nullable=False, index=True)
     
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     device_id = Column(String(100), nullable=False, index=True)  # Para trackear origen
@@ -142,6 +142,7 @@ class VoiceNote(Base):
         Index('idx_voice_notes_user_status', 'user_id', 'status'),
         Index('idx_voice_notes_user_created', 'user_id', 'created_at'),
         Index('idx_voice_notes_client_record', 'client_record_id'),
+        Index('uq_voice_notes_user_client_record', 'user_id', 'client_record_id', unique=True),
     )
     
     def to_dict(self) -> Dict[str, Any]:

@@ -6,7 +6,7 @@ import logging
 import os
 import time
 from datetime import datetime, date, timedelta
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from sqlalchemy import select, and_
 from models.models import User, SessionItem, RecordingSession
 from services.hub_memory_service import hub_memory_service
@@ -148,13 +148,21 @@ async def _get_recent_chat_history(user_id: str, limit: int = 5) -> List[Dict[st
         logger.warning(f"No se pudo recuperar historial reciente: {e}")
         return []
 
-async def _get_persistent_chat_history(session_id: str, limit: int = 40) -> List[Dict[str, str]]:
+async def _get_persistent_chat_history(
+    user_id: str,
+    session_id: str,
+    limit: int = 40,
+) -> List[Dict[str, str]]:
     """Recupera el historial persistente desde PostgreSQL (Base de Datos)."""
     from database import SessionLocal
     from services.chat_session_service import chat_session_service
     db = SessionLocal()
     try:
-        messages = chat_session_service.get_session_history(db, session_id)
+        messages = chat_session_service.get_session_history(
+            db,
+            session_id=session_id,
+            user_id=user_id,
+        )
         # Tomamos los últimos N mensajes para no saturar el prompt
         history = []
         for m in messages[-limit:]:
@@ -182,7 +190,10 @@ async def get_user_context_for_chat(user_id: str, session_id: Optional[str] = No
     # Inyectar historial (Priorizar Persistente si hay session_id)
     if session_id:
         logger.info(f"Cargando historial persistente para sesión: {session_id}")
-        context["chat_history"] = await _get_persistent_chat_history(session_id)
+        context["chat_history"] = await _get_persistent_chat_history(
+            user_id=user_id,
+            session_id=session_id,
+        )
     else:
         # Fallback a memoria volátil
         context["chat_history"] = await _get_recent_chat_history(user_id)
@@ -193,7 +204,10 @@ async def get_user_context_for_chat(user_id: str, session_id: Optional[str] = No
 
 def invalidate_user_context(user_id: str):
     """Invalidate cached context for user"""
-    _USER_CONTEXT_CACHE.pop(user_id, None)
+    prefix = f"{user_id}_"
+    keys_to_remove = [key for key in _USER_CONTEXT_CACHE if key.startswith(prefix)]
+    for key in keys_to_remove:
+        _USER_CONTEXT_CACHE.pop(key, None)
 
 
 def build_context_prompt(user_context: Dict[str, Any]) -> str:

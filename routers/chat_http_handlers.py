@@ -30,7 +30,7 @@ from services.orchestration_service import scout
 from services.agent_service import agent_manager
 from utils.auth import get_current_user
 from utils.file_processing import process_uploaded_files, build_message_with_files, is_vision_request
-from models.models import RecordingSession, RecordingSessionType, SessionItem
+from models.models import ChatSession, RecordingSession, RecordingSessionType, SessionItem
 
 logger = logging.getLogger("chat_http_handlers")
 
@@ -153,7 +153,15 @@ async def handle_chat_message(
     db = SessionLocal()
     try:
         # Resolve session_id
-        if not session_id:
+        if session_id:
+            session = chat_session_service.get_session(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+            )
+            if session is None:
+                raise HTTPException(status_code=404, detail="session_not_found")
+        else:
             # Try to get the most recent session or create a new one
             sessions = chat_session_service.get_user_sessions(db, user_id, limit=1)
             if sessions:
@@ -172,6 +180,8 @@ async def handle_chat_message(
             media_metadata=file_content,
             request_id=request_id
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error persisting user message: {e}")
     finally:
@@ -212,11 +222,14 @@ async def handle_chat_message(
         )
         
         # Simple Naming logic: rename if session title is default and we have history
-        session_info = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        session_info = db.query(ChatSession).filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user_id,
+        ).first()
         if session_info and session_info.title == "Nueva Conversación":
             from utils.background import safe_create_task
             safe_create_task(
-                chat_session_service.auto_rename_session(db, session_id, normalized_message),
+                chat_session_service.auto_rename_session(session_id, normalized_message),
                 name=f"rename_session_{session_id}"
             )
     except Exception as e:

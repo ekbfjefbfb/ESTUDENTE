@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from datetime import datetime
@@ -35,8 +36,19 @@ class ChatSessionService:
             ChatSession.is_active == True
         ).order_by(desc(ChatSession.updated_at)).limit(limit).all()
 
-    def get_session_history(self, db: Session, session_id: str) -> List[ChatMessage]:
+    def get_session(self, db: Session, session_id: str, user_id: str) -> Optional[ChatSession]:
+        """Obtiene una sesión validando ownership."""
+        return db.query(ChatSession).filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user_id,
+            ChatSession.is_active == True,
+        ).first()
+
+    def get_session_history(self, db: Session, session_id: str, user_id: str) -> List[ChatMessage]:
         """Recupera el historial COMPLETO de una sesión para el frontend."""
+        session = self.get_session(db, session_id=session_id, user_id=user_id)
+        if session is None:
+            return []
         return db.query(ChatMessage).filter(
             ChatMessage.session_id == session_id
         ).order_by(ChatMessage.created_at).all()
@@ -52,6 +64,10 @@ class ChatSessionService:
         request_id: str = None
     ) -> ChatMessage:
         """Guarda un mensaje en la sesión persistente (Multipart support)."""
+        session = self.get_session(db, session_id=session_id, user_id=user_id)
+        if session is None:
+            raise ValueError("session_not_found")
+
         db_message = ChatMessage(
             id=str(uuid.uuid4()),
             session_id=session_id,
@@ -64,7 +80,10 @@ class ChatSessionService:
         db.add(db_message)
         
         # Actualizar el timestamp de la sesión
-        db.query(ChatSession).filter(ChatSession.id == session_id).update({
+        db.query(ChatSession).filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user_id,
+        ).update({
             "updated_at": datetime.utcnow()
         })
         
@@ -72,15 +91,20 @@ class ChatSessionService:
         db.refresh(db_message)
         return db_message
 
-    def delete_session(self, db: Session, session_id: str):
+    def delete_session(self, db: Session, session_id: str, user_id: str) -> bool:
         """Elimina (desactiva) una sesión de chat."""
-        db.query(ChatSession).filter(ChatSession.id == session_id).update({
+        updated = db.query(ChatSession).filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user_id,
+        ).update({
             "is_active": False
         })
         db.commit()
-        logger.info(f"Sesión desactivada: {session_id}")
+        if updated:
+            logger.info(f"Sesión desactivada: {session_id}")
+        return bool(updated)
 
-    async def auto_rename_session(self, db: Session, session_id: str, first_messages_text: str):
+    async def auto_rename_session(self, session_id: str, first_messages_text: str):
         """
         Lógica de Bautismo Inteligente [Iris Naming Agent].
         Renombra la sesión basándose en el contenido de los primeros mensajes.
@@ -104,10 +128,19 @@ class ChatSessionService:
             
             cleaned_title = ai_title.strip().replace('"', '').replace("'", "")
             if cleaned_title and len(cleaned_title) < 100:
-                db.query(ChatSession).filter(ChatSession.id == session_id).update({
-                    "title": cleaned_title
-                })
-                db.commit()
+                def _rename_sync():
+                    from database import SessionLocal
+
+                    db = SessionLocal()
+                    try:
+                        db.query(ChatSession).filter(ChatSession.id == session_id).update({
+                            "title": cleaned_title
+                        })
+                        db.commit()
+                    finally:
+                        db.close()
+
+                await asyncio.to_thread(_rename_sync)
                 logger.info(f"Sesión {session_id} renombrada automáticamente a: {cleaned_title}")
         except Exception as e:
             logger.error(f"Error al renombrar sesión automáticamente: {e}")

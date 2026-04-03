@@ -159,6 +159,7 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
             return
         
         set_active_ws(user_id, websocket)
+        heartbeat_task = asyncio.create_task(_ws_heartbeat(websocket, str(user_id)))
         
         logger.info(f"WebSocket connected successfully for user_id={user_id}")
         
@@ -270,7 +271,19 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     from models.models import ChatSession
     db = SessionLocal()
     try:
-        if not session_id:
+        if session_id:
+            session = chat_session_service.get_session(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+            )
+            if session is None:
+                await _ws_send_json(
+                    websocket,
+                    {"type": "error", "message": "session_not_found", "request_id": request_id},
+                )
+                return
+        else:
             # Fallback a la más reciente o crear nueva
             sessions = chat_session_service.get_user_sessions(db, user_id, limit=1)
             if sessions:
@@ -324,15 +337,71 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
             # Ejecutar el equipo de agentes con aislamiento de user_id
             # Aumentado a 120s para permitir tareas complejas y reintentos ante Error 429
             agent_timeout_s = int(os.getenv("AGENT_TIMEOUT_SECONDS", "120"))
-            await asyncio.wait_for(
+            agent_result = await asyncio.wait_for(
                 run_agent_with_streaming(
                     lambda: agent_manager.run_complex_task(task_desc, user_id=user_id, history=chat_history),
                     on_agent_token,
                 ),
                 timeout=agent_timeout_s,
             )
-            
-            await _ws_send_json(websocket, {"type": "done", "request_id": request_id})
+            agent_text = agent_manager.extract_text(agent_result)
+            if agent_text:
+                db = SessionLocal()
+                try:
+                    chat_session_service.add_message(
+                        db=db,
+                        session_id=session_id,
+                        user_id=user_id,
+                        role="assistant",
+                        content=agent_text,
+                        request_id=request_id,
+                    )
+                    session_info = db.query(ChatSession).filter(
+                        ChatSession.id == session_id,
+                        ChatSession.user_id == user_id,
+                    ).first()
+                    if session_info and session_info.title == "Nueva Conversación":
+                        from utils.background import safe_create_task
+
+                        safe_create_task(
+                            chat_session_service.auto_rename_session(session_id, user_message),
+                            name=f"rename_session_{session_id}",
+                        )
+                except Exception as persist_exc:
+                    logger.error(f"Error persisting WS agent response: {persist_exc}")
+                finally:
+                    db.close()
+
+                memory_id = str(uuid.uuid4())
+                latency_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
+                memory_debug = {
+                    "latency_ms": latency_ms,
+                    "query": user_message.strip(),
+                    "agent_mode": True,
+                }
+                from utils.background import safe_create_task
+
+                safe_create_task(
+                    _persist_memory(user_id, memory_id, agent_text, [], user_message, memory_debug),
+                    name=f"persist_agent_memory_{request_id}",
+                )
+                await _ws_send_json(
+                    websocket,
+                    {
+                        "type": "complete",
+                        "request_id": request_id,
+                        "text": agent_text,
+                        "memory_id": memory_id,
+                        "sources": [],
+                        "rich_response": None,
+                        "agent_mode": True,
+                    },
+                )
+            else:
+                await _ws_send_json(
+                    websocket,
+                    {"type": "done", "request_id": request_id, "agent_mode": True},
+                )
             return # Finalizar aquí para peticiones agénticas automáticas
         except asyncio.TimeoutError:
             logger.warning(f"Agent timeout request_id={request_id} user_id={user_id}")
@@ -459,11 +528,14 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
         )
         
         # Simple Naming logic: rename if session title is default
-        session_info = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        session_info = db.query(ChatSession).filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user_id,
+        ).first()
         if session_info and session_info.title == "Nueva Conversación":
             from utils.background import safe_create_task
             safe_create_task(
-                chat_session_service.auto_rename_session(db, session_id, user_message),
+                chat_session_service.auto_rename_session(session_id, user_message),
                 name=f"rename_session_{session_id}"
             )
     except Exception as e:
@@ -472,10 +544,20 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
         db.close()
     
     from utils.background import safe_create_task
-    safe_create_task(_persist_memory(user_id, memory_id, text, ddg_sources, user_message, memory_debug), name=f"persist_memory_{request_id}")
+    final_sources_raw: List[Dict[str, Any]] = []
+    if isinstance(yt_source, dict):
+        final_sources_raw.append(yt_source)
+    if isinstance(web_source, dict):
+        final_sources_raw.append(web_source)
+    final_sources_raw.extend(list(ddg_sources or []))
+
+    safe_create_task(
+        _persist_memory(user_id, memory_id, text, final_sources_raw, user_message, memory_debug),
+        name=f"persist_memory_{request_id}",
+    )
     
     # Send complete response
-    sources = await _sanitize_sources_images(list(ddg_sources or []))
+    sources = await _sanitize_sources_images(list(final_sources_raw or []))
     rich_response = _build_rich_response(text=text, memory_id=memory_id, sources=sources)
     
     await _ws_send_json(

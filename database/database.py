@@ -58,6 +58,11 @@ def get_db_sync():
     finally:
         db.close()
 
+
+def get_db():
+    """Alias legacy esperado por routers FastAPI síncronos."""
+    yield from get_db_sync()
+
 # ===============================================
 # CICLO DE VIDA (Unified)
 # ===============================================

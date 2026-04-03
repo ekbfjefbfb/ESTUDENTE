@@ -9,7 +9,17 @@ import os
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import UploadFile, File, Form, Query
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from sqlalchemy.orm import Session
 from database import get_db
 
@@ -83,6 +93,16 @@ async def chat_info():
     }
 
 
+@router.get("/health")
+async def chat_health():
+    """Health liviano del subsistema de chat para frontend y monitoreo."""
+    return {
+        "service": "unified-chat",
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 # ============== CHAT SESSION MANAGEMENT ==============
 
 @router.get("/sessions")
@@ -131,7 +151,13 @@ async def get_chat_session_history(
 ):
     """Obtener el historial COMPLETO de un hilo específico para el frontend"""
     user_id = user["user_id"]
-    history = chat_session_service.get_session_history(db, session_id)
+    history = chat_session_service.get_session_history(
+        db,
+        session_id=session_id,
+        user_id=user_id,
+    )
+    if not history and chat_session_service.get_session(db, session_id=session_id, user_id=user_id) is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
     
     return {
         "success": True,
@@ -154,7 +180,9 @@ async def delete_chat_session(
     user: dict = Depends(get_current_user)
 ):
     """Borrar/Archivar un hilo de chat"""
-    chat_session_service.delete_session(db, session_id)
+    deleted = chat_session_service.delete_session(db, session_id, user["user_id"])
+    if not deleted:
+        raise HTTPException(status_code=404, detail="session_not_found")
     return {"success": True, "message": "Sesión eliminada"}
 
 

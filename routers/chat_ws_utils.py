@@ -230,6 +230,24 @@ def _host_label(url: str) -> str:
         return ""
 
 
+def _sanitize_public_url(url: Optional[str]) -> Optional[str]:
+    raw = str(url or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = urlparse(raw)
+        if parsed.scheme not in {"http", "https"}:
+            return None
+        if not parsed.netloc:
+            return None
+        host = (parsed.hostname or "").strip().lower()
+        if not host or host in {"localhost"} or host.endswith(".local"):
+            return None
+        return raw
+    except Exception:
+        return None
+
+
 def _is_supported_image_url(url: Optional[str]) -> bool:
     raw = str(url or "").strip()
     if not raw:
@@ -342,15 +360,26 @@ async def _sanitize_sources_images(sources) -> list:
     for s in sources:
         if not isinstance(s, dict):
             continue
+        sanitized_url = _sanitize_public_url(s.get("url"))
+        if not sanitized_url:
+            continue
+        s = dict(s)
+        s["url"] = sanitized_url
         img = str(s.get("image") or s.get("image_url") or "").strip()
+        if img:
+            img = _sanitize_public_url(img)
         if img:
             ok = await _is_supported_image_by_content_type(img)
             if not ok:
-                s = dict(s)
                 if "image" in s:
                     s["image"] = ""
                 if "image_url" in s:
                     s["image_url"] = ""
+            else:
+                if "image" in s:
+                    s["image"] = img
+                if "image_url" in s:
+                    s["image_url"] = img
         out.append(s)
     return out
 
@@ -366,12 +395,12 @@ def _build_rich_response(*, text: str, memory_id: Optional[str], sources: Option
     for s in sources:
         if not isinstance(s, dict):
             continue
-        url = str(s.get("url") or "").strip()
+        url = _sanitize_public_url(s.get("url"))
         if not url:
             continue
         title = str(s.get("title") or s.get("name") or s.get("snippet") or "").strip() or url
         image_candidate = str(s.get("image") or s.get("image_url") or "").strip() or None
-        image_url = image_candidate if _is_supported_image_url(image_candidate) else None
+        image_url = _sanitize_public_url(image_candidate) if _is_supported_image_url(image_candidate) else None
         source_label = str(s.get("source") or "").strip() or None
         if not source_label:
             host = _host_label(url)
