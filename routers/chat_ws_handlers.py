@@ -164,6 +164,10 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
         # Start heartbeat con user_id
         heartbeat_task = asyncio.create_task(_ws_heartbeat(websocket, user_id))
         
+        # Debounce/Deduplicación de mensajes (Evitar repeticiones por ráfaga)
+        last_msg_hash = None
+        last_msg_time = 0
+        
         # Message loop
         while True:
             try:
@@ -196,6 +200,16 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
                 await _ws_send_json(websocket, {"type": "error", "message": "invalid_json"})
                 continue
             
+            # DEDUPLICACIÓN: Evitar procesar el mismo mensaje en ráfaga (< 1.5s)
+            msg_content = str(message_data.get("message", "")).strip()
+            current_time = time.time()
+            if msg_content == last_msg_hash and (current_time - last_msg_time) < 1.5:
+                logger.info(f"Deduplicación activa para user_id={user_id}: Ignorando mensaje repetido.")
+                continue
+            
+            last_msg_hash = msg_content
+            last_msg_time = current_time
+
             # Process message
             await _process_chat_message(websocket, user_id, message_data)
             
@@ -283,13 +297,14 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
             return # Finalizar aquí para peticiones agénticas automáticas
         except asyncio.TimeoutError:
             logger.warning(f"Agent timeout request_id={request_id} user_id={user_id}")
-            # 1. Mensaje Pedagógico (Voz de Iris)
+            # El fallback a chat normal se encargará de completar la respuesta
+            # Inyectamos una instrucción para que el chat normal no se presente si ya hubo actividad
+            user_context["agent_timed_out"] = True 
             await _ws_send_status(
                 websocket,
                 "✨ [Iris]: Mi equipo está analizando mucha información. Procederé yo misma con la clase para no hacerte esperar...",
                 request_id=request_id,
             )
-            # El flujo continuará hacia el chat normal abajo.
         except Exception as e:
             import traceback
             error_detail = traceback.format_exc()

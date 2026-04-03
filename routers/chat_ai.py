@@ -264,17 +264,11 @@ def _build_system_prompt(
     user_name_line: str,
     images_line: str,
     wants_detail: bool,
-    context_prompt: str
+    context_prompt: str,
+    is_fallback_mode: bool = False
 ) -> str:
     """
     Construye el system prompt de Extensión Cognitiva.
-
-    Técnicas aplicadas:
-    1. Etiquetado emocional — nombra lo que el usuario siente
-    2. Confirmación-antes-de-responder — parafrasea antes de responder
-    3. Seguimiento de hilo — reconoce cambios de tema explícitamente
-    4. Acción proactiva — ejecuta sin pedir permiso cuando está claro
-    5. Progresión visible — muestra el razonamiento paso a paso en complejidad
     """
 
     # --- IDENTIDAD CORE ACADÉMICA ---
@@ -283,6 +277,13 @@ def _build_system_prompt(
         "Solo preséntate brevemente como Iris si la conversación está empezando realmente (0 mensajes previos en el chat). "
         "Si ya hay una charla en curso, responde directo al punto con cercanía y sabiduría.\n"
     )
+    
+    if is_fallback_mode:
+        identity += (
+            "\n❗ MODO CONTINUIDAD: Mi equipo de expertos ha iniciado un análisis pero ha tardado demasiado. "
+            "Continúa tú la respuesta SIN presentarte, sin pedir disculpas excesivas y sin repetir lo que el equipo ya haya podido decir. "
+            "Sé ágil y completa la tarea directamente.\n"
+        )
 
     # --- NOMBRE (personalización) ---
     name_block = user_name_line  # ya formateado o vacío
