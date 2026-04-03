@@ -158,8 +158,8 @@ GROQ_MAX_TOKENS_REASONING = 4096  # Qwen 3 razonamiento profundo
 GROQ_MAX_TOKENS_VISION = int(os.getenv("GROQ_MAX_TOKENS_VISION", "1024")) # Descripción de imágenes
 
 # --- PARÁMETROS IA ---
-TEMPERATURE_REASONING = 0.6  # Qwen 3 precisión
-TOP_P = 0.95  # Qwen 3 balanceado
+TEMPERATURE_REASONING = 0.0  # Decisión brutal y determinista (Cero dudas)
+TOP_P = 1.0  # Máxima fidelidad a la instrucción
 REASONING_EFFORT = "default" # Qwen 3 esfuerzo
 
 # --- SYSTEM PROMPT BASE ---
