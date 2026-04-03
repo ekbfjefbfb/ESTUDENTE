@@ -253,7 +253,7 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     if scout.should_use_agents(user_message, history=chat_history):
         task_desc = user_message.strip()
         
-        await _ws_send_status(websocket, "Orquestando Equipo de Expertos...", request_id=request_id)
+        await _ws_send_status(websocket, "👨‍🏫 [Tutor]: Activando equipo de investigación académica...", request_id=request_id)
         
         # Callback para enviar tokens de los agentes al WebSocket
         def on_agent_token(token: str):
@@ -287,7 +287,7 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
             )
             await _ws_send_status(
                 websocket,
-                "El agente tardó demasiado; usando modo chat normal...",
+                "👨‍🏫 [Tutor]: El equipo tardó demasiado; procederé yo mismo con la clase...",
                 request_id=request_id,
             )
         except Exception as e:
@@ -298,7 +298,7 @@ async def _process_chat_message(websocket: WebSocket, user_id: str, message_data
     # Web search
     ddg_sources: List[Dict[str, Any]] = []
     if should_web_search:
-        await _ws_send_status(websocket, "Buscando en la web...", request_id=request_id)
+        await _ws_send_status(websocket, "🔍 [Tutor]: Buscando fuentes académicas actualizadas...", request_id=request_id)
         search_sources, _ = await perform_web_search(
             user_id=user_id,
             query=user_message.strip(),
