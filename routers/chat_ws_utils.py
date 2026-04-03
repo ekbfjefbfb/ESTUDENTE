@@ -65,14 +65,23 @@ def _tail_bytes_for_pcm16(*, buf: bytearray, sample_rate: int, tail_window_ms: i
 
 
 async def _ws_send_json(websocket: WebSocket, payload: Dict[str, Any]) -> None:
-    """Send JSON payload to WebSocket with error handling"""
+    """Send JSON payload to WebSocket using orjson for high performance"""
     try:
+        import orjson
         from starlette.websockets import WebSocketState
+        
         if websocket.client_state != WebSocketState.CONNECTED:
             return
+            
         timeout_s = float(os.getenv("WS_SEND_TIMEOUT_S", "3"))
+        
+        # orjson.dumps retorna bytes. Lo decodificamos a string para máxima 
+        # compatibilidad con el frontend (evita errores de tipo Blob/ArrayBuffer).
+        # Sigue siendo significativamente más rápido que el modulo json estándar.
+        data = orjson.dumps(payload).decode('utf-8')
+        
         await asyncio.wait_for(
-            websocket.send_text(json.dumps(payload, ensure_ascii=False)),
+            websocket.send_text(data),
             timeout=timeout_s,
         )
     except Exception as e:

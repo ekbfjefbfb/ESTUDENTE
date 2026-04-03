@@ -31,33 +31,37 @@ class AgentStreamBridge:
 
         self._is_writing = True
         try:
-            if data and data.strip():
+            if data:
                 # Limpiar códigos de escape de color ANSI
                 import re
                 ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
                 clean_data = ansi_escape.sub('', data)
                 
-                # DETECCIÓN DE HERRAMIENTAS Y ESTADOS (Nivel Dios Académico)
-                if "Suggested tool Call" in clean_data or "suggested_assistant_action" in clean_data.lower():
-                    tool_match = re.search(r"name='([^']+)'", clean_data) or re.search(r"action: ([^\s]+)", clean_data.lower())
-                    tool_name = tool_match.group(1) if tool_match else "herramienta"
-                    
-                    if "search_web" in tool_name:
-                        msg = "\n🔍 [Investigando]: Buscando fuentes académicas..."
-                    elif "executor" in tool_name or "code" in tool_name:
-                        msg = "\n📐 [Calculando]: Verificando fórmulas matemáticas..."
-                    else:
-                        msg = f"\n⚙️ [Procesando]: Usando {tool_name}..."
-                    
-                    if self.on_new_token: self.on_new_token(msg)
-                
-                elif "Execute tool Call" in clean_data or "executing_tool" in clean_data.lower():
-                    if self.on_new_token: self.on_new_token(" ✨ [Finalizando]: Preparando explicación clara...")
+                # DETECCIÓN DE EVENTOS PRIORITARIOS (Flush inmediato)
+                priority_markers = [
+                    "Suggested tool Call", "suggested_assistant_action", 
+                    "Execute tool Call", "executing_tool"
+                ]
+                is_priority = any(m in clean_data or m in clean_data.lower() for m in priority_markers)
 
-                elif self.on_new_token and clean_data.strip() and not clean_data.startswith(" "):
-                    # Mensajes del tutor sin el prefijo "Agente" para que se sienta más personal
-                    tutor_msg = clean_data.replace("expert_", "Tutor ").replace("assistant", "Tutor")
-                    self.on_new_token(f"\n🧠 [Tutor]: {tutor_msg}")
+                if is_priority:
+                    self._flush_buffer() # Enviar lo que haya antes del estado
+                    
+                    if "Suggested tool Call" in clean_data or "suggested_assistant_action" in clean_data.lower():
+                        tool_match = re.search(r"name='([^']+)'", clean_data) or re.search(r"action: ([^\s]+)", clean_data.lower())
+                        tool_name = tool_match.group(1) if tool_match else "herramienta"
+                        msg = "\n🔍 [Investigando]: Buscando fuentes..." if "search_web" in tool_name else f"\n⚙️ [Procesando]: Usando {tool_name}..."
+                        if self.on_new_token: self.on_new_token(msg)
+                    
+                    elif "Execute tool Call" in clean_data or "executing_tool" in clean_data.lower():
+                        if self.on_new_token: self.on_new_token(" ✨ [Finalizando]: Preparando explicación...")
+                
+                else:
+                    # ACUMULAR EN BUFFER: Si no es prioridad, agrupamos tokens
+                    self._buffer += clean_data
+                    # Flush si hay salto de línea o buffer > 50 chars para mantener la fluidez
+                    if "\n" in self._buffer or len(self._buffer) > 50:
+                        self._flush_buffer()
             
             self.old_stdout.write(data)
         finally:
