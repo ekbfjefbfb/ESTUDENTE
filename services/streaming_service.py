@@ -7,7 +7,6 @@ import logging
 import asyncio
 from typing import AsyncGenerator, Dict, Any, List, Optional
 import json
-from datetime import datetime
 
 logger = logging.getLogger("streaming")
 
@@ -84,7 +83,7 @@ class StreamingService:
                     await asyncio.sleep(0.01)
             
             self.active_streams -= 1
-            logger.info(f"✅ Stream completado")
+            logger.info("✅ Stream completado")
             
         except Exception as e:
             self.active_streams -= 1

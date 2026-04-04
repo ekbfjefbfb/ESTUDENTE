@@ -7,14 +7,10 @@ Implementación real con múltiples formatos y funcionalidades avanzadas
 import asyncio
 import logging
 import io
-import json
-from typing import Any, Dict, Optional, List, Union
+from typing import Dict, Optional, List
 from datetime import datetime
-from pathlib import Path
-import base64
 
 # Core imports
-from services.groq_ai_service import chat_with_ai
 from utils.safe_metrics import Counter, Histogram, Gauge
 
 logger = logging.getLogger("document_service")
@@ -199,7 +195,7 @@ class DocumentServiceEnterprise:
                 doc = Document()
                 
                 # Título
-                title_para = doc.add_heading(title, 0)
+                doc.add_heading(title, 0)
                 
                 # Contenido
                 paragraphs = content.split('\n')

@@ -1,7 +1,7 @@
 import httpx
 import os
 import logging
-from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger("bac_gateway")
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))

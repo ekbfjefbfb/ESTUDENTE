@@ -6,11 +6,11 @@ Características:
 - Sincronización offline-first
 - Procesamiento asíncrono de transcripción
 """
-from sqlalchemy import Column, String, Integer, DateTime, Float, Text, Boolean, ForeignKey, JSON, Enum, BigInteger, Index
+from sqlalchemy import Column, String, Integer, DateTime, Float, Text, Boolean, ForeignKey, JSON, BigInteger, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 import enum
 import uuid
 

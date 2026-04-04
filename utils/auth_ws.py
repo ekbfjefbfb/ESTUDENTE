@@ -16,6 +16,7 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 logger.setLevel("INFO")
+logger.propagate = False
 
 # ---------------- Helper ----------------
 def extract_token(raw_token: Optional[str]) -> Optional[str]:
@@ -57,7 +58,7 @@ async def authenticate_websocket(websocket: WebSocket) -> Dict:
         # Log de éxito
         client_host = websocket.client.host if websocket.client else "unknown"
         logger.info(
-            f"WebSocket autenticado correctamente",
+            "WebSocket autenticado correctamente",
             extra={"user_id": user_id, "client": client_host}
         )
 

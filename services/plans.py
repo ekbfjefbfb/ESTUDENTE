@@ -333,11 +333,13 @@ TIMEOUT_MULTIPLIERS = {
     "team": 1.5,
     "business": 2.5,
     "enterprise": 3.5,
-    # Compatibilidad planes antiguos
-    "demo": 0.5,
-    "starter": 0.8,
+    # Compatibilidad planes antiguos usando el mismo tier migrado
+    "trial": 0.5,
+    "starter": 1.0,
+    "hobby": 1.0,
     "basic": 1.0,
-    "pro": 2.0
+    "creator": 1.5,
+    "professional": 1.5,
 }
 
 # =============================================

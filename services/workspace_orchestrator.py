@@ -10,10 +10,10 @@ Este archivo es el ORQUESTADOR que coordina todo.
 """
 import logging
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, List, Optional
 
 from services.workspace_schemas import (
-    WorkflowType, AutomationRequest, WorkflowExecution, WorkflowStep
+    WorkflowType, AutomationRequest, WorkflowExecution
 )
 from services.workspace_workflows import (
     ContentToDocWorkflow, DataToSheetWorkflow, ReportGenerationWorkflow,
@@ -29,6 +29,7 @@ logger = logging.getLogger("workspace_orchestrator")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     logger.addHandler(handler)
+logger.propagate = False
 
 
 class WorkspaceOrchestrator:

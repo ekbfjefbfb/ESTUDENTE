@@ -40,6 +40,7 @@ logger = logging.getLogger("gmail_service")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     logger.addHandler(handler)
+logger.propagate = False
 
 class GmailService:
     """
@@ -247,7 +248,7 @@ Gestor de Proyectos IA
             encoders.encode_base64(part)
             part.add_header(
                 'Content-Disposition',
-                f'attachment; filename= {filename}'
+                f'attachment; filename=\"{filename}\"'
             )
             
             message.attach(part)
@@ -517,8 +518,7 @@ Gestor de Proyectos IA
             
             # Guardar en caché para persistencia
             await smart_cache.set(
-                "email_templates",
-                template_name,
+                f"email_templates:{template_name}",
                 {"subject": subject, "body": body},
                 ttl=86400 * 30  # 30 días
             )

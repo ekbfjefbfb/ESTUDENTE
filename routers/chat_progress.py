@@ -253,7 +253,7 @@ async def _generate_document_action(user_id: str, action_data: Dict[str, Any]):
             user_id=user_id,
             doc_type=action_data.get("format", "pdf")
         ), name="generate_document")
-        logger.info(f"✅ Ejecución silenciosa iniciada: generate_document")
+        logger.info("✅ Ejecución silenciosa iniciada: generate_document")
     except Exception as e:
         logger.error(f"❌ Fallo al iniciar ejecución silenciosa: {e}")
 

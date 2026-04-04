@@ -2,16 +2,15 @@
 Utilidades de Autenticación Enterprise - Mi Backend Super IA
 """
 import logging
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 import time
 import os
 from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, text
+from sqlalchemy import text
 from jose import JWTError, jwt, ExpiredSignatureError
-import redis.asyncio as redis
 from services.smart_cache_service import smart_cache
 
 # Usar get_async_db desde database.db_enterprise
@@ -21,8 +20,7 @@ from config import (
     JWT_SECRET_KEY, 
     JWT_ALGORITHM, 
     JWT_EXPIRATION_MINUTES, 
-    JWT_REFRESH_EXPIRATION_DAYS,
-    REDIS_URL
+    JWT_REFRESH_EXPIRATION_DAYS
 )
 
 # Import lazy para evitar circular dependency

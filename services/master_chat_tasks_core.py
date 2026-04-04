@@ -3,7 +3,7 @@ Master Chat Tasks Core - Core task handlers (7 capabilities)
 Separado de master_chat_service.py para reducir responsabilidades
 """
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
 
 from services.groq_ai_service import chat_with_ai, sanitize_ai_text
 try:

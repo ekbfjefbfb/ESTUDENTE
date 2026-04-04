@@ -5,7 +5,7 @@ Separado de workspace_orchestrator.py
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from enum import Enum
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 
 class WorkflowType(str, Enum):

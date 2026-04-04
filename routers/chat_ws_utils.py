@@ -3,7 +3,6 @@ Chat WebSocket Utils - WebSocket utilities for chat
 Separado de unified_chat_router.py para reducir responsabilidades
 """
 import asyncio
-import json
 import logging
 import os
 import time
@@ -131,10 +130,11 @@ async def _ws_send_status(websocket: WebSocket, content: str, *, request_id: Opt
 async def _ws_heartbeat(websocket: WebSocket, user_id: str):
     """
     Background task to keep WebSocket connection alive
-    Envía ping cada 25s y espera pong del cliente (móviles necesitan esto)
+    Envía ping cada 25s para mantener viva la conexión.
+    No se fuerza timeout de pong aquí porque el loop principal puede estar
+    ocupado transmitiendo tokens y no leer el pong inmediatamente.
     """
     ping_interval = float(os.getenv("WS_PING_INTERVAL_S", "25"))  # iOS: 30s timeout
-    pong_timeout = float(os.getenv("WS_PONG_TIMEOUT_S", "5"))
     
     try:
         while True:

@@ -5,11 +5,9 @@ Sistema avanzado de búsqueda semántica con embeddings, vector databases y simi
 """
 import asyncio
 import logging
-import os
-import json
 import time
 import hashlib
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List
 from dataclasses import dataclass
 import numpy as np
 from datetime import datetime
@@ -31,7 +29,7 @@ except ImportError:
 
 # Core dependencies
 from utils.safe_metrics import Counter, Histogram, Gauge
-from services.redis_service import redis, redis_set, redis_get
+from services.redis_service import redis_set, redis_get
 
 logger = logging.getLogger("semantic_search")
 

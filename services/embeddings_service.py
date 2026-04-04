@@ -6,7 +6,7 @@ Usa OpenAI embeddings + búsqueda por similaridad coseno
 
 import logging
 import asyncio
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 import numpy as np
 from datetime import datetime
 import hashlib
@@ -466,29 +466,23 @@ class EmbeddingsService:
     
     def get_stats(self) -> Dict[str, Any]:
         """Obtiene estadísticas del servicio"""
+        cache_size_mb = 0.0
+        if self.embeddings_cache:
+            cache_size_mb = sum(
+                embedding.nbytes / (1024 * 1024)
+                for embedding in self.embeddings_cache.values()
+            )
+
         return {
             "total_documents": len(self.documents_cache),
-            "total_embeddings": len(self.embeddings_cache),
-            "use_openai": self.use_openai,
-            "model": self.model if self.use_openai else "local",
-            "embedding_dim": 1536 if self.use_openai else 384
-        }
-
-    def get_stats(self) -> Dict[str, Any]:
-        """
-        Obtiene estadísticas del servicio
-        
-        Returns:
-            Dict con estadísticas
-        """
-        return {
             "indexed_documents": len(self.documents_cache),
+            "total_embeddings": len(self.embeddings_cache),
             "embeddings_cached": len(self.embeddings_cache),
-            "cache_size_mb": sum(
-                embedding.nbytes / (1024 * 1024) 
-                for embedding in self.embeddings_cache.values()
-            ) if self.embeddings_cache else 0,
-            "backend": "openai" if self.use_openai else "local"
+            "cache_size_mb": cache_size_mb,
+            "use_openai": self.use_openai,
+            "backend": "openai" if self.use_openai else "local",
+            "model": self.model if self.use_openai else "local",
+            "embedding_dim": 1536 if self.use_openai else 384,
         }
 
 

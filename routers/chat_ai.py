@@ -2,21 +2,18 @@
 Chat AI - AI response logic for chat
 Separado de unified_chat_router.py para reducir responsabilidades
 """
-import asyncio
 import logging
-import os
-from datetime import datetime
 from typing import Dict, Any, List, Optional
 
 from fastapi import WebSocket
-from services.groq_ai_service import chat_with_ai, chat_with_ai_vision, should_refresh_context, get_context_info
+from services.groq_ai_service import chat_with_ai, chat_with_ai_vision, should_refresh_context
 from config import GROQ_CHAT_WEB_TOOLS
 from services.conversational_memory_service import (
     add_message,
     get_conversation_history,
     detect_topic_change,
 )
-from utils.file_processing import process_uploaded_files, build_message_with_files, is_vision_request
+from utils.file_processing import build_message_with_files
 
 logger = logging.getLogger("chat_ai")
 

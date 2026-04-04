@@ -2,16 +2,15 @@
 Chat HTTP Handlers - HTTP endpoints for chat API
 Separado de unified_chat_router.py para reducir responsabilidades
 """
-import asyncio
 import logging
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import UploadFile, File, Depends, HTTPException, APIRouter
+from fastapi import UploadFile, HTTPException, APIRouter
 
 from routers.chat_schemas import ChatResponse, STTResponse, TTSResponse, VoiceChatResponse, ChatMessageRequest
-from routers.chat_context import get_user_context_for_chat, build_context_prompt
+from routers.chat_context import get_user_context_for_chat
 from routers.chat_progress import save_user_progress, _sanitize_structured_data
 from routers.chat_search import (
     perform_web_search,
@@ -25,12 +24,10 @@ from routers.chat_ai import get_ai_response_http
 from routers.chat_ws_utils import _estimate_duration_ms_from_bytes, _sanitize_sources_images, _build_rich_response
 from services.groq_voice_service import transcribe_audio_groq, text_to_speech_groq
 from services.groq_ai_service import get_context_info
-from services.hub_memory_service import hub_memory_service
 from services.orchestration_service import scout
 from services.agent_service import agent_manager
-from utils.auth import get_current_user
-from utils.file_processing import process_uploaded_files, build_message_with_files, is_vision_request
-from models.models import ChatSession, RecordingSession, RecordingSessionType, SessionItem
+from utils.file_processing import process_uploaded_files
+from models.models import ChatSession
 
 logger = logging.getLogger("chat_http_handlers")
 
@@ -81,9 +78,12 @@ async def handle_chat_message(
     
     # Combine all file sources for processing
     all_files = []
-    if files: all_files.extend(files)
-    if images: all_files.extend(images)
-    if documents: all_files.extend(documents)
+    if files:
+        all_files.extend(files)
+    if images:
+        all_files.extend(images)
+    if documents:
+        all_files.extend(documents)
 
     # Process uploaded files (images and documents)
     file_content = pre_processed_file_content
@@ -189,10 +189,10 @@ async def handle_chat_message(
     
     # Scout Intelligent Decision
     if scout.should_use_agents(normalized_message, history=chat_history):
-        from utils.agent_stream_bridge import run_agent_with_streaming
         # For HTTP, we can't stream tokens as easily, but we run the agent task
         ai_text = await agent_manager.run_complex_task(normalized_message, user_id=user_id, history=chat_history)
-        if hasattr(ai_text, "summary"): ai_text = ai_text.summary
+        if hasattr(ai_text, "summary"):
+            ai_text = ai_text.summary
     else:
         ai_text = await get_ai_response_http(
             user_id, 
@@ -212,7 +212,7 @@ async def handle_chat_message(
     # PERSISTENCE: Save AI response and detect naming need
     db = SessionLocal()
     try:
-        ai_msg = chat_session_service.add_message(
+        chat_session_service.add_message(
             db=db,
             session_id=session_id,
             user_id=user_id,

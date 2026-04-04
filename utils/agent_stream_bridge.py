@@ -3,7 +3,7 @@ import io
 import asyncio
 import inspect
 import time
-from typing import Callable, Any, Optional
+from typing import Callable, Any
 
 class AgentStreamBridge:
     """
@@ -66,10 +66,12 @@ class AgentStreamBridge:
                     if "Suggested tool Call" in clean_data:
                         tool_match = re.search(r"name='([^']+)'", clean_data)
                         tool_name = tool_match.group(1) if tool_match else "herramienta"
-                        msg = "\n🔍 [Tutor]: Investigando fuentes..." if "search_web" in tool_name else f"\n⚙️ [Tutor]: Resolviendo con mi equipo..."
-                        if self.on_new_token: self.on_new_token(msg)
+                        msg = "\n[Tutor]: Investigando fuentes..." if "search_web" in tool_name else "\n[Tutor]: Resolviendo con mi equipo..."
+                        if self.on_new_token:
+                            self.on_new_token(msg)
                     elif "Execute tool Call" in clean_data:
-                        if self.on_new_token: self.on_new_token(" ✨ [Tutor]: Estructurando tu respuesta...")
+                        if self.on_new_token:
+                            self.on_new_token(" [Tutor]: Estructurando tu respuesta...")
                 
                 elif not is_internal_noise:
                     self._buffer += clean_data
@@ -118,7 +120,6 @@ async def run_agent_with_streaming(agent_task_fn: Callable, on_token: Callable[[
     try:
         with bridge:
             def _run_sync():
-                import time # Importar dentro para el thread
                 out = agent_task_fn()
                 if inspect.iscoroutine(out):
                     return asyncio.run(out)

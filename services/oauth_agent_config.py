@@ -17,7 +17,6 @@ class AgentAutoConfigurationService:
             if not profile or "error" in profile:
                 return []
             
-            suggested_types = profile.get("enriched", {}).get("suggested_agent_types", [])
             basic = profile.get("basic", {})
             name = basic.get("given_name", "Usuario")
             

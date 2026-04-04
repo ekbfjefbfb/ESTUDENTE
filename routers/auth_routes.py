@@ -5,7 +5,6 @@ import re
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel, Field, field_validator, AliasChoices
 from typing import Optional
-from jose import jwt, JWTError
 
 from services.auth_service import (
     oauth_login_or_register,
@@ -26,6 +25,7 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
+logger.propagate = False
 
 # ---------------- Configuración General ----------------
 RATE_LIMIT_REQUESTS = 5

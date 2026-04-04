@@ -9,12 +9,11 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
-from starlette.websockets import WebSocketState
 
 from utils.auth import get_current_user, verify_token
 from database.db_enterprise import get_primary_session
 from services.recording_session_service import recording_session_service
-from models.models import RecordingSession, RecordingSessionType, RecordingSessionStatus
+from models.models import RecordingSession, RecordingSessionType
 from utils.rate_limit import RateLimitRule, evaluate_rate_limits
 
 logger = logging.getLogger("recording_session_router")

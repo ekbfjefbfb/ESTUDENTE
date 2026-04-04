@@ -2,15 +2,13 @@
 📍 UserContextService - Gestión de contexto del usuario para automatización inteligente
 Ubicación, documentos, decisiones de auto-grabación
 """
-import json
 import logging
 from datetime import datetime, date
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from math import radians, sin, cos, sqrt, atan2
 
 from models.models import UserContext, UserDocumentIndex, ScheduledRecording
 from database.db_enterprise import get_primary_session
-from services.recording_session_service import recording_session_service
 
 logger = logging.getLogger("user_context_service")
 
@@ -116,7 +114,7 @@ class UserContextService:
                 select(UserDocumentIndex)
                 .where(
                     UserDocumentIndex.user_id == user_id,
-                    UserDocumentIndex.is_deleted_on_device == False,
+                    UserDocumentIndex.is_deleted_on_device.is_(False),
                     or_(
                         UserDocumentIndex.related_class.ilike(f"%{class_name}%"),
                         UserDocumentIndex.document_type.in_(["syllabus", "notes"]),

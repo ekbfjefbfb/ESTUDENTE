@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from fastapi.responses import StreamingResponse
 from typing import Optional, List
-import io
 import logging
 
 from services.document_service import create_document_from_user_message

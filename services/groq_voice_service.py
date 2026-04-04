@@ -390,8 +390,8 @@ async def transcribe_audio_groq(
                     raise ValueError(f"Groq STT rejected audio: {error_msg}")
                 except ValueError:
                     raise
-                except:
-                    raise ValueError(f"Groq STT rejected audio format. Ensure valid webm/mp3/wav file.")
+                except Exception:
+                    raise ValueError("Groq STT rejected audio format. Ensure valid webm/mp3/wav file.")
         logger.error(f"Groq STT failed after retries: {e}")
         raise
 

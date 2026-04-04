@@ -12,19 +12,17 @@ import time
 import logging
 import enum
 import socket
-from typing import Dict, Any, Optional, AsyncGenerator, List
+from typing import Dict, Any, Optional, AsyncGenerator
 from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from collections import defaultdict
 
-from config import ENVIRONMENT, DATABASE_URL as CONFIG_DATABASE_URL
+from config import DATABASE_URL as CONFIG_DATABASE_URL
 
 # SQLAlchemy Enterprise
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy import text, event, pool
+from sqlalchemy import text
 from sqlalchemy.exc import DisconnectionError, OperationalError, IntegrityError
-from sqlalchemy.engine import events
 
 # Utils y Métricas
 from utils.safe_metrics import Counter, Histogram, Gauge

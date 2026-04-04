@@ -11,8 +11,8 @@ import logging
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Header
-from pydantic import BaseModel, Field, field_validator
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from utils.auth import get_current_user
 from services.voice_note_service import (
@@ -22,8 +22,6 @@ from services.voice_note_service import (
     CHUNK_SIZE_BYTES
 )
 from models.voice_note_models import (
-    VoiceNoteStatus, 
-    VoiceNoteUploadStrategy,
     ProcessingJobType
 )
 
@@ -211,7 +209,6 @@ async def create_voice_note(
             client_created_at=payload.client_created_at,
         )
         
-        status_code = 201 if is_new else 200
         return voice_note.to_dict()
         
     except Exception as e:

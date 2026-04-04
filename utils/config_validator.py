@@ -6,7 +6,7 @@ Versión: 1.0 - Noviembre 2025
 
 import os
 import logging
-from typing import List, Dict, Any
+from typing import Dict, Any
 
 logger = logging.getLogger("config_validator")
 
@@ -83,8 +83,8 @@ def validate_production_config() -> Dict[str, Any]:
             
             if not gateway_found:
                 errors.append(
-                    f"❌ No payment gateway configured. Set at least one: "
-                    f"STRIPE_SECRET_KEY, PAYPAL_CLIENT_ID, or MERCADOPAGO_ACCESS_TOKEN"
+                    "❌ No payment gateway configured. Set at least one: "
+                    "STRIPE_SECRET_KEY, PAYPAL_CLIENT_ID, or MERCADOPAGO_ACCESS_TOKEN"
                 )
             continue
         

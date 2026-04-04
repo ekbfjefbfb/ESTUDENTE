@@ -20,8 +20,10 @@ formatter = json_log_formatter.JSONFormatter()
 handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("session_service")
-logger.addHandler(handler)
 logger.setLevel("INFO")
+if not logger.handlers:
+    logger.addHandler(handler)
+logger.propagate = False
 
 # ---------------- Symbols of Solomon (Performance Primitives) ----------------
 # v6.0: Ultra-high performance constants to minimize object allocation
@@ -32,13 +34,12 @@ _𐤃 = 0       # Dalet: The Door (0)
 _𐤄 = 1       # He: The Window (1)
 _𐤅 = ""      # Vav: The Hook (Empty String)
 _𐤆 = []      # Zayin: The Sword (Empty List)
-_𐤇 = {}      # Heth: The Fence (Empty Dict)
 
 # ---------------- Memoria y Locks ----------------
 # v6.0: Estructuras de datos de alto rendimiento usando Símbolos de Salomón
-memory_sessions: Dict[str, dict] = _𐤇
-_session_locks: Dict[str, asyncio.Lock] = _𐤇
-session_limiters: Dict[str, AsyncLimiter] = _𐤇
+memory_sessions: Dict[str, dict] = {}
+_session_locks: Dict[str, asyncio.Lock] = {}
+session_limiters: Dict[str, AsyncLimiter] = {}
 
 # ---------------- Locks y limiters ----------------
 def get_session_lock(user_id: str, session_id: str) -> asyncio.Lock:
@@ -146,8 +147,21 @@ async def refresh_session(user_id: str, session_id: str):
 async def get_all_user_sessions() -> List[dict]:
     out = []
     redis = await get_redis()
-    keys = await redis.keys("user:*:session:*") if redis else list(memory_sessions.keys())
-    for key in keys:
+    if redis:
+        async for redis_key in redis.scan_iter(match="user:*:session:*", count=200):
+            key = redis_key.decode() if isinstance(redis_key, bytes) else str(redis_key)
+            parts = key.split(":")
+            try:
+                uid = str(parts[1])
+                sid = str(parts[3])
+            except Exception:
+                continue
+            session = await _get_session(uid, sid)
+            updated_at = datetime.fromisoformat(session.get("expire_at", datetime.utcnow().isoformat()))
+            out.append({"user_id": uid, "conversation_id": sid, "updated_at": updated_at})
+        return out
+
+    async for key in _iter_memory_keys(list(memory_sessions.keys())):
         parts = str(key).split(":")
         try:
             uid = str(parts[1])
@@ -166,6 +180,11 @@ async def clean_old_conversations(months_old: int = 3):
         if s["updated_at"] < cutoff:
             await delete_session(s["user_id"], s["conversation_id"])
             logger.info("Sesión antigua eliminada", extra={"user_id": s["user_id"], "session_id": s["conversation_id"]})
+
+
+async def _iter_memory_keys(keys: List[str]):
+    for key in keys:
+        yield key
 
 # ---------------- Flush de memoria a Redis ----------------
 async def flush_memory_to_redis():

@@ -11,8 +11,7 @@ Sistema de cifrado de extremo a extremo:
 import logging
 import os
 import base64
-import json
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple
 from datetime import datetime, timedelta
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives import serialization, hashes
@@ -114,7 +113,7 @@ class SignalProtocol:
         
         # Firmar con identity key
         identity_private_bytes = base64.b64decode(identity_private_key)
-        identity_private = X25519PrivateKey.from_private_bytes(identity_private_bytes)
+        X25519PrivateKey.from_private_bytes(identity_private_bytes)
         
         # Crear firma (simplificado)
         public_bytes = base64.b64decode(public_key_b64)
@@ -368,7 +367,7 @@ class EncryptionService:
             identity_query = select(EncryptionKey).where(
                 EncryptionKey.user_id == user_id,
                 EncryptionKey.key_type == "identity",
-                EncryptionKey.is_active == True
+                EncryptionKey.is_active.is_(True)
             )
             identity_result = await self.db.execute(identity_query)
             identity_key = identity_result.scalar_one_or_none()
@@ -377,7 +376,7 @@ class EncryptionService:
             signed_query = select(EncryptionKey).where(
                 EncryptionKey.user_id == user_id,
                 EncryptionKey.key_type == "signed_prekey",
-                EncryptionKey.is_active == True
+                EncryptionKey.is_active.is_(True)
             )
             signed_result = await self.db.execute(signed_query)
             signed_key = signed_result.scalar_one_or_none()
@@ -386,7 +385,7 @@ class EncryptionService:
             prekey_query = select(EncryptionKey).where(
                 EncryptionKey.user_id == user_id,
                 EncryptionKey.key_type == "prekey",
-                EncryptionKey.is_active == True
+                EncryptionKey.is_active.is_(True)
             ).limit(1)
             prekey_result = await self.db.execute(prekey_query)
             prekey = prekey_result.scalar_one_or_none()

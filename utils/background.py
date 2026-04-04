@@ -12,7 +12,7 @@ Uso:
 
 import asyncio
 import logging
-from typing import Coroutine, Any, Optional
+from typing import Coroutine, Any
 
 logger = logging.getLogger("background_tasks")
 

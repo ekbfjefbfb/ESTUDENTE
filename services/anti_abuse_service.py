@@ -5,9 +5,8 @@ Versión: 4.0 - Octubre 2025
 """
 
 import logging
-import json
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, Tuple
+from typing import Dict, Any, Tuple
 import redis.asyncio as redis
 from services.redis_service import get_redis_client
 from services.plans import PLAN_CONFIGS
@@ -22,7 +21,9 @@ handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("anti_abuse_service")
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
+logger.propagate = False
 
 class AntiAbuseService:
     """
@@ -160,8 +161,7 @@ class AntiAbuseService:
             }
             
             await smart_cache.set(
-                "rate_limit_status",
-                f"{user_id}:minute",
+                f"rate_limit_status:{user_id}:minute",
                 rate_limit_status,
                 ttl=10  # 10 segundos
             )
@@ -405,7 +405,6 @@ class AntiAbuseService:
         """
         try:
             redis_client = await self.get_redis()
-            today = datetime.utcnow().strftime("%Y-%m-%d")
             
             if metric == "all":
                 metrics = ["requests", "tokens", "images", "voice_minutes", "document_mb", "livesearch"]

@@ -8,10 +8,8 @@ import hashlib
 import hmac
 import secrets
 import time
-from typing import Optional
-from fastapi import Request, HTTPException, status
+from fastapi import Request, status
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
 from fastapi.responses import JSONResponse
 import logging
 

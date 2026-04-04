@@ -40,7 +40,7 @@ class UnifiedService:
             Tokens de la respuesta
         """
         try:
-            session_id = self._get_or_create_session(user_id)
+            self._get_or_create_session(user_id)
             
             # Registrar mensaje
             self._add_message_to_history(user_id, "user", message)
@@ -78,7 +78,6 @@ class UnifiedService:
         """
         try:
             request_type = request.get("type", "chat")
-            user_id = request.get("user_id")
             
             if request_type == "chat":
                 return await self._process_chat(request)
@@ -136,12 +135,13 @@ class UnifiedService:
     async def _process_document(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Procesa solicitud de documento"""
         doc_type = request.get("doc_type", "pdf")
-        content = request.get("content", "")
+        content = str(request.get("content", "") or "")
         
         return {
             "type": "document",
             "doc_type": doc_type,
             "document_id": f"doc_{datetime.utcnow().timestamp()}",
+            "content_length": len(content),
             "status": "generated"
         }
     

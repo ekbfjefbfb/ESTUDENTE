@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 
-from sqlalchemy import select, and_, update, delete, desc
+from sqlalchemy import select, and_, delete, desc
 from sqlalchemy.orm import selectinload
 
 from database.db_enterprise import get_primary_session
@@ -547,7 +547,7 @@ class VoiceNoteService:
                 .where(
                     and_(
                         VoiceNote.user_id == user_id,
-                        VoiceNote.is_deleted == False
+                        VoiceNote.is_deleted.is_(False)
                     )
                 )
             )
@@ -579,7 +579,7 @@ class VoiceNoteService:
                         and_(
                             VoiceNote.user_id == user_id,
                             VoiceNote.client_record_id.in_(missing_on_client[:50]),  # Limit
-                            VoiceNote.is_deleted == False
+                            VoiceNote.is_deleted.is_(False)
                         )
                     )
                 )
@@ -634,7 +634,7 @@ class VoiceNoteService:
             filters = [VoiceNote.user_id == user_id]
             
             if not include_deleted:
-                filters.append(VoiceNote.is_deleted == False)
+                filters.append(VoiceNote.is_deleted.is_(False))
             
             if status:
                 filters.append(VoiceNote.status == status)
@@ -682,7 +682,7 @@ class VoiceNoteService:
                     and_(
                         VoiceNote.id == voice_note_id,
                         VoiceNote.user_id == user_id,
-                        VoiceNote.is_deleted == False
+                        VoiceNote.is_deleted.is_(False)
                     )
                 )
             )

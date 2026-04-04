@@ -7,10 +7,8 @@ import logging
 import asyncio
 import json
 from datetime import datetime
-from typing import Callable, Dict, Any, Optional, List
+from typing import Callable, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
-import threading
-from queue import Queue
 
 from services.smart_cache_service import smart_cache
 from services.redis_service import get_redis_client
@@ -24,7 +22,9 @@ handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("async_processor")
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
+logger.propagate = False
 
 class AsyncTaskProcessor:
     """

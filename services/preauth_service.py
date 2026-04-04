@@ -4,15 +4,12 @@ Sistema de tokens de sesión para evitar re-validaciones
 """
 
 import logging
-import json
-import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple, List
 import uuid
 
 from services.smart_cache_service import smart_cache
 from services.redis_service import get_redis_client
-from utils.auth import decode_access_token, create_access_token
 import json_log_formatter
 
 # =============================================
@@ -23,7 +20,9 @@ handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("preauth_service")
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
+logger.propagate = False
 
 class PreAuthService:
     """
@@ -34,6 +33,10 @@ class PreAuthService:
     def __init__(self):
         self.session_ttl = 1800  # 30 minutos
         self.quick_check_ttl = 300  # 5 minutos para verificaciones rápidas
+
+    @staticmethod
+    def _cache_key(namespace: str, key: str) -> str:
+        return f"{namespace}:{key}"
         
     async def create_session_token(self, user_id: str, user_data: Dict[str, Any]) -> str:
         """
@@ -64,8 +67,7 @@ class PreAuthService:
             # Guardar en caché con TTL
             session_key = f"session:{session_id}"
             await smart_cache.set(
-                "auth_token",
-                session_key,
+                self._cache_key("auth_token", session_key),
                 session_data,
                 ttl=self.session_ttl
             )
@@ -73,8 +75,7 @@ class PreAuthService:
             # También mantener mapeo user_id -> session_id
             user_session_key = f"user_session:{user_id}"
             await smart_cache.set(
-                "auth_token",
-                user_session_key,
+                self._cache_key("auth_token", user_session_key),
                 session_id,
                 ttl=self.session_ttl
             )
@@ -108,7 +109,7 @@ class PreAuthService:
         """
         try:
             session_key = f"session:{session_token}"
-            session_data = await smart_cache.get("auth_token", session_key)
+            session_data = await smart_cache.get(self._cache_key("auth_token", session_key))
             
             if not session_data:
                 return False, None
@@ -123,8 +124,7 @@ class PreAuthService:
             # Actualizar última actividad
             session_data["last_activity"] = datetime.utcnow().isoformat()
             await smart_cache.set(
-                "auth_token",
-                session_key,
+                self._cache_key("auth_token", session_key),
                 session_data,
                 ttl=self.session_ttl
             )
@@ -198,7 +198,7 @@ class PreAuthService:
         """
         try:
             session_key = f"session:{session_token}"
-            session_data = await smart_cache.get("auth_token", session_key)
+            session_data = await smart_cache.get(self._cache_key("auth_token", session_key))
             
             if session_data:
                 user_id = session_data["user_id"]
@@ -234,16 +234,18 @@ class PreAuthService:
         """
         try:
             # Buscar todas las sesiones del usuario
-            pattern = f"session:*"
+            pattern = "auth_token:session:*"
             redis_client = await get_redis_client()
-            session_keys = await redis_client.keys(pattern)
-            
             invalidated_count = 0
-            
-            for session_key in session_keys:
-                session_data = await smart_cache.get("auth_token", session_key.decode())
+
+            if not redis_client:
+                return invalidated_count
+
+            async for session_key in redis_client.scan_iter(match=pattern, count=200):
+                decoded_key = session_key.decode() if isinstance(session_key, bytes) else str(session_key)
+                session_data = await smart_cache.get(decoded_key)
                 if session_data and session_data.get("user_id") == user_id:
-                    session_token = session_key.decode().split(":")[-1]
+                    session_token = decoded_key.split(":")[-1]
                     await self._cleanup_session(session_token, user_id)
                     invalidated_count += 1
             
@@ -278,7 +280,7 @@ class PreAuthService:
             quick_key = f"quick_auth:{session_token}"
             
             # Intentar obtener del caché rápido
-            quick_data = await smart_cache.get("validation_result", quick_key)
+            quick_data = await smart_cache.get(self._cache_key("validation_result", quick_key))
             if quick_data:
                 return quick_data
             
@@ -297,8 +299,7 @@ class PreAuthService:
                 
                 # Guardar en caché rápido
                 await smart_cache.set(
-                    "validation_result",
-                    quick_key,
+                    self._cache_key("validation_result", quick_key),
                     quick_auth_data,
                     ttl=self.quick_check_ttl
                 )
@@ -320,15 +321,15 @@ class PreAuthService:
         try:
             # Eliminar datos de sesión
             session_key = f"session:{session_token}"
-            await smart_cache.delete("auth_token", session_key)
+            await smart_cache.delete(self._cache_key("auth_token", session_key))
             
             # Limpiar mapeo de usuario
             user_session_key = f"user_session:{user_id}"
-            await smart_cache.delete("auth_token", user_session_key)
+            await smart_cache.delete(self._cache_key("auth_token", user_session_key))
             
             # Limpiar caché rápido
             quick_key = f"quick_auth:{session_token}"
-            await smart_cache.delete("validation_result", quick_key)
+            await smart_cache.delete(self._cache_key("validation_result", quick_key))
             
         except Exception as e:
             logger.error({

@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 """Cliente legacy (no usado).
 
 Este proyecto usa Groq para LLM/STT/TTS. Se mantiene el módulo solo por compatibilidad
 con imports antiguos; no se inicializa ni realiza llamadas externas.
 """
+
+from __future__ import annotations
 
 import logging
 import base64

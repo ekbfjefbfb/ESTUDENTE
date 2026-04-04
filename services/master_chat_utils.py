@@ -4,7 +4,7 @@ Separado de master_chat_service.py para reducir responsabilidades
 """
 import re
 import logging
-from typing import Dict, Any
+from typing import Dict
 
 logger = logging.getLogger("master_chat_utils")
 

@@ -9,8 +9,8 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Optional, Dict, Union
-from datetime import timedelta, datetime
+from typing import Any, Optional, Dict
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import json_log_formatter
 # from prometheus_client import Counter, Histogram, Gauge  # Deshabilitado temporalmente
@@ -18,7 +18,6 @@ from utils.safe_metrics import Counter, Histogram, Gauge  # Métricas seguras
 
 import redis.asyncio as redis
 from redis.asyncio import Redis
-from redis.exceptions import RedisError, ConnectionError as RedisConnectionError
 import os
 
 # =============================================
@@ -41,7 +40,9 @@ handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("redis_service_enterprise")
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
+logger.propagate = False
 
 # =============================================
 # MÉTRICAS PROMETHEUS (Usando wrappers seguros)
@@ -396,9 +397,6 @@ async def check_rate_limit(key: str, limit: int, window: int = 60) -> tuple[bool
     """
     try:
         redis_client = await get_redis()
-        
-        # Usar pipeline para atomicidad
-        pipe = redis_client.pipeline()
         
         # Limpiar entries antiguas y contar actuales
         now = asyncio.get_event_loop().time()

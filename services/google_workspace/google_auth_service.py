@@ -5,9 +5,8 @@ Obtiene información del usuario y mantiene acceso permanente
 
 import asyncio
 import logging
-import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Dict, Any, Tuple
 import httpx
 import json_log_formatter
@@ -28,9 +27,6 @@ except Exception as exc:
     GOOGLE_WORKSPACE_IMPORT_ERROR = exc
 
 from services.smart_cache_service import smart_cache
-from services.redis_service import get_redis_client
-from models.models import User
-from database.db_enterprise import get_primary_session as get_db_session
 
 # =============================================
 # CONFIGURACIÓN DE LOGGING
@@ -42,6 +38,7 @@ logger = logging.getLogger("google_auth_service")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     logger.addHandler(handler)
+logger.propagate = False
 
 # =============================================
 # CONFIGURACIÓN GOOGLE OAUTH2
@@ -73,6 +70,10 @@ class GoogleAuthService:
         self.client_secret = GOOGLE_CLIENT_SECRET
         self.redirect_uri = GOOGLE_REDIRECT_URI
         self.scopes = GOOGLE_SCOPES
+
+    @staticmethod
+    def _cache_key(namespace: str, key: str) -> str:
+        return f"{namespace}:{key}"
 
     def _ensure_available(self):
         if not GOOGLE_WORKSPACE_LIBS_AVAILABLE:
@@ -288,16 +289,14 @@ class GoogleAuthService:
             
             # Guardar en caché (TTL de 1 hora)
             await smart_cache.set(
-                "google_credentials",
-                user_email,
+                self._cache_key("google_credentials", user_email),
                 credentials_data,
                 ttl=3600
             )
             
             # Guardar información del usuario en caché
             await smart_cache.set(
-                "google_user_info",
-                user_email,
+                self._cache_key("google_user_info", user_email),
                 user_info,
                 ttl=86400  # 24 horas
             )
@@ -341,7 +340,9 @@ class GoogleAuthService:
         try:
             self._ensure_available()
             # Obtener credentials del caché
-            credentials_data = await smart_cache.get("google_credentials", user_email)
+            credentials_data = await smart_cache.get(
+                self._cache_key("google_credentials", user_email)
+            )
             
             if not credentials_data:
                 logger.warning({
@@ -365,6 +366,12 @@ class GoogleAuthService:
             
             # Verificar si necesita refresh
             if credentials.expired:
+                if not credentials.refresh_token:
+                    logger.warning({
+                        "event": "refresh_token_missing",
+                        "user_email": user_email
+                    })
+                    return None
                 logger.info({
                     "event": "refreshing_expired_token",
                     "user_email": user_email
@@ -380,8 +387,7 @@ class GoogleAuthService:
                 })
                 
                 await smart_cache.set(
-                    "google_credentials",
-                    user_email,
+                    self._cache_key("google_credentials", user_email),
                     updated_credentials_data,
                     ttl=3600
                 )
@@ -412,7 +418,9 @@ class GoogleAuthService:
             Dict con información del usuario o None
         """
         try:
-            user_info = await smart_cache.get("google_user_info", user_email)
+            user_info = await smart_cache.get(
+                self._cache_key("google_user_info", user_email)
+            )
             return user_info
             
         except Exception as e:
@@ -446,8 +454,8 @@ class GoogleAuthService:
                 response = await client.post(revoke_url)
             
             # Limpiar caché
-            await smart_cache.delete("google_credentials", user_email)
-            await smart_cache.delete("google_user_info", user_email)
+            await smart_cache.delete(self._cache_key("google_credentials", user_email))
+            await smart_cache.delete(self._cache_key("google_user_info", user_email))
             
             logger.info({
                 "event": "user_access_revoked",

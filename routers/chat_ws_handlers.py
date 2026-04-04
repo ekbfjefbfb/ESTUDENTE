@@ -13,7 +13,6 @@ import time
 from fastapi import WebSocket, WebSocketDisconnect, HTTPException
 
 from routers.chat_context import get_user_context_for_chat
-from routers.chat_progress import save_user_progress, _sanitize_structured_data
 from routers.chat_search import perform_web_search, prioritize_sources_with_images
 from routers.chat_ai import get_ai_response_with_streaming
 from routers.chat_ws_utils import (
@@ -243,7 +242,6 @@ async def _process_chat_message(
 ):
     """Process a single chat message from WebSocket"""
     from routers.chat_search import _should_web_search, _should_include_images_in_search
-    from services.groq_ai_service import get_context_info
     import uuid
     from services.agent_service import agent_manager
     from utils.agent_stream_bridge import run_agent_with_streaming

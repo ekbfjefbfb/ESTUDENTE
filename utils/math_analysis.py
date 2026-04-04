@@ -395,7 +395,6 @@ class MathematicalAnalyzer:
         Stress test a mathematical function with concurrent requests
         """
         import psutil
-        import asyncio
         from concurrent.futures import ThreadPoolExecutor
         
         process = psutil.Process()
@@ -411,11 +410,11 @@ class MathematicalAnalyzer:
             try:
                 # Execute function with proper error handling
                 if asyncio.iscoroutinefunction(func):
-                    result = await func(*args, **kwargs)
+                    await func(*args, **kwargs)
                 else:
                     # Run synchronous function in thread pool
                     with ThreadPoolExecutor() as executor:
-                        result = await asyncio.get_event_loop().run_in_executor(
+                        await asyncio.get_event_loop().run_in_executor(
                             executor, func, *args, **kwargs
                         )
                 

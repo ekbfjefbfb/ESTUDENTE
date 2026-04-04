@@ -10,7 +10,6 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy import select, and_
 from models.models import User, SessionItem, RecordingSession
 from services.hub_memory_service import hub_memory_service
-from utils.auth import get_current_user
 
 logger = logging.getLogger("chat_context")
 

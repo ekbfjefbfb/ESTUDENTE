@@ -20,8 +20,6 @@ async def detect_intentions(
     Detección AUTOMÁTICA de todas las intenciones del usuario
     Combina: patrones regex + detección por archivos + IA inteligente
     """
-    message_lower = message.lower()
-    
     # 1. Detección por patrones
     detected_intents = detect_intents_by_patterns(message, files)
     

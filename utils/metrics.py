@@ -5,7 +5,6 @@ Fecha: 2024-10-08
 """
 
 import logging
-import asyncio
 import time
 from typing import Dict, Any, Optional
 from threading import Thread
@@ -13,11 +12,8 @@ import os
 
 from prometheus_client import (
     Counter, Histogram, Gauge, Info, Enum,
-    start_http_server, generate_latest, CONTENT_TYPE_LATEST,
-    CollectorRegistry, REGISTRY
+    start_http_server, generate_latest, REGISTRY
 )
-from prometheus_client.multiprocess import MultiProcessCollector
-from prometheus_client.values import ValueClass
 
 import json_log_formatter
 
@@ -29,7 +25,9 @@ handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("metrics")
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
+logger.propagate = False
 
 # =============================================
 # CONFIGURACIÓN

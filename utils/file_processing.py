@@ -3,7 +3,6 @@ File processing utilities for Groq AI Vision API
 Converts images and documents to formats compatible with Groq's vision capabilities
 """
 import base64
-import io
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from fastapi import UploadFile
@@ -137,8 +136,10 @@ async def process_base64_files(
     
     if images_base64:
         for idx, b64_str in enumerate(images_base64):
-            if idx >= max_images: break
-            if not b64_str: continue
+            if idx >= max_images:
+                break
+            if not b64_str:
+                continue
             
             try:
                 # Basic check for data URI vs raw base64
@@ -159,7 +160,8 @@ async def process_base64_files(
 
     if docs_base64:
         for idx, b64_str in enumerate(docs_base64):
-            if not b64_str: continue
+            if not b64_str:
+                continue
             try:
                 if "," in b64_str:
                     _, data = b64_str.split(",", 1)

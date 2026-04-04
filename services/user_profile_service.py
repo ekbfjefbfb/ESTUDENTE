@@ -4,9 +4,9 @@ Gestiona perfiles y preferencias de usuarios
 """
 
 import logging
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 from datetime import datetime
-from utils.safe_metrics import Counter, Histogram, Gauge
+from utils.safe_metrics import Counter
 
 logger = logging.getLogger(__name__)
 

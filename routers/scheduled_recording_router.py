@@ -12,10 +12,9 @@ from sqlalchemy import select, desc, and_
 
 from utils.auth import get_current_user
 from utils.auth import create_access_token
-from models.models import ScheduledRecording, UserContext, User
+from models.models import ScheduledRecording, UserContext
 from database.db_enterprise import get_primary_session
-from services.chat_intent_extractor import chat_intent_extractor, ScheduleIntent
-from services.recording_session_service import recording_session_service
+from services.chat_intent_extractor import chat_intent_extractor
 from services.user_context_service import user_context_service
 
 logger = logging.getLogger("scheduled_recording_router")

@@ -25,6 +25,7 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 logger.setLevel("INFO")
+logger.propagate = False
 
 RATE_LIMIT_REDIS_TIMEOUT_SECONDS = max(
     0.05,

@@ -3,7 +3,7 @@ Master Chat Tasks v4.0 - New v4.0 task handlers (10 capabilities)
 Separado de master_chat_service.py para reducir responsabilidades
 """
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Optional, List
 
 from services.groq_ai_service import chat_with_ai, sanitize_ai_text
 from services.master_chat_utils import (

@@ -20,7 +20,6 @@ class ProfilePersistenceService:
         try:
             async with get_db_session() as session:
                 basic = profile.get("basic", {})
-                extended = profile.get("extended", {})
                 enriched = profile.get("enriched", {})
                 
                 update_data = {}

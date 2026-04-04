@@ -20,7 +20,7 @@ Version: 1.0.0
 
 import os
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from datetime import datetime
 from enum import Enum
 

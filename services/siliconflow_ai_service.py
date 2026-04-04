@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Any, Dict
 
 from services.groq_ai_service import (
     chat_with_ai,

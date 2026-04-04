@@ -32,6 +32,7 @@ if not logger.handlers:
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
     logger.addHandler(handler)
+logger.propagate = False
 
 JWT_SECRET = os.getenv("JWT_SECRET_KEY", os.getenv("JWT_SECRET", "default-jwt-secret-change-in-production"))
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")

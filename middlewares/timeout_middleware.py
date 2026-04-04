@@ -5,10 +5,8 @@ import logging
 from fastapi import Request, WebSocket, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from jose import jwt
-from sqlalchemy.future import select
 from database.db_enterprise import get_primary_session as get_async_db
-from models.models import User
-from utils.metrics import REQUESTS_TOTAL, TIMEOUT_COUNT
+from utils.metrics import TIMEOUT_COUNT
 
 logger = logging.getLogger("timeout_middleware")
 

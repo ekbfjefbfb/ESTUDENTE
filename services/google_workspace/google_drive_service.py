@@ -6,8 +6,6 @@ Crear, subir, descargar, organizar archivos y carpetas automáticamente
 import asyncio
 import logging
 import io
-import os
-from datetime import datetime
 from typing import Optional, Dict, Any, List, Union
 import json_log_formatter
 
@@ -27,7 +25,6 @@ except Exception as exc:
     GOOGLE_DRIVE_IMPORT_ERROR = exc
 
 from services.google_workspace.google_auth_service import google_auth_service
-from services.smart_cache_service import smart_cache
 
 # =============================================
 # CONFIGURACIÓN DE LOGGING
@@ -39,6 +36,7 @@ logger = logging.getLogger("google_drive_service")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     logger.addHandler(handler)
+logger.propagate = False
 
 class GoogleDriveService:
     """

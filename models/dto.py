@@ -5,8 +5,8 @@ Elimina los hacks type('User', (), {...})() que se usaban en auth_service.py.
 Estos dataclasses son inmutables, tipados y fáciles de serializar.
 """
 
-from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, Optional
 from datetime import datetime
 
 

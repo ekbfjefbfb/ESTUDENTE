@@ -22,7 +22,9 @@ handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger = logging.getLogger("prevalidation_middleware")
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
+logger.propagate = False
 
 class PreValidationMiddleware(BaseHTTPMiddleware):
     """
@@ -271,7 +273,7 @@ class PreValidationMiddleware(BaseHTTPMiddleware):
         """Verifica rate limiting usando caché."""
         try:
             # Verificar estado reciente del rate limit
-            cached_status = await smart_cache.get("rate_limit_status", f"{user_id}:minute")
+            cached_status = await smart_cache.get(f"rate_limit_status:{user_id}:minute")
             
             # Este middleware NO debe bloquear por rate limit para evitar doble enforcement.
             # La fuente de verdad es RateLimitMiddleware.

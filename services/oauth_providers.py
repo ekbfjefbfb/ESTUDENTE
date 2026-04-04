@@ -2,6 +2,7 @@
 OAuth Providers - Handlers para proveedores OAuth
 Separado de oauth_profile_service.py
 """
+import base64
 import logging
 from typing import Dict, Any
 import httpx
@@ -126,8 +127,9 @@ class MicrosoftOAuthProvider:
                         headers={"Authorization": f"Bearer {access_token}"}
                     )
                     if photo_response.status_code == 200:
-                        photo_url = f"data:image/jpeg;base64,{photo_response.content.hex()}"
-                except:
+                        photo_b64 = base64.b64encode(photo_response.content).decode("ascii")
+                        photo_url = f"data:image/jpeg;base64,{photo_b64}"
+                except Exception:
                     pass
                 
                 return {

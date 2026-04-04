@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
-from models.models import ChatSession, ChatMessage, User
+from models.models import ChatSession, ChatMessage
 
 logger = logging.getLogger("chat_session_service")
 
@@ -33,7 +33,7 @@ class ChatSessionService:
         """Obtiene la lista de hilos de chat del usuario."""
         return db.query(ChatSession).filter(
             ChatSession.user_id == user_id,
-            ChatSession.is_active == True
+            ChatSession.is_active.is_(True)
         ).order_by(desc(ChatSession.updated_at)).limit(limit).all()
 
     def get_session(self, db: Session, session_id: str, user_id: str) -> Optional[ChatSession]:
@@ -41,7 +41,7 @@ class ChatSessionService:
         return db.query(ChatSession).filter(
             ChatSession.id == session_id,
             ChatSession.user_id == user_id,
-            ChatSession.is_active == True,
+            ChatSession.is_active.is_(True),
         ).first()
 
     def get_session_history(self, db: Session, session_id: str, user_id: str) -> List[ChatMessage]:
@@ -124,7 +124,8 @@ class ChatSessionService:
             
             ai_title = ""
             async for token in await chat_with_ai(messages=messages, user="system_namer", fast_reasoning=True, stream=True):
-                if token: ai_title += token
+                if token:
+                    ai_title += token
             
             cleaned_title = ai_title.strip().replace('"', '').replace("'", "")
             if cleaned_title and len(cleaned_title) < 100:

@@ -8,9 +8,7 @@ import logging
 import re
 import time
 import uuid
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
-from contextlib import asynccontextmanager
+from typing import Optional, Dict, Any
 
 import json_log_formatter
 from utils.safe_metrics import Counter, Histogram  # Métricas seguras
@@ -18,9 +16,7 @@ from passlib.context import CryptContext
 
 from database.db_enterprise import get_primary_session as get_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, load_only
-from sqlalchemy import delete, text, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 
 from models.models import User
 from utils.auth import (
@@ -28,8 +24,7 @@ from utils.auth import (
     create_refresh_token,
     decode_refresh_token,
 )
-from services.redis_service import init_redis, redis
-from config import GOOGLE_CLIENT_ID, APPLE_CLIENT_ID
+from services.redis_service import init_redis
 
 # =============================================
 # CONFIGURACIÓN DE LOGGING
@@ -267,7 +262,7 @@ class AuthService:
             # 2. Verificar Audience contra el backend
             from config import GOOGLE_CLIENT_ID
             if GOOGLE_CLIENT_ID and payload.get("aud") != GOOGLE_CLIENT_ID:
-                raise Exception(f"Audience (aud) no coincide con GOOGLE_CLIENT_ID")
+                raise Exception("Audience (aud) no coincide con GOOGLE_CLIENT_ID")
             
             email = payload.get("email")
             if not email:

@@ -2,11 +2,10 @@
 Study Groups Models - Grupos de Estudio Colaborativos
 Modelos para grupos de estudio con efecto de red viral
 """
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, Float, JSON, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, JSON, Enum as SQLEnum
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 import enum
 import uuid
 

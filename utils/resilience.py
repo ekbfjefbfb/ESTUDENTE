@@ -14,6 +14,7 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
+logger.propagate = False
 
 # ---------------- Redis ----------------
 # Fuente única de Redis: services.redis_service (pool enterprise).

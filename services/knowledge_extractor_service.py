@@ -16,19 +16,17 @@ Features:
 - find_similar_discussions(): Encuentra discusiones similares históricas
 """
 
-import os
 import logging
 from typing import Dict, List, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 
 try:
-    from services.gpt_service import GPTService
+    from services.gpt_service import GPTService as BaseGPTService
 except Exception:
-    GPTService = None
     from services.groq_ai_service import chat_with_ai
 
-    class GPTService:  # type: ignore[override]
+    class BaseGPTService:  # type: ignore[override]
         async def chat_completion(self, messages=None, **kwargs):
             response = await chat_with_ai(
                 messages=messages or [],
@@ -56,7 +54,7 @@ class KnowledgeExtractorService:
     """
     
     def __init__(self):
-        self.gpt_service = GPTService()
+        self.gpt_service = BaseGPTService()
         logger.info("✅ KnowledgeExtractorService iniciado")
     
     

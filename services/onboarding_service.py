@@ -4,8 +4,7 @@ NOTA: Este es un archivo temporal simplificado
 """
 
 import logging
-from typing import Any, Dict, Optional
-from utils.safe_metrics import Counter, Histogram, Gauge
+from utils.safe_metrics import Counter
 
 logger = logging.getLogger(__name__)
 

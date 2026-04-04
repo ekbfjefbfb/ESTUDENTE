@@ -13,7 +13,6 @@ Schema para el Frontend:
 """
 
 import logging
-import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile

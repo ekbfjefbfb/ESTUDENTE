@@ -18,7 +18,6 @@ from models.models import (
 )
 from database.db_enterprise import get_primary_session
 from services.groq_voice_service import transcribe_audio_groq
-from services.groq_ai_service import chat_with_ai
 
 logger = logging.getLogger("recording_session_service")
 

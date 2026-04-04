@@ -6,7 +6,7 @@ Crea, edita, calcula y genera gráficos en Google Sheets automáticamente
 import asyncio
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List
 import json_log_formatter
 
 try:
@@ -22,7 +22,6 @@ except Exception as exc:
 
 from services.google_workspace.google_auth_service import google_auth_service
 from services.google_workspace.google_drive_service import google_drive_service
-from services.smart_cache_service import smart_cache
 
 # =============================================
 # CONFIGURACIÓN DE LOGGING
@@ -34,6 +33,7 @@ logger = logging.getLogger("google_sheets_service")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     logger.addHandler(handler)
+logger.propagate = False
 
 class GoogleSheetsService:
     """

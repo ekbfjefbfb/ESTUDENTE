@@ -17,8 +17,7 @@ Uso:
 """
 
 import logging
-from typing import Optional, Dict, Any
-from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import text
 

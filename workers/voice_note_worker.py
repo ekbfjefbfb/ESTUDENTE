@@ -5,7 +5,6 @@ Ejecutar: python -m workers.voice_note_worker
 """
 import os
 import sys
-import json
 import asyncio
 import logging
 import signal
@@ -19,11 +18,9 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
 from database.db_enterprise import get_primary_session
-from models.models import User  # Importar User para registrar el mapper en SQLAlchemy
 from models.voice_note_models import (
     VoiceNote, 
     VoiceNoteProcessingJob, 
-    VoiceNoteChunk,
     ProcessingJobStatus,
     ProcessingJobType,
     VoiceNoteStatus
@@ -37,7 +34,7 @@ except ImportError:
     TRANSCRIPTION_AVAILABLE = False
 
 try:
-    from services.groq_ai_service import chat_with_ai
+    __import__("services.groq_ai_service")
     AI_AVAILABLE = True
 except ImportError:
     AI_AVAILABLE = False

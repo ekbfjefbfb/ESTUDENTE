@@ -4,7 +4,7 @@ import asyncio
 import logging
 from array import array
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List
 
 from services.groq_voice_service import normalize_voice, text_to_speech_groq, transcribe_audio_groq
 
@@ -165,7 +165,6 @@ class VoiceWsSession:
             samples = list(pcm)
             abs_samples = [abs(x) for x in samples]
             avg_abs = int(sum(abs_samples) / len(abs_samples))
-            max_abs = max(abs_samples)
             
             # Refined VAD logic with hysteresis and noise floor
             is_voice = False

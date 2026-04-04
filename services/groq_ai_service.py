@@ -7,12 +7,30 @@ import logging
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 import inspect
+import re
 
 import anyio
+from config import (
+    GROQ_MAX_TOKENS_FAST,
+    GROQ_MAX_TOKENS_REASONING,
+    GROQ_MAX_TOKENS_VISION,
+    GROQ_MODEL_FAST,
+    GROQ_MODEL_REASONING,
+    GROQ_MODEL_VISION,
+    GROQ_REASONING_EFFORT,
+    GROQ_SEARCH_API_MAX_CONCURRENT,
+    GROQ_SYSTEM_PROMPT,
+    GROQ_TOOL_SEARCH_MAX_CALLS,
+    GROQ_TOOL_SEARCH_MAX_ROUNDS,
+    TEMPERATURE_REASONING,
+    TOP_P,
+    get_max_tokens_for_model,
+    select_groq_model,
+)
 from groq import Groq
+from services.smart_cache_service import smart_cache
 from sqlalchemy.exc import ProgrammingError
-
-import re
+from utils.bounded_dict import BoundedDict
 
 logger = logging.getLogger("groq_ai_service")
 
@@ -91,8 +109,6 @@ async def ensure_api_warmup():
 CONTEXT_THRESHOLD = 0.85
 MAX_CONTEXT_TOKENS = 32000
 
-from utils.bounded_dict import BoundedDict
-
 user_contexts: BoundedDict = BoundedDict(max_size=1000, ttl_seconds=1800)  # Max 1000 users, 30min TTL
 
 
@@ -117,24 +133,6 @@ def get_context_info(user_id: str) -> Dict[str, Any]:
 
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
-# Importar configuración de modelos desde config.py
-from config import (
-    GROQ_MODEL_FAST,
-    GROQ_MODEL_REASONING,
-    GROQ_MODEL_VISION,
-    GROQ_REASONING_EFFORT,
-    GROQ_MAX_TOKENS_FAST,
-    GROQ_MAX_TOKENS_REASONING,
-    GROQ_MAX_TOKENS_VISION,
-    GROQ_MAX_COMPLETION_TOKENS,
-    GROQ_MAX_COMPLETION_TOKENS_COMPLEX,
-    GROQ_SYSTEM_PROMPT,
-    select_groq_model,
-    get_max_tokens_for_model,
-    GROQ_TOOL_SEARCH_MAX_ROUNDS,
-    GROQ_TOOL_SEARCH_MAX_CALLS,
-    GROQ_SEARCH_API_MAX_CONCURRENT,
-)
 
 _search_api_semaphore = asyncio.Semaphore(GROQ_SEARCH_API_MAX_CONCURRENT)
 
@@ -338,9 +336,6 @@ async def _groq_stream_async(
                     sanitized = sanitize_ai_text(to_send)
                     if sanitized:
                         yield sanitized
-
-
-from services.smart_cache_service import smart_cache
 
 async def _get_user_personal_context_db(user_id: str) -> Optional[str]:
     if not user_id:

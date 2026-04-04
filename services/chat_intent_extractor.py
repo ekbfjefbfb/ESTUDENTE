@@ -9,7 +9,7 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
 from services.groq_ai_service import chat_with_ai
-from models.models import ScheduledRecording, RecordingSession, RecordingSessionType, RecordingSessionStatus
+from models.models import ScheduledRecording, RecordingSession, RecordingSessionType
 from database.db_enterprise import get_primary_session
 from services.recording_session_service import recording_session_service
 
@@ -58,9 +58,6 @@ class ChatIntentExtractor:
         """
         if current_time is None:
             current_time = datetime.utcnow()
-
-        # Preparar contexto para el prompt
-        context_str = json.dumps(user_context, default=str, ensure_ascii=False)
 
         prompt = f"""Analiza este mensaje y extrae SI hay intención de programar grabación de una clase.
 
@@ -147,7 +144,7 @@ EJEMPLOS:
             if result.get('scheduled_datetime_iso'):
                 try:
                     scheduled_datetime = datetime.fromisoformat(result['scheduled_datetime_iso'].replace('Z', '+00:00'))
-                except:
+                except ValueError:
                     pass
 
             return ScheduleIntent(

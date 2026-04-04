@@ -5,7 +5,6 @@ Router orquestador que delega a módulos especializados
 import asyncio
 import json
 import logging
-import os
 from datetime import datetime
 from typing import List, Optional
 
@@ -26,9 +25,7 @@ from database import get_db
 # Schemas
 from routers.chat_schemas import (
     ChatResponse, ChatMessageRequest,
-    STTResponse, STTRequest,
-    TTSResponse, TTSRequest,
-    VoiceChatResponse,
+    STTResponse, TTSResponse, VoiceChatResponse,
 )
 
 # Context

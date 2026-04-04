@@ -4,14 +4,12 @@ Consolidación de acceso a datos para máxima performance y mantenibilidad.
 """
 
 from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 # Re-exportar desde el sistema enterprise optimizado
 from database.db_enterprise import (
     db_manager, 
     get_async_db as get_async_db_enterprise,
-    get_primary_session,
     init_database_enterprise,
     close_database_enterprise,
     ConnectionType
