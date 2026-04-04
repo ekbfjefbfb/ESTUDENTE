@@ -44,6 +44,32 @@ class ChatSessionService:
             ChatSession.is_active.is_(True),
         ).first()
 
+    def resolve_or_create_session(
+        self,
+        db: Session,
+        user_id: str,
+        session_id: Optional[str] = None,
+        title: str = "Nueva Conversación",
+    ) -> ChatSession:
+        """
+        Resuelve una sesión existente del usuario o crea una nueva.
+
+        No reutiliza silenciosamente la sesión más reciente, porque eso puede
+        mezclar hilos distintos cuando el frontend olvida enviar `session_id`.
+        """
+        normalized_session_id = str(session_id or "").strip()
+        if normalized_session_id:
+            session = self.get_session(
+                db,
+                session_id=normalized_session_id,
+                user_id=user_id,
+            )
+            if session is None:
+                raise ValueError("session_not_found")
+            return session
+
+        return self.create_session(db, user_id, title=title)
+
     def get_session_history(self, db: Session, session_id: str, user_id: str) -> List[ChatMessage]:
         """Recupera el historial COMPLETO de una sesión para el frontend."""
         session = self.get_session(db, session_id=session_id, user_id=user_id)

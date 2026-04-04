@@ -155,7 +155,7 @@ async def google_oauth_config(request: Request) -> dict:
 async def google_authorize_url(request: Request, state: Optional[str] = None) -> dict:
     logger.info(f'{{"event": "google_oauth_authorize_attempt", "ip": "{_client_ip(request)}"}}')
     try:
-        authorization_url, resolved_state = google_auth_service.create_authorization_url(state=state)
+        authorization_url, resolved_state = await google_auth_service.create_authorization_url(state=state)
         config = google_auth_service.get_public_config()
         return {
             "success": True,
@@ -183,6 +183,8 @@ async def google_exchange_code(data: GoogleOAuthCodeSchema, request: Request) ->
 @router.get("/google/callback")
 async def google_callback(code: str, state: str, request: Request) -> dict:
     logger.info(f'{{"event": "google_oauth_callback_attempt", "ip": "{_client_ip(request)}"}}')
+    if len(str(code or "").strip()) < 8 or len(str(state or "").strip()) < 8:
+        raise HTTPException(status_code=400, detail="invalid_google_oauth_callback_params")
     try:
         return await complete_google_oauth_login(code=sanitize_input(code), state=sanitize_input(state))
     except Exception as e:

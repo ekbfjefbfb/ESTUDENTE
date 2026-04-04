@@ -59,6 +59,17 @@ def _safe_meta(meta: Any) -> Dict[str, Any]:
     return out
 
 
+def _normalize_session_id(value: Optional[str]) -> Optional[str]:
+    normalized = str(value or "").strip()
+    if normalized.lower() in {"", "none", "null", "undefined"}:
+        return None
+    return normalized
+
+
+def _json_payload_has_attachments(request: ChatMessageRequest) -> bool:
+    return bool(request.files or request.images or request.documents)
+
+
 def _has_vision_attachments(file_content: Optional[Dict[str, Any]]) -> bool:
     return bool(file_content and file_content.get("images"))
 
@@ -93,6 +104,7 @@ async def handle_chat_message(
     normalized_message = _normalize_message_text(message)
     request_id = _new_request_id()
     t0 = time.monotonic()
+    session_id = _normalize_session_id(session_id)
     
     # Combine all file sources for processing
     all_files = []
@@ -141,24 +153,18 @@ async def handle_chat_message(
     from services.chat_session_service import chat_session_service
     db = SessionLocal()
     try:
-        # Resolve session_id
-        if session_id:
-            session = chat_session_service.get_session(
+        try:
+            session = chat_session_service.resolve_or_create_session(
                 db,
-                session_id=session_id,
                 user_id=user_id,
+                session_id=session_id,
             )
-            if session is None:
-                raise HTTPException(status_code=404, detail="session_not_found")
-        else:
-            # Try to get the most recent session or create a new one
-            sessions = chat_session_service.get_user_sessions(db, user_id, limit=1)
-            if sessions:
-                session_id = sessions[0].id
-            else:
-                new_session = chat_session_service.create_session(db, user_id)
-                session_id = new_session.id
-        
+        except ValueError as exc:
+            if str(exc) == "session_not_found":
+                raise HTTPException(status_code=404, detail="session_not_found") from exc
+            raise
+        session_id = session.id
+
         # Save user message to database
         chat_session_service.add_message(
             db=db,
@@ -295,22 +301,12 @@ async def handle_chat_message_json(
     request: ChatMessageRequest,
     user: dict,
 ) -> ChatResponse:
-    """Handle chat message JSON endpoint"""
-    # Procesar archivos base64 del JSON si existen
-    from utils.file_processing import process_base64_files
-    
-    image_contents, text_contents, attachment_metadata = await process_base64_files(
-        images_base64=request.images,
-        docs_base64=request.documents or request.files
-    )
-    
-    pre_file_content = None
-    if image_contents or text_contents:
-        pre_file_content = {
-            "images": image_contents,
-            "texts": text_contents,
-            "attachments": attachment_metadata,
-        }
+    """Handle chat message JSON endpoint (solo texto; adjuntos van por multipart)."""
+    if _json_payload_has_attachments(request):
+        raise HTTPException(
+            status_code=400,
+            detail="attachments_require_multipart_form_data",
+        )
 
     return await handle_chat_message(
         message=request.message,
@@ -320,8 +316,8 @@ async def handle_chat_message_json(
         user=user,
         stream=False,
         force_web_search=bool(getattr(request, "web_search", False)),
-        pre_processed_file_content=pre_file_content,
-        session_id=request.session_id
+        pre_processed_file_content=None,
+        session_id=_normalize_session_id(request.session_id),
     )
 
 

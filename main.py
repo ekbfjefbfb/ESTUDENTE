@@ -9,7 +9,7 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import FastAPI, Request, status, HTTPException, Depends
+from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.responses import JSONResponse, Response, ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -17,7 +17,6 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from utils.msgpack_utils import MessagePackResponse
 from prometheus_client import generate_latest
 import json_log_formatter
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 # Configuración
@@ -69,7 +68,6 @@ except Exception:
     pass
 
 # Database
-from database.db_enterprise import get_async_db
 from services.redis_service import get_redis
 
 
@@ -531,7 +529,7 @@ if __name__ == "__main__":
     print("=" * 64)
     print(f"Service: {APP_NAME} v{APP_VERSION}")
     print(f"Environment: {ENVIRONMENT}")
-    print(f"AI Model: Qwen 2.5 Omni (multimodal)")
+    print("AI Model: Qwen 2.5 Omni (multimodal)")
     print(f"Debug Mode: {DEBUG}")
     print("")
     print("API Docs: /docs")

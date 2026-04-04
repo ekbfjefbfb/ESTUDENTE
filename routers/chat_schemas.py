@@ -3,17 +3,42 @@ Chat Schemas - Pydantic models for chat API
 Separado de unified_chat_router.py para reducir responsabilidades
 """
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 class ChatMessageRequest(BaseModel):
-    message: str
-    files: Optional[List[str]] = None
-    images: Optional[List[str]] = None  # Soporte explícito para imágenes (Base64 o URLs)
-    documents: Optional[List[str]] = None # Soporte para documentos adicionales
+    message: str = Field(..., min_length=1)
+    files: Optional[List[str]] = Field(
+        default=None,
+        description="No soportado en JSON. Use /api/unified-chat/message con multipart/form-data.",
+    )
+    images: Optional[List[str]] = Field(
+        default=None,
+        description="No soportado en JSON. Use /api/unified-chat/message con multipart/form-data.",
+    )
+    documents: Optional[List[str]] = Field(
+        default=None,
+        description="No soportado en JSON. Use /api/unified-chat/message con multipart/form-data.",
+    )
     session_id: Optional[str] = None
     # True = forzar prefetch Tavily/Serper antes de llamar al modelo
     web_search: bool = False
+
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("message_empty")
+        return normalized
+
+    @field_validator("session_id")
+    @classmethod
+    def normalize_session_id(cls, value: Optional[str]) -> Optional[str]:
+        normalized = str(value or "").strip()
+        if normalized.lower() in {"", "none", "null", "undefined"}:
+            return None
+        return normalized
 
 
 class RichGalleryItem(BaseModel):

@@ -121,6 +121,8 @@ def _build_client_config(request: Request) -> Dict[str, Any]:
             "context_monitoring": True,
             "auto_context_refresh": True,
             "multipart_chat": True,
+            "websocket_attachments": False,
+            "json_attachments": False,
             "google_oauth": bool(google_config.get("enabled")),
             "deepgram_agent_proxy": True,
         },
@@ -131,6 +133,7 @@ def _build_client_config(request: Request) -> Dict[str, Any]:
             "max_file_size_mb": round(MAX_FILE_SIZE_BYTES / (1024 * 1024), 2),
         },
         "multipart": {
+            "required_for_attachments": True,
             "fields": {
                 "message": "text",
                 "files": "list[file]",
@@ -148,6 +151,7 @@ def _build_client_config(request: Request) -> Dict[str, Any]:
             "history_url_template": f"{base_url}/api/unified-chat/sessions/{{session_id}}/history",
             "ws_url_template": f"{_ws_url_from_http_base(base_url, '/api/unified-chat/ws/{user_id}')}?token={{jwt}}",
             "voice_ws_url": CHAT_VOICE_WS_PUBLIC_URL or _ws_url_from_http_base(base_url, "/api/unified-chat/voice/ws"),
+            "attachments_transport": "multipart/form-data",
         },
         "voice_agent": {
             "provider": "deepgram-custom-llm",
@@ -307,7 +311,7 @@ async def unified_chat_message_json(
     request: ChatMessageRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Chat con IA - JSON body"""
+    """Chat con IA - JSON body solo texto. Adjuntos: usar /message multipart."""
     return await handle_chat_message_json(request=request, user=user)
 
 

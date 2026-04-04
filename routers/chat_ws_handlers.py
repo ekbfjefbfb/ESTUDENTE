@@ -30,54 +30,93 @@ from config import DEBUG
 logger = logging.getLogger("chat_ws_handlers")
 
 _MAX_MESSAGE_CHARS = 8000
-_MAX_RAW_PAYLOAD_CHARS = int(os.getenv("CHAT_WS_MAX_PAYLOAD_CHARS", str(28 * 1024 * 1024)))
+_MAX_RAW_PAYLOAD_CHARS = int(os.getenv("CHAT_WS_MAX_PAYLOAD_CHARS", str(256 * 1024)))
 _WS_CONNECT_RULES = (
     RateLimitRule(name="chat_ws_connect_ip", scope="ip", max_requests=30, window_seconds=60, block_seconds=120),
     RateLimitRule(name="chat_ws_connect_user", scope="user", max_requests=10, window_seconds=60, block_seconds=120),
 )
 
 
+async def _persist_ws_session_turn(
+    user_id: str,
+    session_id: str,
+    ai_text: str,
+    request_id: str,
+    user_message_for_naming: str
+):
+    """
+    Helper Senior: Persistencia atómica de la respuesta AI y trigger de nombrado.
+    Evita duplicidad entre modo Agente y modo Chat.
+    """
+    from database import SessionLocal
+    from models.models import ChatSession
+    from services.chat_session_service import chat_session_service
+    from utils.background import safe_create_task
+
+    db = SessionLocal()
+    try:
+        # 1. Guardar respuesta del asistente
+        chat_session_service.add_message(
+            db=db, session_id=session_id, user_id=user_id,
+            role="assistant", content=ai_text,
+            request_id=request_id
+        )
+        # 2. Invalidar contexto para que la próxima vez lea el historial nuevo
+        invalidate_user_context(user_id)
+
+        # 3. Naming Inteligente (si es necesario)
+        session_info = db.query(ChatSession).filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user_id,
+        ).first()
+        
+        if _should_auto_rename_session(session_info):
+            safe_create_task(
+                chat_session_service.auto_rename_session(session_id, user_message_for_naming),
+                name=f"rename_session_{session_id}"
+            )
+    except Exception as e:
+        logger.error(f"Failed to persist WS AI response for user {user_id}: {e}")
+    finally:
+        db.close()
+
+
 def _should_auto_rename_session(session_info: Any) -> bool:
     return getattr(session_info, "title", None) == "Nueva Conversación"
 
 
-def _has_vision_attachments(image_contents: List[Dict[str, Any]]) -> bool:
-    return bool(image_contents)
+def _normalize_session_id(value: Any) -> Optional[str]:
+    normalized = str(value or "").strip()
+    if normalized.lower() in {"", "none", "null", "undefined"}:
+        return None
+    return normalized
 
 
-def _merge_message_with_document_texts(message: str, text_contents: List[str]) -> str:
-    docs = [str(item or "").strip() for item in (text_contents or []) if str(item or "").strip()]
-    if not docs:
-        return str(message or "")
-    merged_docs = "\n\n".join(docs)[:12000]
-    base_message = str(message or "").strip()
-    if not base_message:
-        return f"Contexto documental adjunto:\n{merged_docs}"
-    return f"{base_message}\n\nContexto documental adjunto:\n{merged_docs}"
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "si", "on"}
+    return bool(value)
 
 
-def _attachment_marker(item: Any) -> str:
-    raw = str(item or "").strip()
-    if len(raw) <= 128:
-        return raw
-    return f"{raw[:64]}...{raw[-32:]}"
+def _has_ws_attachment_payload(message_data: Dict[str, Any]) -> bool:
+    return bool(
+        message_data.get("images")
+        or message_data.get("documents")
+        or message_data.get("files")
+    )
 
 
 def _dedupe_signature(message_data: Dict[str, Any]) -> str:
-    images = message_data.get("images", []) or []
-    documents = message_data.get("documents", []) or message_data.get("files", []) or []
     signature_payload = {
         "type": str(message_data.get("type") or "").strip().lower(),
-        "session_id": str(message_data.get("session_id") or "").strip(),
+        "session_id": _normalize_session_id(message_data.get("session_id")) or "",
         "message": str(message_data.get("message") or "").strip(),
-        "image_count": len(images) if isinstance(images, list) else 0,
-        "document_count": len(documents) if isinstance(documents, list) else 0,
-        "image_markers": [
-            _attachment_marker(item) for item in (images[:3] if isinstance(images, list) else [])
-        ],
-        "document_markers": [
-            _attachment_marker(item) for item in (documents[:3] if isinstance(documents, list) else [])
-        ],
+        "web_search": _coerce_bool(message_data.get("web_search")),
+        "search_web": _coerce_bool(message_data.get("search_web")),
     }
     try:
         return json.dumps(signature_payload, sort_keys=True, ensure_ascii=True)
@@ -220,6 +259,7 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
         # Debounce/Deduplicación de mensajes (Evitar repeticiones por ráfaga)
         last_msg_hash = None
         last_msg_time = 0.0
+        connection_session_id: Optional[str] = None
         
         # Message loop
         while True:
@@ -253,6 +293,10 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
                 await _ws_send_json(websocket, {"type": "error", "message": "invalid_json"})
                 continue
 
+            if not isinstance(message_data, dict):
+                await _ws_send_json(websocket, {"type": "error", "message": "invalid_message_payload"})
+                continue
+
             if str(message_data.get("type") or "").strip().lower() == "pong":
                 continue
             
@@ -267,7 +311,15 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
             last_msg_time = current_time
 
             # Process message
-            await _process_chat_message(websocket, user_id, message_data, loop=loop)
+            resolved_session_id = await _process_chat_message(
+                websocket,
+                user_id,
+                message_data,
+                loop=loop,
+                default_session_id=connection_session_id,
+            )
+            if resolved_session_id:
+                connection_session_id = resolved_session_id
             
     except json.JSONDecodeError as e:
         logger.warning(f"WebSocket JSON decode error for user_id={user_id}: {e}")
@@ -290,109 +342,99 @@ async def _process_chat_message(
     user_id: str,
     message_data: Dict[str, Any],
     loop: Optional[asyncio.AbstractEventLoop] = None,
-):
+    default_session_id: Optional[str] = None,
+) -> Optional[str]:
     """Process a single chat message from WebSocket"""
+    from database import SessionLocal
+    from models.models import ChatSession
+    from services.chat_session_service import chat_session_service
     from routers.chat_search import _should_web_search, _should_include_images_in_search
-    import uuid
     from services.agent_service import agent_manager
     from utils.agent_stream_bridge import run_agent_with_streaming
     from services.orchestration_service import scout
+    import uuid
     
     start_ts = datetime.utcnow()
     request_id = uuid.uuid4().hex[:12]
     
     user_message = str(message_data.get("message", "") or "").strip()
-    images_raw = message_data.get("images", []) # Base64 o URLs
-    docs_raw = message_data.get("documents", []) or message_data.get("files", [])
-    
-    if not user_message and not images_raw and not docs_raw:
+    if _has_ws_attachment_payload(message_data):
+        await _ws_send_json(
+            websocket,
+            {
+                "type": "error",
+                "message": "attachments_require_multipart_form_data",
+                "error_code": "attachments_require_multipart_form_data",
+                "upload_path": "/api/unified-chat/message",
+                "request_id": request_id,
+            },
+        )
+        return None
+
+    if not user_message:
         await _ws_send_json(websocket, {"type": "error", "message": "message_empty"})
-        return
+        return None
     
     if len(user_message) > _MAX_MESSAGE_CHARS:
         await _ws_send_json(websocket, {"type": "error", "message": f"message_too_long_max_{_MAX_MESSAGE_CHARS}"})
-        return
+        return None
 
-    # Procesar MEDIA (Imágenes y Documentos)
-    from utils.file_processing import process_base64_files
-    image_contents, text_contents, attachment_metadata = await process_base64_files(
-        images_base64=images_raw,
-        docs_base64=docs_raw
-    )
+    force_web = _coerce_bool(message_data.get("web_search")) or _coerce_bool(message_data.get("search_web"))
+    requested_session_id = _normalize_session_id(message_data.get("session_id"))
+    fallback_session_id = _normalize_session_id(default_session_id)
     
-    force_web = bool(message_data.get("web_search") or message_data.get("search_web"))
-    session_id = message_data.get("session_id")
-    
-    # PERSISTENCE: Resolve/Create session and save User Message
-    from database import SessionLocal
-    from services.chat_session_service import chat_session_service
-    from models.models import ChatSession
+    # ROOT RESOLUTION: Validate ownership and resolve session
     db = SessionLocal()
     try:
+        session_id = requested_session_id or fallback_session_id
+        session = None
         if session_id:
-            session = chat_session_service.get_session(
-                db,
-                session_id=session_id,
-                user_id=user_id,
-            )
+            session = chat_session_service.get_session(db, session_id=session_id, user_id=user_id)
             if session is None:
-                await _ws_send_json(
-                    websocket,
-                    {"type": "error", "message": "session_not_found", "request_id": request_id},
-                )
-                return
+                if requested_session_id:
+                    await _ws_send_json(websocket, {"type": "error", "message": "session_not_found", "request_id": request_id})
+                    return None
+                # If fallback failed, create new
+                session = chat_session_service.create_session(db, user_id)
         else:
-            # Fallback a la más reciente o crear nueva
-            sessions = chat_session_service.get_user_sessions(db, user_id, limit=1)
-            if sessions:
-                session_id = sessions[0].id
-            else:
-                new_session = chat_session_service.create_session(db, user_id)
-                session_id = new_session.id
+            session = chat_session_service.create_session(db, user_id)
         
-        # Save USER message
+        session_id = session.id
+        
+        # PERSIST USER MESSAGE (Atomic start)
         chat_session_service.add_message(
             db=db, session_id=session_id, user_id=user_id,
             role="user", content=user_message,
-            media_metadata=attachment_metadata,
+            media_metadata={},
             request_id=request_id
         )
-        if not session_id:
-            raise RuntimeError("session_resolution_failed")
     except Exception as e:
-        logger.error(f"Error persisting WS user message: {e}")
-        await _ws_send_json(
-            websocket,
-            {"type": "error", "message": "session_persistence_error", "request_id": request_id},
-        )
-        return
+        logger.error(f"Root session resolution failure for user {user_id}: {e}")
+        await _ws_send_json(websocket, {"type": "error", "message": "session_persistence_error", "request_id": request_id})
+        return None
     finally:
         db.close()
 
     invalidate_user_context(user_id)
-    await _ws_send_json(
-        websocket,
-        {
-            "type": "session",
-            "request_id": request_id,
-            "session_id": session_id,
-        },
-    )
+    await _ws_send_json(websocket, {"type": "session", "request_id": request_id, "session_id": session_id})
 
-    # Get user context (NOW with SQL History if session_id is present)
+    # Get user context (NOW with SQL History)
     user_context = await get_user_context_for_chat(user_id, session_id=session_id)
     chat_history = user_context.get("chat_history", [])
 
     should_web_search = _should_web_search(
         user_id=user_id, message=user_message, force=force_web
     )
-    effective_web_search = should_web_search and not (image_contents or text_contents)
-    logger.info(f"chat_ws_start request_id={request_id} user_id={user_id} web_search={effective_web_search}")
+    effective_web_search = should_web_search
+    logger.info(
+        f"chat_ws_start request_id={request_id} user_id={user_id} "
+        f"session_id={session_id} web_search={effective_web_search}"
+    )
 
     # --- ORQUESTACIÓN AUTÓNOMA (Nivel Dios) ---
     # El Scout decide si necesitamos agentes o chat normal usando el HISTORIAL
-    agent_input_message = _merge_message_with_document_texts(user_message, text_contents)
-    should_use_agents = scout.should_use_agents(agent_input_message, history=chat_history) and not _has_vision_attachments(image_contents)
+    agent_input_message = user_message
+    should_use_agents = scout.should_use_agents(agent_input_message, history=chat_history)
     if should_use_agents:
         task_desc = agent_input_message.strip()
         
@@ -424,32 +466,14 @@ async def _process_chat_message(
             )
             agent_text = agent_manager.extract_text(agent_result)
             if agent_text:
-                db = SessionLocal()
-                try:
-                    chat_session_service.add_message(
-                        db=db,
-                        session_id=session_id,
-                        user_id=user_id,
-                        role="assistant",
-                        content=agent_text,
-                        request_id=request_id,
-                    )
-                    invalidate_user_context(user_id)
-                    session_info = db.query(ChatSession).filter(
-                        ChatSession.id == session_id,
-                        ChatSession.user_id == user_id,
-                    ).first()
-                    if _should_auto_rename_session(session_info):
-                        from utils.background import safe_create_task
-
-                        safe_create_task(
-                            chat_session_service.auto_rename_session(session_id, user_message),
-                            name=f"rename_session_{session_id}",
-                        )
-                except Exception as persist_exc:
-                    logger.error(f"Error persisting WS agent response: {persist_exc}")
-                finally:
-                    db.close()
+                # Senior Persistent Flow
+                await _persist_ws_session_turn(
+                    user_id=user_id,
+                    session_id=session_id,
+                    ai_text=agent_text,
+                    request_id=request_id,
+                    user_message_for_naming=user_message
+                )
 
                 memory_id = str(uuid.uuid4())
                 latency_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
@@ -482,7 +506,7 @@ async def _process_chat_message(
                     websocket,
                     {"type": "done", "request_id": request_id, "session_id": session_id, "agent_mode": True},
                 )
-            return # Finalizar aquí para peticiones agénticas automáticas
+            return session_id
         except asyncio.TimeoutError:
             logger.warning(f"Agent timeout request_id={request_id} user_id={user_id}")
             # El fallback a chat normal se encargará de completar la respuesta
@@ -565,7 +589,7 @@ async def _process_chat_message(
     try:
         ai_result = await get_ai_response_with_streaming(
             user_id, user_message, user_context, websocket, request_id, 
-            images=image_contents, documents=text_contents
+            images=None, documents=None
         )
     except Exception as e:
         import traceback
@@ -588,7 +612,7 @@ async def _process_chat_message(
                 "traceback": error_detail[-500:], # Últimos 500 caracteres para no saturar
                 "request_id": request_id
             })
-        return
+        return None
     
     text = str(ai_result.get("text") or "")
     logger.info(f"chat_ws_done request_id={request_id} user_id={user_id} response_len={len(text)}")
@@ -599,30 +623,14 @@ async def _process_chat_message(
     memory_debug = {"latency_ms": latency_ms, "query": user_message.strip()}
     
     # PERSISTENCE: Save AI response and detect naming need
-    db = SessionLocal()
-    try:
-        chat_session_service.add_message(
-            db=db, session_id=session_id, user_id=user_id,
-            role="assistant", content=text,
-            request_id=request_id
-        )
-        invalidate_user_context(user_id)
-        
-        # Simple Naming logic: rename if session title is default
-        session_info = db.query(ChatSession).filter(
-            ChatSession.id == session_id,
-            ChatSession.user_id == user_id,
-        ).first()
-        if _should_auto_rename_session(session_info):
-            from utils.background import safe_create_task
-            safe_create_task(
-                chat_session_service.auto_rename_session(session_id, user_message),
-                name=f"rename_session_{session_id}"
-            )
-    except Exception as e:
-        logger.error(f"Error persisting WS AI response: {e}")
-    finally:
-        db.close()
+    # Senior Persistent Flow
+    await _persist_ws_session_turn(
+        user_id=user_id,
+        session_id=session_id,
+        ai_text=text,
+        request_id=request_id,
+        user_message_for_naming=user_message
+    )
     
     from utils.background import safe_create_task
     final_sources_raw: List[Dict[str, Any]] = []
@@ -653,6 +661,7 @@ async def _process_chat_message(
             "rich_response": rich_response.model_dump() if rich_response else None,
         },
     )
+    return session_id
 
 
 async def _send_rich_preview(

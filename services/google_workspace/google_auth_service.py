@@ -76,6 +76,44 @@ class GoogleAuthService:
     def _normalize_email(user_email: Optional[str]) -> str:
         return str(user_email or "").strip().lower()
 
+    async def _store_oauth_state(self, state: str) -> None:
+        normalized_state = str(state or "").strip()
+        if not normalized_state:
+            return
+        payload = {"created_at": datetime.utcnow().isoformat()}
+        _OAUTH_STATE_CACHE[normalized_state] = payload
+        try:
+            await smart_cache.set(
+                self._cache_key("google_oauth_state", normalized_state),
+                payload,
+                ttl=600,
+            )
+        except Exception as exc:
+            logger.warning({
+                "event": "oauth_state_cache_store_failed",
+                "error": str(exc),
+            })
+
+    async def _consume_oauth_state(self, state: str) -> Optional[Dict[str, Any]]:
+        normalized_state = str(state or "").strip()
+        if not normalized_state:
+            return None
+
+        cache_key = self._cache_key("google_oauth_state", normalized_state)
+        cached_state = None
+        try:
+            cached_state = await smart_cache.get(cache_key)
+            if cached_state is not None:
+                await smart_cache.delete(cache_key)
+        except Exception as exc:
+            logger.warning({
+                "event": "oauth_state_cache_read_failed",
+                "error": str(exc),
+            })
+
+        local_state = _OAUTH_STATE_CACHE.pop(normalized_state, None)
+        return cached_state or local_state
+
     async def _get_user_info_fallback(self, access_token: Optional[str]) -> Optional[Dict[str, Any]]:
         normalized_token = str(access_token or "").strip()
         if not normalized_token:
@@ -345,7 +383,7 @@ class GoogleAuthService:
     async def _execute(self, request):
         return await asyncio.to_thread(request.execute)
         
-    def create_authorization_url(self, state: Optional[str] = None) -> Tuple[str, str]:
+    async def create_authorization_url(self, state: Optional[str] = None) -> Tuple[str, str]:
         """
         Crea URL de autorización para Google OAuth2
         
@@ -375,7 +413,7 @@ class GoogleAuthService:
                 state=state,
                 prompt='consent'  # Fuerza reauthorization para refresh token
             )
-            _OAUTH_STATE_CACHE[flow_state] = {"created_at": datetime.utcnow().isoformat()}
+            await self._store_oauth_state(flow_state)
             
             logger.info({
                 "event": "authorization_url_created",
@@ -406,7 +444,7 @@ class GoogleAuthService:
         try:
             self._ensure_available()
             self._ensure_configured()
-            cached_state = _OAUTH_STATE_CACHE.pop(state, None)
+            cached_state = await self._consume_oauth_state(state)
             if not state or cached_state is None:
                 raise RuntimeError("invalid_oauth_state")
             # Intercambiar code por tokens
@@ -641,19 +679,30 @@ class GoogleAuthService:
                         "user_email": normalized_email
                     })
                     return None
+
+            if not isinstance(credentials_data, dict) or not credentials_data.get("token"):
+                logger.warning({
+                    "event": "credentials_payload_invalid",
+                    "user_email": normalized_email,
+                })
+                return None
             
             # Reconstruir credentials object
             credentials = Credentials(
-                token=credentials_data["token"],
-                refresh_token=credentials_data["refresh_token"],
-                token_uri=credentials_data["token_uri"],
-                client_id=credentials_data["client_id"],
-                client_secret=credentials_data["client_secret"],
-                scopes=credentials_data["scopes"]
+                token=credentials_data.get("token"),
+                refresh_token=credentials_data.get("refresh_token"),
+                token_uri=credentials_data.get("token_uri") or "https://oauth2.googleapis.com/token",
+                client_id=credentials_data.get("client_id") or self.client_id,
+                client_secret=credentials_data.get("client_secret") or self.client_secret,
+                scopes=credentials_data.get("scopes") or list(self.scopes),
             )
             
-            if credentials_data["expiry"]:
-                credentials.expiry = datetime.fromisoformat(credentials_data["expiry"])
+            raw_expiry = credentials_data.get("expiry")
+            if raw_expiry:
+                try:
+                    credentials.expiry = datetime.fromisoformat(raw_expiry)
+                except Exception:
+                    credentials.expiry = None
             
             # Verificar si necesita refresh
             if credentials.expired:
@@ -756,28 +805,32 @@ class GoogleAuthService:
         try:
             normalized_email = self._normalize_email(user_email)
             credentials = await self.get_valid_credentials(normalized_email)
-            
-            if not credentials:
-                return False
-            
-            # Revocar token en Google
-            revoke_url = f"https://oauth2.googleapis.com/revoke?token={credentials.token}"
-            
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(revoke_url)
-            
-            # Limpiar caché
-            await smart_cache.delete(self._cache_key("google_credentials", normalized_email))
-            await smart_cache.delete(self._cache_key("google_user_info", normalized_email))
-            await self._clear_credentials_from_db(normalized_email)
+            revoke_status = None
+
+            if credentials and getattr(credentials, "token", None):
+                revoke_url = f"https://oauth2.googleapis.com/revoke?token={credentials.token}"
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(revoke_url)
+                revoke_status = response.status_code
+
+            cache_deleted = await smart_cache.delete(self._cache_key("google_credentials", normalized_email))
+            info_deleted = await smart_cache.delete(self._cache_key("google_user_info", normalized_email))
+            db_cleared = await self._clear_credentials_from_db(normalized_email)
             
             logger.info({
                 "event": "user_access_revoked",
                 "user_email": normalized_email,
-                "revoke_status": response.status_code
+                "revoke_status": revoke_status,
+                "cache_deleted": bool(cache_deleted or info_deleted),
+                "db_cleared": db_cleared,
             })
             
-            return response.status_code == 200
+            return bool(
+                revoke_status == 200
+                or cache_deleted
+                or info_deleted
+                or db_cleared
+            )
             
         except Exception as e:
             logger.error({
