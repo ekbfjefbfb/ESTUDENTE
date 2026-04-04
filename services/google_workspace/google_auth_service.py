@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import Optional, Dict, Any, Tuple
 import httpx
 import json_log_formatter
+from sqlalchemy import func, select, update
+from utils.bounded_dict import BoundedDict
 
 try:
     from google.oauth2.credentials import Credentials
@@ -58,6 +60,7 @@ GOOGLE_SCOPES = [
     'https://www.googleapis.com/auth/gmail.compose',
     'https://www.googleapis.com/auth/gmail.modify'
 ]
+_OAUTH_STATE_CACHE: BoundedDict = BoundedDict(max_size=5000, ttl_seconds=600)
 
 class GoogleAuthService:
     """
@@ -74,6 +77,135 @@ class GoogleAuthService:
     @staticmethod
     def _cache_key(namespace: str, key: str) -> str:
         return f"{namespace}:{key}"
+
+    @staticmethod
+    def _normalize_email(user_email: Optional[str]) -> str:
+        return str(user_email or "").strip().lower()
+
+    async def _get_user_info_fallback(self, access_token: Optional[str]) -> Optional[Dict[str, Any]]:
+        normalized_token = str(access_token or "").strip()
+        if not normalized_token:
+            return None
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {normalized_token}"},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        email = self._normalize_email(data.get("email"))
+        if not email:
+            return None
+
+        return {
+            "google_id": str(data.get("id") or ""),
+            "email": email,
+            "name": data.get("name"),
+            "first_name": data.get("given_name"),
+            "last_name": data.get("family_name"),
+            "picture": data.get("picture"),
+            "organization": None,
+            "phone": None,
+            "verified_email": bool(data.get("verified_email", False)),
+        }
+
+    async def _persist_credentials_to_db(
+        self,
+        *,
+        user_email: str,
+        user_info: Dict[str, Any],
+        access_token: Optional[str],
+        refresh_token: Optional[str],
+        expires_at: Optional[datetime],
+    ) -> bool:
+        from database.db_enterprise import get_db_session
+        from models.models import User
+
+        session = None
+        try:
+            session = await get_db_session()
+            update_data: Dict[str, Any] = {
+                "oauth_provider": "google",
+                "oauth_access_token": access_token,
+                "oauth_token_expires_at": expires_at,
+                "oauth_profile": user_info,
+            }
+            if refresh_token:
+                update_data["oauth_refresh_token"] = refresh_token
+
+            if user_info.get("picture"):
+                update_data["profile_picture_url"] = user_info["picture"]
+
+            stmt = (
+                update(User)
+                .where(func.lower(User.email) == user_email)
+                .values(**update_data)
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+
+            rowcount = int(result.rowcount or 0)
+            if rowcount == 0:
+                logger.warning({
+                    "event": "google_credentials_db_user_not_found",
+                    "user_email": user_email,
+                })
+                return False
+
+            return True
+        except Exception as exc:
+            if session is not None:
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
+            logger.warning({
+                "event": "google_credentials_db_persist_failed",
+                "user_email": user_email,
+                "error": str(exc),
+            })
+            return False
+        finally:
+            if session is not None:
+                await session.close()
+
+    async def _load_credentials_from_db(self, user_email: str) -> Optional[Dict[str, Any]]:
+        from database.db_enterprise import get_db_session
+        from models.models import User
+
+        session = None
+        try:
+            session = await get_db_session()
+            stmt = select(User).where(
+                func.lower(User.email) == user_email,
+                User.oauth_provider == "google",
+            )
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+            if user is None or not user.oauth_access_token:
+                return None
+
+            return {
+                "token": user.oauth_access_token,
+                "refresh_token": user.oauth_refresh_token,
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "scopes": list(self.scopes),
+                "expiry": user.oauth_token_expires_at.isoformat() if user.oauth_token_expires_at else None,
+            }
+        except Exception as exc:
+            logger.warning({
+                "event": "google_credentials_db_load_failed",
+                "user_email": user_email,
+                "error": str(exc),
+            })
+            return None
+        finally:
+            if session is not None:
+                await session.close()
 
     def _ensure_available(self):
         if not GOOGLE_WORKSPACE_LIBS_AVAILABLE:
@@ -120,6 +252,7 @@ class GoogleAuthService:
                 state=state,
                 prompt='consent'  # Fuerza reauthorization para refresh token
             )
+            _OAUTH_STATE_CACHE[flow_state] = {"created_at": datetime.utcnow().isoformat()}
             
             logger.info({
                 "event": "authorization_url_created",
@@ -150,6 +283,9 @@ class GoogleAuthService:
         try:
             self._ensure_available()
             self._ensure_configured()
+            cached_state = _OAUTH_STATE_CACHE.pop(state, None)
+            if not state or cached_state is None:
+                raise RuntimeError("invalid_oauth_state")
             # Intercambiar code por tokens
             flow = Flow.from_client_config(
                 {
@@ -223,7 +359,7 @@ class GoogleAuthService:
             emails = profile.get('emailAddresses', [])
             if emails:
                 primary_email = next((e for e in emails if e.get('metadata', {}).get('primary')), emails[0])
-                user_info["email"] = primary_email.get('value')
+                user_info["email"] = self._normalize_email(primary_email.get('value'))
                 user_info["verified_email"] = primary_email.get('metadata', {}).get('verified', False)
             
             # Nombre
@@ -252,6 +388,12 @@ class GoogleAuthService:
                 primary_phone = next((p for p in phones if p.get('metadata', {}).get('primary')), phones[0])
                 user_info["phone"] = primary_phone.get('value')
             
+            if not user_info["email"]:
+                fallback_info = await self._get_user_info_fallback(getattr(credentials, "token", None))
+                if fallback_info:
+                    return fallback_info
+                raise RuntimeError("google_user_info_missing_email")
+
             return user_info
             
         except Exception as e:
@@ -259,12 +401,10 @@ class GoogleAuthService:
                 "event": "get_user_info_error",
                 "error": str(e)
             })
-            # Fallback a info básica
-            return {
-                "email": "unknown@gmail.com",
-                "name": "Unknown User",
-                "verified_email": False
-            }
+            fallback_info = await self._get_user_info_fallback(getattr(credentials, "token", None))
+            if fallback_info:
+                return fallback_info
+            raise RuntimeError("google_user_info_unavailable") from e
     
     async def _save_user_credentials(self, user_info: Dict[str, Any], credentials: Credentials) -> Dict[str, Any]:
         """
@@ -274,12 +414,22 @@ class GoogleAuthService:
             Dict con información completa del usuario
         """
         try:
-            user_email = user_info["email"]
+            user_email = self._normalize_email(user_info.get("email"))
+            if not user_email:
+                raise ValueError("google_user_email_missing")
+            existing_credentials = await smart_cache.get(
+                self._cache_key("google_credentials", user_email)
+            )
+            if not existing_credentials:
+                existing_credentials = await self._load_credentials_from_db(user_email)
+            resolved_refresh_token = credentials.refresh_token or (
+                existing_credentials.get("refresh_token") if isinstance(existing_credentials, dict) else None
+            )
             
             # Serializar credentials para almacenamiento
             credentials_data = {
                 "token": credentials.token,
-                "refresh_token": credentials.refresh_token,
+                "refresh_token": resolved_refresh_token,
                 "token_uri": credentials.token_uri,
                 "client_id": credentials.client_id,
                 "client_secret": credentials.client_secret,
@@ -301,21 +451,28 @@ class GoogleAuthService:
                 ttl=86400  # 24 horas
             )
             
-            # TODO: Actualizar o crear usuario en BD con información de Google
+            db_persisted = await self._persist_credentials_to_db(
+                user_email=user_email,
+                user_info=user_info,
+                access_token=credentials.token,
+                refresh_token=resolved_refresh_token,
+                expires_at=credentials.expiry,
+            )
             
             user_data = {
                 "user_info": user_info,
                 "credentials_saved": True,
+                "credentials_persisted_db": db_persisted,
                 "scopes": credentials.scopes,
                 "access_expires": credentials.expiry.isoformat() if credentials.expiry else None,
-                "has_refresh_token": bool(credentials.refresh_token)
+                "has_refresh_token": bool(resolved_refresh_token)
             }
             
             logger.info({
                 "event": "user_credentials_saved",
                 "user_email": user_email,
                 "scopes_count": len(credentials.scopes or []),
-                "has_refresh": bool(credentials.refresh_token)
+                "has_refresh": bool(resolved_refresh_token)
             })
             
             return user_data
@@ -339,17 +496,28 @@ class GoogleAuthService:
         """
         try:
             self._ensure_available()
+            normalized_email = self._normalize_email(user_email)
+            if not normalized_email:
+                return None
             # Obtener credentials del caché
             credentials_data = await smart_cache.get(
-                self._cache_key("google_credentials", user_email)
+                self._cache_key("google_credentials", normalized_email)
             )
             
             if not credentials_data:
-                logger.warning({
-                    "event": "credentials_not_found",
-                    "user_email": user_email
-                })
-                return None
+                credentials_data = await self._load_credentials_from_db(normalized_email)
+                if credentials_data:
+                    await smart_cache.set(
+                        self._cache_key("google_credentials", normalized_email),
+                        credentials_data,
+                        ttl=3600,
+                    )
+                else:
+                    logger.warning({
+                        "event": "credentials_not_found",
+                        "user_email": normalized_email
+                    })
+                    return None
             
             # Reconstruir credentials object
             credentials = Credentials(
@@ -369,12 +537,12 @@ class GoogleAuthService:
                 if not credentials.refresh_token:
                     logger.warning({
                         "event": "refresh_token_missing",
-                        "user_email": user_email
+                        "user_email": normalized_email
                     })
                     return None
                 logger.info({
                     "event": "refreshing_expired_token",
-                    "user_email": user_email
+                    "user_email": normalized_email
                 })
                 
                 await asyncio.to_thread(credentials.refresh, Request())
@@ -387,14 +555,14 @@ class GoogleAuthService:
                 })
                 
                 await smart_cache.set(
-                    self._cache_key("google_credentials", user_email),
+                    self._cache_key("google_credentials", normalized_email),
                     updated_credentials_data,
                     ttl=3600
                 )
                 
                 logger.info({
                     "event": "token_refreshed",
-                    "user_email": user_email
+                    "user_email": normalized_email
                 })
             
             return credentials
@@ -402,7 +570,7 @@ class GoogleAuthService:
         except Exception as e:
             logger.error({
                 "event": "get_valid_credentials_error",
-                "user_email": user_email,
+                "user_email": self._normalize_email(user_email),
                 "error": str(e)
             })
             return None
@@ -418,15 +586,18 @@ class GoogleAuthService:
             Dict con información del usuario o None
         """
         try:
+            normalized_email = self._normalize_email(user_email)
+            if not normalized_email:
+                return None
             user_info = await smart_cache.get(
-                self._cache_key("google_user_info", user_email)
+                self._cache_key("google_user_info", normalized_email)
             )
             return user_info
             
         except Exception as e:
             logger.error({
                 "event": "get_user_info_cache_error",
-                "user_email": user_email,
+                "user_email": self._normalize_email(user_email),
                 "error": str(e)
             })
             return None
@@ -442,7 +613,8 @@ class GoogleAuthService:
             True si se revocó exitosamente
         """
         try:
-            credentials = await self.get_valid_credentials(user_email)
+            normalized_email = self._normalize_email(user_email)
+            credentials = await self.get_valid_credentials(normalized_email)
             
             if not credentials:
                 return False
@@ -454,12 +626,12 @@ class GoogleAuthService:
                 response = await client.post(revoke_url)
             
             # Limpiar caché
-            await smart_cache.delete(self._cache_key("google_credentials", user_email))
-            await smart_cache.delete(self._cache_key("google_user_info", user_email))
+            await smart_cache.delete(self._cache_key("google_credentials", normalized_email))
+            await smart_cache.delete(self._cache_key("google_user_info", normalized_email))
             
             logger.info({
                 "event": "user_access_revoked",
-                "user_email": user_email,
+                "user_email": normalized_email,
                 "revoke_status": response.status_code
             })
             
@@ -468,7 +640,7 @@ class GoogleAuthService:
         except Exception as e:
             logger.error({
                 "event": "revoke_access_error",
-                "user_email": user_email,
+                "user_email": self._normalize_email(user_email),
                 "error": str(e)
             })
             return False

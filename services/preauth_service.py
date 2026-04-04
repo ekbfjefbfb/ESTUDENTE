@@ -239,6 +239,11 @@ class PreAuthService:
             invalidated_count = 0
 
             if not redis_client:
+                user_session_key = self._cache_key("auth_token", f"user_session:{user_id}")
+                current_session_token = await smart_cache.get(user_session_key)
+                if current_session_token:
+                    await self._cleanup_session(str(current_session_token), user_id)
+                    return 1
                 return invalidated_count
 
             async for session_key in redis_client.scan_iter(match=pattern, count=200):

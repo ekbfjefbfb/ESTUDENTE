@@ -5,7 +5,7 @@ Separado de workspace_orchestrator.py
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class WorkflowType(str, Enum):
@@ -22,8 +22,8 @@ class AutomationRequest(BaseModel):
     """Request para ejecutar un workflow automatizado"""
     workflow_type: WorkflowType
     user_input: str
-    context: Optional[Dict[str, Any]] = {}
-    recipients: Optional[List[str]] = []
+    context: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    recipients: Optional[List[str]] = Field(default_factory=list)
     folder_id: Optional[str] = None
     schedule: Optional[str] = None  # Para automatización futura
 
@@ -44,7 +44,7 @@ class WorkflowExecution(BaseModel):
     workflow_type: WorkflowType
     user_email: str
     status: str = "running"
-    steps: List[WorkflowStep] = []
+    steps: List[WorkflowStep] = Field(default_factory=list)
     created_at: datetime
     completed_at: Optional[datetime] = None
-    results: Dict[str, Any] = {}
+    results: Dict[str, Any] = Field(default_factory=dict)

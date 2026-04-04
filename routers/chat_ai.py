@@ -35,6 +35,9 @@ async def get_ai_response_with_streaming(
 
     # Detectar cambio de tema
     topic = await detect_topic_change(user_message, "")
+
+    # Obtener historial de conversación antes de agregar el mensaje actual
+    conversation_history = await get_conversation_history(user_id, limit=10)
     
     # Agregar mensaje del usuario al historial
     await add_message(user_id, "user", user_message, topic=topic)
@@ -55,9 +58,6 @@ async def get_ai_response_with_streaming(
         context_prompt=context_prompt,
         is_fallback_mode=bool(user_context.get("agent_timed_out"))
     )
-
-    # Obtener historial de conversación
-    conversation_history = await get_conversation_history(user_id, limit=10)
 
     # Inicializar lista de mensajes con el sistema e HISTORIAL
     messages = []
@@ -118,6 +118,9 @@ async def get_ai_response_http(
     
     # Detectar cambio de tema
     topic = await detect_topic_change(user_message, "")
+
+    # Obtener historial de conversación antes de agregar el mensaje actual
+    conversation_history = await get_conversation_history(user_id, limit=10)
     
     # Agregar mensaje del usuario al historial
     await add_message(user_id, "user", user_message, topic=topic)
@@ -139,9 +142,6 @@ async def get_ai_response_http(
         is_fallback_mode=bool(user_context.get("agent_timed_out"))
     )
 
-    # Obtener historial de conversación
-    conversation_history = await get_conversation_history(user_id, limit=10)
-    
     # Construir mensajes: system + historial
     messages = [{"role": "system", "content": system_content}]
     messages.extend(conversation_history)

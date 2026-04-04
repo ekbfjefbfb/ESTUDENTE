@@ -3,6 +3,7 @@ Middleware de Pre-validación Automática
 Optimiza el flujo de requests con validaciones rápidas y caché
 """
 
+import hashlib
 import logging
 import time
 from typing import Callable, Dict, Any, Optional
@@ -160,11 +161,27 @@ class PreValidationMiddleware(BaseHTTPMiddleware):
     
     def _is_public_route(self, path: str) -> bool:
         """Verifica si la ruta es pública."""
-        return any(public_path in path for public_path in self.public_routes)
+        return any(self._path_matches(path, public_path) for public_path in self.public_routes)
     
     def _requires_validation(self, path: str) -> bool:
         """Verifica si la ruta requiere validación."""
-        return any(protected_path in path for protected_path in self.protected_routes)
+        return any(self._path_matches(path, protected_path) for protected_path in self.protected_routes)
+
+    @staticmethod
+    def _path_matches(path: str, route: str) -> bool:
+        """Compara rutas por igualdad o prefijo de segmento, sin abrir rutas por substrings."""
+        normalized_route = str(route or "").rstrip("/")
+        normalized_path = str(path or "").rstrip("/")
+
+        if not normalized_route:
+            return normalized_path == ""
+        if normalized_route == "/":
+            return normalized_path == ""
+
+        return (
+            normalized_path == normalized_route
+            or normalized_path.startswith(f"{normalized_route}/")
+        )
     
     async def _fast_prevalidation(self, request: Request) -> Dict[str, Any]:
         """
@@ -239,7 +256,8 @@ class PreValidationMiddleware(BaseHTTPMiddleware):
         """Valida token JWT usando caché."""
         try:
             # Intentar obtener del caché primero
-            cache_key = f"token_validation:{token[-10:]}"  # Últimos 10 chars como key
+            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()[:24]
+            cache_key = f"token_validation:{token_hash}"
             
             async def validate_token():
                 try:

@@ -32,7 +32,19 @@ class SmartCacheStub:
     
     async def get(self, key: str, default: Any = None) -> Any:
         """Obtiene valor del cache"""
-        return self.cache.get(key, default)
+        entry = self.cache.get(key)
+        if entry is None:
+            return default
+
+        if not isinstance(entry, dict) or "value" not in entry:
+            return entry
+
+        expires_at = entry.get("expires_at")
+        if isinstance(expires_at, datetime) and expires_at < datetime.utcnow():
+            self.cache.pop(key, None)
+            return default
+
+        return entry.get("value", default)
     
     async def set(
         self, 
@@ -169,9 +181,9 @@ class SmartCache:
             if self.prediction_enabled:
                 access_count = self.access_patterns.get(key, 0)
                 if access_count > 10:
-                    ttl = int(ttl * 1.5)  # Aumentar TTL para claves frecuentes
+                    ttl = max(1, int(ttl * 1.5))  # Aumentar TTL para claves frecuentes
                 elif access_count < 2:
-                    ttl = int(ttl * 0.5)  # Reducir TTL para claves poco usadas
+                    ttl = max(1, int(ttl * 0.5))  # Reducir TTL para claves poco usadas
             
             if CACHE_ENTERPRISE_AVAILABLE:
                 return await self.cache_service.set(
@@ -259,11 +271,11 @@ class SmartCache:
             
             return value
             
-        except Exception as e:
+        except Exception:
             # Si el error viene de la lógica interna de la factory (ej: Auth), 
             # no queremos cachear el fallo ni devolver None, queremos que el error suba.
             logger.info(f"⚠️ get_or_set: Error en factory para {key}, re-lanzando.")
-            raise e
+            raise
     
     async def get_stats(self) -> Dict[str, Any]:
         """

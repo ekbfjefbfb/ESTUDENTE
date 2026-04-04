@@ -25,6 +25,7 @@ from services.hub_memory_service import hub_memory_service
 from services.youtube_transcript_service import youtube_transcript_service
 from services.browser_mcp_service import browser_mcp_service
 from utils.rate_limit import RateLimitRule, evaluate_rate_limits
+from config import DEBUG
 
 logger = logging.getLogger("chat_ws_handlers")
 
@@ -43,9 +44,11 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
     """Handle chat WebSocket connection"""
     heartbeat_task: Optional[asyncio.Task] = None
     conn_lock: Optional[asyncio.Lock] = None
+    client_ip = websocket.client.host if websocket.client and websocket.client.host else "unknown"
+    failure_key = f"{user_id}:{client_ip}"
     
     # Check rate limiting
-    backoff_seconds = _get_ws_backoff_seconds(user_id)
+    backoff_seconds = _get_ws_backoff_seconds(failure_key)
     if backoff_seconds > 0:
         logger.warning(f"WebSocket backoff activo para user_id={user_id}: {backoff_seconds}s")
         try:
@@ -71,10 +74,10 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
         # Authenticate
         try:
             token_user_id = await _ws_auth_user_id(websocket)
-            _clear_ws_auth_failures(user_id)
+            _clear_ws_auth_failures(failure_key)
         except HTTPException as auth_http:
-            failure_count = _track_ws_auth_failure(user_id)
-            retry_delay = _get_ws_backoff_seconds(user_id)
+            failure_count = _track_ws_auth_failure(failure_key)
+            retry_delay = _get_ws_backoff_seconds(failure_key)
             detail = getattr(auth_http, "detail", None)
             
             logger.warning(f"WebSocket auth failed ({detail}) for user_id={user_id}, failure_count={failure_count}")
@@ -91,8 +94,8 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
             await websocket.close(code=1008)
             return
         except Exception as auth_error:
-            failure_count = _track_ws_auth_failure(user_id)
-            retry_delay = _get_ws_backoff_seconds(user_id)
+            failure_count = _track_ws_auth_failure(failure_key)
+            retry_delay = _get_ws_backoff_seconds(failure_key)
             logger.error(f"WebSocket AUTH FAILED for user_id={user_id}: {auth_error}")
             await _ws_send_json(
                 websocket,
@@ -204,6 +207,9 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
                 logger.warning(f"WebSocket invalid JSON user_id={user_id}: {e}")
                 await _ws_send_json(websocket, {"type": "error", "message": "invalid_json"})
                 continue
+
+            if str(message_data.get("type") or "").strip().lower() == "pong":
+                continue
             
             # DEDUPLICACIÓN: Evitar procesar el mismo mensaje en ráfaga (< 1.5s)
             msg_content = str(message_data.get("message", "")).strip()
@@ -306,8 +312,15 @@ async def _process_chat_message(
             media_metadata={"images": images_raw, "docs": docs_raw},
             request_id=request_id
         )
+        if not session_id:
+            raise RuntimeError("session_resolution_failed")
     except Exception as e:
         logger.error(f"Error persisting WS user message: {e}")
+        await _ws_send_json(
+            websocket,
+            {"type": "error", "message": "session_persistence_error", "request_id": request_id},
+        )
+        return
     finally:
         db.close()
 
@@ -325,7 +338,7 @@ async def _process_chat_message(
     if scout.should_use_agents(user_message, history=chat_history):
         task_desc = user_message.strip()
         
-        await _ws_send_status(websocket, "👨‍🏫 [Tutor]: Activando equipo de investigación académica...", request_id=request_id)
+        await _ws_send_status(websocket, "Activando equipo de investigacion academica...", request_id=request_id)
         
         # Callback para enviar tokens de los agentes al WebSocket
         def on_agent_token(token: str):
@@ -333,7 +346,7 @@ async def _process_chat_message(
             asyncio.run_coroutine_threadsafe(
                 _ws_send_json(websocket, {
                     "type": "token", 
-                    "token": token,
+                    "content": token,
                     "request_id": request_id,
                     "agent_mode": True
                 }),
@@ -417,7 +430,7 @@ async def _process_chat_message(
             user_context["agent_timed_out"] = True 
             await _ws_send_status(
                 websocket,
-                "✨ [Iris]: Mi equipo está analizando mucha información. Procederé yo misma con la clase para no hacerte esperar...",
+                "El equipo esta analizando mucha informacion. Continuare directamente para no hacerte esperar.",
                 request_id=request_id,
             )
         except Exception as e:
@@ -426,10 +439,10 @@ async def _process_chat_message(
             logger.error(f"Error en orquestación autónoma: {e}")
             
             # 1. Informar al usuario sutilmente
-            await _ws_send_status(websocket, "✨ [Iris]: Reajustando mi equipo para darte la mejor respuesta...", request_id=request_id)
+            await _ws_send_status(websocket, "Reajustando el equipo para continuar con la respuesta...", request_id=request_id)
             
             # 2. Información Técnica (Desarrollo)
-            if os.getenv("DEBUG", "true").lower() == "true":
+            if DEBUG:
                 await _ws_send_json(websocket, {
                     "type": "error", 
                     "message": "agent_failure", 
@@ -441,7 +454,7 @@ async def _process_chat_message(
     # Web search
     ddg_sources: List[Dict[str, Any]] = []
     if should_web_search:
-        await _ws_send_status(websocket, "🔍 [Tutor]: Buscando fuentes académicas actualizadas...", request_id=request_id)
+        await _ws_send_status(websocket, "Buscando fuentes academicas actualizadas...", request_id=request_id)
         search_sources, _ = await perform_web_search(
             user_id=user_id,
             query=user_message.strip(),
@@ -501,13 +514,13 @@ async def _process_chat_message(
         
         # 1. Mensaje Pedagógico (Voz de Iris)
         pedagogical_msg = (
-            "\n✨ [Iris]: ¡Vaya! Mi equipo de expertos ha tenido un tropiezo procesando esta idea compleja. "
-            "Pero no te preocupes, Iris está analizando qué ha pasado. ¿Podrías intentar reformular la pregunta? Estoy aquí para ayudarte."
+            "\nHubo un problema procesando esta solicitud. "
+            "Intenta reformular la pregunta y continuamos desde ahi."
         )
         await _ws_send_json(websocket, {"type": "token", "content": pedagogical_msg, "request_id": request_id})
         
         # 2. Información Técnica (Solo para Desarrollo)
-        if os.getenv("DEBUG", "true").lower() == "true":
+        if DEBUG:
             await _ws_send_json(websocket, {
                 "type": "error", 
                 "message": "debug_info", 
