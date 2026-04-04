@@ -30,6 +30,7 @@ from config import DEBUG
 logger = logging.getLogger("chat_ws_handlers")
 
 _MAX_MESSAGE_CHARS = 8000
+_MAX_RAW_PAYLOAD_CHARS = int(os.getenv("CHAT_WS_MAX_PAYLOAD_CHARS", str(28 * 1024 * 1024)))
 _WS_CONNECT_RULES = (
     RateLimitRule(name="chat_ws_connect_ip", scope="ip", max_requests=30, window_seconds=60, block_seconds=120),
     RateLimitRule(name="chat_ws_connect_user", scope="user", max_requests=10, window_seconds=60, block_seconds=120),
@@ -53,6 +54,35 @@ def _merge_message_with_document_texts(message: str, text_contents: List[str]) -
     if not base_message:
         return f"Contexto documental adjunto:\n{merged_docs}"
     return f"{base_message}\n\nContexto documental adjunto:\n{merged_docs}"
+
+
+def _attachment_marker(item: Any) -> str:
+    raw = str(item or "").strip()
+    if len(raw) <= 128:
+        return raw
+    return f"{raw[:64]}...{raw[-32:]}"
+
+
+def _dedupe_signature(message_data: Dict[str, Any]) -> str:
+    images = message_data.get("images", []) or []
+    documents = message_data.get("documents", []) or message_data.get("files", []) or []
+    signature_payload = {
+        "type": str(message_data.get("type") or "").strip().lower(),
+        "session_id": str(message_data.get("session_id") or "").strip(),
+        "message": str(message_data.get("message") or "").strip(),
+        "image_count": len(images) if isinstance(images, list) else 0,
+        "document_count": len(documents) if isinstance(documents, list) else 0,
+        "image_markers": [
+            _attachment_marker(item) for item in (images[:3] if isinstance(images, list) else [])
+        ],
+        "document_markers": [
+            _attachment_marker(item) for item in (documents[:3] if isinstance(documents, list) else [])
+        ],
+    }
+    try:
+        return json.dumps(signature_payload, sort_keys=True, ensure_ascii=True)
+    except Exception:
+        return str(signature_payload)
 
 
 async def handle_chat_websocket(websocket: WebSocket, user_id: str):
@@ -207,7 +237,7 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
                 continue
             
             # Check message size
-            if len(data) > _MAX_MESSAGE_CHARS:
+            if len(data) > _MAX_RAW_PAYLOAD_CHARS:
                 await _ws_send_json(websocket, {"type": "error", "message": "payload_too_large"})
                 try:
                     await websocket.close(code=1009)
@@ -227,13 +257,13 @@ async def handle_chat_websocket(websocket: WebSocket, user_id: str):
                 continue
             
             # DEDUPLICACIÓN: Evitar procesar el mismo mensaje en ráfaga (< 1.5s)
-            msg_content = str(message_data.get("message", "")).strip()
+            msg_signature = _dedupe_signature(message_data)
             current_time = time.time()
-            if msg_content == last_msg_hash and (current_time - last_msg_time) < 1.5:
+            if msg_signature == last_msg_hash and (current_time - last_msg_time) < 1.5:
                 logger.info(f"Deduplicación activa para user_id={user_id}: Ignorando mensaje repetido.")
                 continue
             
-            last_msg_hash = msg_content
+            last_msg_hash = msg_signature
             last_msg_time = current_time
 
             # Process message
@@ -404,6 +434,7 @@ async def _process_chat_message(
                         content=agent_text,
                         request_id=request_id,
                     )
+                    invalidate_user_context(user_id)
                     session_info = db.query(ChatSession).filter(
                         ChatSession.id == session_id,
                         ChatSession.user_id == user_id,

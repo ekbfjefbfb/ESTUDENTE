@@ -201,6 +201,86 @@ class GoogleAuthService:
             if session is not None:
                 await session.close()
 
+    async def _load_user_info_from_db(self, user_email: str) -> Optional[Dict[str, Any]]:
+        from database.db_enterprise import get_db_session
+        from models.models import User
+
+        session = None
+        try:
+            session = await get_db_session()
+            stmt = select(User).where(
+                func.lower(User.email) == user_email,
+                User.oauth_provider == "google",
+            )
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+            if user is None:
+                return None
+
+            oauth_profile = user.oauth_profile if isinstance(user.oauth_profile, dict) else {}
+            merged_profile = {
+                "google_id": str(oauth_profile.get("google_id") or ""),
+                "email": self._normalize_email(user.email or oauth_profile.get("email")),
+                "name": oauth_profile.get("name") or user.full_name or user.username,
+                "first_name": oauth_profile.get("first_name"),
+                "last_name": oauth_profile.get("last_name"),
+                "picture": oauth_profile.get("picture") or user.profile_picture_url,
+                "organization": oauth_profile.get("organization"),
+                "phone": oauth_profile.get("phone"),
+                "verified_email": bool(oauth_profile.get("verified_email", False)),
+            }
+            if not merged_profile["email"]:
+                return None
+            return merged_profile
+        except Exception as exc:
+            logger.warning({
+                "event": "google_user_info_db_load_failed",
+                "user_email": user_email,
+                "error": str(exc),
+            })
+            return None
+        finally:
+            if session is not None:
+                await session.close()
+
+    async def _clear_credentials_from_db(self, user_email: str) -> bool:
+        from database.db_enterprise import get_db_session
+        from models.models import User
+
+        session = None
+        try:
+            session = await get_db_session()
+            stmt = (
+                update(User)
+                .where(
+                    func.lower(User.email) == user_email,
+                    User.oauth_provider == "google",
+                )
+                .values(
+                    oauth_access_token=None,
+                    oauth_refresh_token=None,
+                    oauth_token_expires_at=None,
+                )
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return bool(int(result.rowcount or 0))
+        except Exception as exc:
+            if session is not None:
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
+            logger.warning({
+                "event": "google_credentials_db_clear_failed",
+                "user_email": user_email,
+                "error": str(exc),
+            })
+            return False
+        finally:
+            if session is not None:
+                await session.close()
+
     async def sync_cached_credentials_to_db(self, user_email: str) -> bool:
         normalized_email = self._normalize_email(user_email)
         if not normalized_email:
@@ -643,6 +723,16 @@ class GoogleAuthService:
             user_info = await smart_cache.get(
                 self._cache_key("google_user_info", normalized_email)
             )
+            if user_info:
+                return user_info
+
+            user_info = await self._load_user_info_from_db(normalized_email)
+            if user_info:
+                await smart_cache.set(
+                    self._cache_key("google_user_info", normalized_email),
+                    user_info,
+                    ttl=86400,
+                )
             return user_info
             
         except Exception as e:
@@ -679,6 +769,7 @@ class GoogleAuthService:
             # Limpiar caché
             await smart_cache.delete(self._cache_key("google_credentials", normalized_email))
             await smart_cache.delete(self._cache_key("google_user_info", normalized_email))
+            await self._clear_credentials_from_db(normalized_email)
             
             logger.info({
                 "event": "user_access_revoked",
