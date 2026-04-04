@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import UploadFile, HTTPException, APIRouter
 
 from routers.chat_schemas import ChatResponse, STTResponse, TTSResponse, VoiceChatResponse, ChatMessageRequest
-from routers.chat_context import get_user_context_for_chat
+from routers.chat_context import get_user_context_for_chat, invalidate_user_context
 from routers.chat_progress import save_user_progress, _sanitize_structured_data
 from routers.chat_search import (
     perform_web_search,
@@ -59,6 +59,24 @@ def _safe_meta(meta: Any) -> Dict[str, Any]:
     return out
 
 
+def _has_vision_attachments(file_content: Optional[Dict[str, Any]]) -> bool:
+    return bool(file_content and file_content.get("images"))
+
+
+def _merge_message_with_document_texts(message: str, file_content: Optional[Dict[str, Any]]) -> str:
+    if not file_content:
+        return message
+    texts = [str(item or "").strip() for item in (file_content.get("texts") or []) if str(item or "").strip()]
+    if not texts:
+        return message
+    merged_docs = "\n\n".join(texts)
+    merged_docs = merged_docs[:12000]
+    base_message = str(message or "").strip()
+    if not base_message:
+        return f"Contexto documental adjunto:\n{merged_docs}"
+    return f"{base_message}\n\nContexto documental adjunto:\n{merged_docs}"
+
+
 async def handle_chat_message(
     message: str,
     files: Optional[List[UploadFile]] = None,
@@ -89,11 +107,12 @@ async def handle_chat_message(
     file_content = pre_processed_file_content
     if all_files:
         try:
-            image_contents, text_contents = await process_uploaded_files(all_files)
+            image_contents, text_contents, attachment_metadata = await process_uploaded_files(all_files)
             if image_contents or text_contents:
                 file_content = {
                     "images": image_contents,
-                    "texts": text_contents
+                    "texts": text_contents,
+                    "attachments": attachment_metadata,
                 }
                 logger.info(f"Processed {len(image_contents)} images and {len(text_contents)} documents for user {user_id}")
         except Exception as e:
@@ -113,40 +132,10 @@ async def handle_chat_message(
     cached_response = None
     if _should_use_semantic_cache(normalized_message) and not file_content:
         cached_response = await embeddings_service.get_cached_response(normalized_message)
+    cache_hit = bool(cached_response and not stream)
     
-    if cached_response and not stream:
-        context_info = get_context_info(user_id)
-        return ChatResponse(
-            success=True,
-            response=cached_response,
-            user_id=user_id,
-            timestamp=datetime.utcnow().isoformat(),
-            context={
-                "usage_percent": round(context_info.get("usage", 0) * 100, 1),
-                "cache_hit": True
-            },
-            message_id=f"msg_cached_{datetime.utcnow().timestamp()}"
-        )
-    
-    # Get user context
-    user_context = await get_user_context_for_chat(user_id)
-    
-    # Web search (skip if has files to prioritize file analysis)
-    sources: List[Dict[str, Any]] = []
-    if should_web_search and not file_content:
-        search_sources, search_meta = await perform_web_search(
-            user_id=user_id,
-            query=normalized_message,
-            include_images=_should_include_images_in_search(normalized_message),
-        )
-        sources = prioritize_sources_with_images(search_sources, max_sources=5)
-        if search_sources:
-            user_context = dict(user_context)
-            user_context["web_search_results"] = list(search_sources)[:5]
-    
-    # Get AI response (with file content and robust HISTORY)
-    chat_history = user_context.get("chat_history", [])
-    
+    attachment_metadata = (file_content or {}).get("attachments") if isinstance(file_content, dict) else None
+
     # PERSISTENCE: Save user message and handle session logic
     from database import SessionLocal
     from services.chat_session_service import chat_session_service
@@ -177,20 +166,46 @@ async def handle_chat_message(
             user_id=user_id,
             role="user",
             content=normalized_message,
-            media_metadata=file_content,
+            media_metadata=attachment_metadata or {},
             request_id=request_id
         )
+        invalidate_user_context(user_id)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error persisting user message: {e}")
+        raise HTTPException(status_code=500, detail="session_persistence_error") from e
     finally:
         db.close()
+
+    # Get user context with the resolved session_id
+    invalidate_user_context(user_id)
+    user_context = await get_user_context_for_chat(user_id, session_id=session_id)
+
+    # Web search (skip if has files to prioritize file analysis)
+    sources: List[Dict[str, Any]] = []
+    if should_web_search and not file_content and not cache_hit:
+        search_sources, _ = await perform_web_search(
+            user_id=user_id,
+            query=normalized_message,
+            include_images=_should_include_images_in_search(normalized_message),
+        )
+        sources = prioritize_sources_with_images(search_sources, max_sources=5)
+        if search_sources:
+            user_context = dict(user_context)
+            user_context["web_search_results"] = list(search_sources)[:5]
+
+    # Get AI response (with file content and robust HISTORY)
+    chat_history = user_context.get("chat_history", [])
     
     # Scout Intelligent Decision
-    if scout.should_use_agents(normalized_message, history=chat_history):
+    agent_input_message = _merge_message_with_document_texts(normalized_message, file_content)
+    should_use_agents = scout.should_use_agents(agent_input_message, history=chat_history) and not _has_vision_attachments(file_content)
+    if cache_hit:
+        ai_text = str(cached_response or "")
+    elif should_use_agents:
         # For HTTP, we can't stream tokens as easily, but we run the agent task
-        ai_text = await agent_manager.run_complex_task(normalized_message, user_id=user_id, history=chat_history)
+        ai_text = await agent_manager.run_complex_task(agent_input_message, user_id=user_id, history=chat_history)
         if hasattr(ai_text, "summary"):
             ai_text = ai_text.summary
     else:
@@ -220,6 +235,7 @@ async def handle_chat_message(
             content=structured.get("response") or "",
             request_id=request_id
         )
+        invalidate_user_context(user_id)
         
         # Simple Naming logic: rename if session title is default and we have history
         session_info = db.query(ChatSession).filter(
@@ -242,7 +258,7 @@ async def handle_chat_message(
     safe_create_task(save_user_progress(user_id, normalized_message, structured), name="save_user_progress")
     
     # Add to cache (only if no files)
-    if not structured.get("is_stream") and not file_content:
+    if not structured.get("is_stream") and not file_content and not cache_hit:
         await embeddings_service.add_to_semantic_cache(normalized_message, structured["response"])
     
     # Build response
@@ -256,8 +272,10 @@ async def handle_chat_message(
         response=structured["response"],
         user_id=user_id,
         timestamp=datetime.utcnow().isoformat(),
+        session_id=session_id,
         context={
             "usage_percent": round(context_info.get("usage", 0) * 100, 1),
+            "cache_hit": cache_hit,
             "needs_refresh": False,
             "auto_refreshed": False,
             "tasks_count": len(user_context.get("tasks_today", [])),
@@ -281,7 +299,7 @@ async def handle_chat_message_json(
     # Procesar archivos base64 del JSON si existen
     from utils.file_processing import process_base64_files
     
-    image_contents, text_contents = await process_base64_files(
+    image_contents, text_contents, attachment_metadata = await process_base64_files(
         images_base64=request.images,
         docs_base64=request.documents or request.files
     )
@@ -290,7 +308,8 @@ async def handle_chat_message_json(
     if image_contents or text_contents:
         pre_file_content = {
             "images": image_contents,
-            "texts": text_contents
+            "texts": text_contents,
+            "attachments": attachment_metadata,
         }
 
     return await handle_chat_message(

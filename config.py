@@ -15,6 +15,21 @@ load_dotenv()
 # =========================
 # Configuración Principal
 # =========================
+
+
+def _first_env(*names: str, default: str | None = None) -> str | None:
+    for name in names:
+        value = os.getenv(name)
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+    return default
+
+
+def _normalize_public_base_url(raw_url: str | None) -> str | None:
+    value = str(raw_url or "").strip().rstrip("/")
+    return value or None
+
+
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 DEBUG = os.getenv("DEBUG", "false").lower() in ("true", "1", "t")
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production")
@@ -25,6 +40,21 @@ if ENVIRONMENT == "production" and SECRET_KEY == "dev-secret-key-change-in-produ
     raise ValueError("SECRET_KEY no puede usar el valor por defecto en producción.")
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+BACKEND_PUBLIC_URL = _normalize_public_base_url(
+    _first_env("BACKEND_PUBLIC_URL", "PUBLIC_BACKEND_URL", "API_BASE_URL")
+)
+
+
+def _default_backend_public_url() -> str:
+    return BACKEND_PUBLIC_URL or "http://localhost:8000"
+
+
+def _http_to_ws_url(value: str) -> str:
+    if value.startswith("https://"):
+        return "wss://" + value[len("https://"):]
+    if value.startswith("http://"):
+        return "ws://" + value[len("http://"):]
+    return value
 
 # =========================
 # Configuración de Base de Datos (Nhost PostgreSQL)
@@ -87,14 +117,43 @@ CORS_HEADERS = ["*"]
 # =========================
 # Configuración OAuth
 # =========================
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID")
-MICROSOFT_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET")
-GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
-GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
-APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID")
-APPLE_CLIENT_SECRET = os.getenv("APPLE_CLIENT_SECRET")
+OAUTH_ENABLED = str(_first_env("OAUTH_ENABLED", default="false")).lower() in ("true", "1", "t", "yes")
+GOOGLE_CLIENT_ID = _first_env("GOOGLE_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_AUTH_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = _first_env(
+    "GOOGLE_CLIENT_SECRET",
+    "GOOGLE_OAUTH_CLIENT_SECRET",
+    "GOOGLE_AUTH_CLIENT_SECRET",
+)
+GOOGLE_REDIRECT_URI = _first_env(
+    "GOOGLE_REDIRECT_URI",
+    "GOOGLE_OAUTH_REDIRECT_URI",
+    default=f"{_default_backend_public_url()}/api/auth/google/callback",
+)
+MICROSOFT_CLIENT_ID = _first_env("MICROSOFT_CLIENT_ID")
+MICROSOFT_CLIENT_SECRET = _first_env("MICROSOFT_CLIENT_SECRET")
+GITHUB_CLIENT_ID = _first_env("GITHUB_CLIENT_ID")
+GITHUB_CLIENT_SECRET = _first_env("GITHUB_CLIENT_SECRET")
+APPLE_CLIENT_ID = _first_env("APPLE_CLIENT_ID")
+APPLE_CLIENT_SECRET = _first_env("APPLE_CLIENT_SECRET")
+GOOGLE_OAUTH_AUTHORIZE_PATH = "/api/auth/google/authorize-url"
+GOOGLE_OAUTH_EXCHANGE_PATH = "/api/auth/google/exchange-code"
+GOOGLE_OAUTH_CALLBACK_PATH = "/api/auth/google/callback"
+DEEPGRAM_AGENT_CHAT_PATH = "/api/deepgram/chat"
+DEEPGRAM_AGENT_OPENAI_PATH = "/api/deepgram/v1/chat/completions"
+UNIFIED_CHAT_VOICE_WS_PATH = "/api/unified-chat/voice/ws"
+DEEPGRAM_AGENT_PUBLIC_URL = _first_env(
+    "DEEPGRAM_AGENT_PUBLIC_URL",
+    default=f"{_default_backend_public_url()}{DEEPGRAM_AGENT_CHAT_PATH}",
+)
+DEEPGRAM_AGENT_OPENAI_PUBLIC_URL = _first_env(
+    "DEEPGRAM_AGENT_OPENAI_PUBLIC_URL",
+    default=f"{_default_backend_public_url()}{DEEPGRAM_AGENT_OPENAI_PATH}",
+)
+CHAT_VOICE_WS_PUBLIC_URL = _first_env(
+    "CHAT_VOICE_WS_PUBLIC_URL",
+    "UNIFIED_CHAT_VOICE_WS_URL",
+    default=f"{_http_to_ws_url(_default_backend_public_url())}{UNIFIED_CHAT_VOICE_WS_PATH}",
+)
 
 # =========================
 # Configuración de APIs Externas
@@ -466,17 +525,17 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 
 print(f"✅ Configuración cargada para entorno: {ENVIRONMENT}")
-print(f"🚀 Backend API v6.0 - Arquitectura Distribuida")
+print("🚀 Backend API v6.0 - Arquitectura Distribuida")
 print(f"🎯 Features habilitadas: {[k for k, v in FEATURE_FLAGS.items() if v]}")
 
 if USE_REMOTE_AI:
-    print(f"🤖 IA: Groq Cloud API")
+    print("🤖 IA: Groq Cloud API")
     print(f"📡 Endpoint: {AI_SERVER_URL}")
     print(f"� Modelo: {AI_MODEL} (fast/reasoning según complejidad)")
-    print(f"🎯 Arquitectura: Backend → Groq API")
+    print("🎯 Arquitectura: Backend → Groq API")
 else:
     print(f"💻 IA Local: {AI_SERVER_URL} (solo desarrollo)")
-    print(f"⚠️ Modo desarrollo: modelos locales ligeros")
+    print("⚠️ Modo desarrollo: modelos locales ligeros")
 
 if VISION_PIPELINE_ENABLED:
     print(f"�️ Vision Pipeline habilitado (device: {VISION_DEVICE})")

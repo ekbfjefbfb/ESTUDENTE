@@ -7,12 +7,24 @@ from pydantic import BaseModel, Field, field_validator, AliasChoices
 from typing import Optional
 
 from services.auth_service import (
+    complete_google_oauth_login,
     oauth_login_or_register,
     refresh_access_token_service,
     register_email_password_service,
     login_email_password_service,
 )
+from services.google_workspace.google_auth_service import google_auth_service
 from utils.resilience import CircuitBreaker
+from config import (
+    APPLE_CLIENT_ID,
+    APPLE_CLIENT_SECRET,
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    GOOGLE_OAUTH_AUTHORIZE_PATH,
+    GOOGLE_OAUTH_CALLBACK_PATH,
+    GOOGLE_OAUTH_EXCHANGE_PATH,
+    OAUTH_ENABLED,
+)
 
 # ---------------- Logger Config ----------------
 router = APIRouter()
@@ -59,6 +71,16 @@ class OAuthSchema(BaseModel):
         return v
 
 
+class GoogleOAuthCodeSchema(BaseModel):
+    code: str = Field(
+        ...,
+        validation_alias=AliasChoices("code", "authorization_code", "authorizationCode"),
+        min_length=8,
+        max_length=4000,
+    )
+    state: str = Field(..., min_length=8, max_length=512)
+
+
 class RegisterSchema(BaseModel):
     email: str = Field(..., min_length=5, max_length=100)
     password: str = Field(..., min_length=8, max_length=200)
@@ -100,22 +122,88 @@ def sanitize_input(value: str) -> str:
         raise HTTPException(status_code=400, detail="Entrada inválida detectada")
     return value
 
+
+def _request_base_url(request: Request) -> str:
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    if forwarded_proto and forwarded_host:
+        return f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
+def _client_ip(request: Request) -> str:
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+@router.get("/google/config")
+async def google_oauth_config(request: Request) -> dict:
+    base_url = _request_base_url(request)
+    config = google_auth_service.get_public_config()
+    return {
+        "success": True,
+        "provider": "google",
+        **config,
+        "authorization_endpoint": f"{base_url}{GOOGLE_OAUTH_AUTHORIZE_PATH}",
+        "exchange_code_endpoint": f"{base_url}{GOOGLE_OAUTH_EXCHANGE_PATH}",
+        "callback_endpoint": f"{base_url}{GOOGLE_OAUTH_CALLBACK_PATH}",
+    }
+
+
+@router.get("/google/authorize-url")
+async def google_authorize_url(request: Request, state: Optional[str] = None) -> dict:
+    logger.info(f'{{"event": "google_oauth_authorize_attempt", "ip": "{_client_ip(request)}"}}')
+    try:
+        authorization_url, resolved_state = google_auth_service.create_authorization_url(state=state)
+        config = google_auth_service.get_public_config()
+        return {
+            "success": True,
+            "provider": "google",
+            "authorization_url": authorization_url,
+            "state": resolved_state,
+            "redirect_uri": config.get("redirect_uri"),
+            "scopes": config.get("scopes", []),
+        }
+    except Exception as e:
+        logger.error(f'{{"event": "google_oauth_authorize_error", "error": "{str(e)}"}}', exc_info=True)
+        raise HTTPException(status_code=503, detail=str(e) or "google_oauth_authorize_failed")
+
+
+@router.post("/google/exchange-code")
+async def google_exchange_code(data: GoogleOAuthCodeSchema, request: Request) -> dict:
+    logger.info(f'{{"event": "google_oauth_exchange_attempt", "ip": "{_client_ip(request)}"}}')
+    try:
+        return await complete_google_oauth_login(code=sanitize_input(data.code), state=sanitize_input(data.state))
+    except Exception as e:
+        logger.error(f'{{"event": "google_oauth_exchange_error", "error": "{str(e)}"}}', exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e) or "google_oauth_exchange_failed")
+
+
+@router.get("/google/callback")
+async def google_callback(code: str, state: str, request: Request) -> dict:
+    logger.info(f'{{"event": "google_oauth_callback_attempt", "ip": "{_client_ip(request)}"}}')
+    try:
+        return await complete_google_oauth_login(code=sanitize_input(code), state=sanitize_input(state))
+    except Exception as e:
+        logger.error(f'{{"event": "google_oauth_callback_error", "error": "{str(e)}"}}', exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e) or "google_oauth_callback_failed")
+
 @router.post("/oauth")
 async def oauth_login(
     data: OAuthSchema,
     request: Request,
 ) -> dict:
-    logger.info(f'{{"event": "oauth_login_attempt", "provider": "{data.provider}", "ip": "{request.client.host}"}}')
+    logger.info(f'{{"event": "oauth_login_attempt", "provider": "{data.provider}", "ip": "{_client_ip(request)}"}}')
     env = os.getenv("ENVIRONMENT", "production").lower()
-    oauth_enabled = str(os.getenv("OAUTH_ENABLED") or "").strip().lower() in {"1", "true", "t", "yes"}
-    if env == "production" and not oauth_enabled:
+    if env == "production" and not OAUTH_ENABLED:
         raise HTTPException(status_code=503, detail="oauth_disabled")
 
     if data.provider == "google":
-        if not os.getenv("GOOGLE_CLIENT_ID") or not os.getenv("GOOGLE_CLIENT_SECRET"):
+        if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
             raise HTTPException(status_code=503, detail="oauth_google_not_configured")
     if data.provider == "apple":
-        if not os.getenv("APPLE_CLIENT_ID") or not os.getenv("APPLE_CLIENT_SECRET"):
+        if not APPLE_CLIENT_ID or not APPLE_CLIENT_SECRET:
             raise HTTPException(status_code=503, detail="oauth_apple_not_configured")
     try:
         provider = sanitize_input(data.provider)
@@ -124,11 +212,11 @@ async def oauth_login(
 
         # Usar Circuit Breaker para proteger contra saturación
         result = await cb_oauth.call(oauth_login_or_register, None, provider, id_token, name)
-        logger.info(f'{{"event": "oauth_login_success", "provider": "{provider}", "ip": "{request.client.host}"}}')
+        logger.info(f'{{"event": "oauth_login_success", "provider": "{provider}", "ip": "{_client_ip(request)}"}}')
         return result
     except RuntimeError as e:
         if "Circuit breaker" in str(e):
-            logger.warning(f'{{"event": "oauth_circuit_open", "provider": "{data.provider}", "ip": "{request.client.host}"}}')
+            logger.warning(f'{{"event": "oauth_circuit_open", "provider": "{data.provider}", "ip": "{_client_ip(request)}"}}')
             raise HTTPException(status_code=503, detail="oauth_service_temporarily_unavailable")
         raise
     except Exception as e:
@@ -141,18 +229,18 @@ async def refresh_token_route(
     data: RefreshSchema,
     request: Request,
 ) -> dict:
-    logger.info(f'{{"event": "refresh_token_attempt", "ip": "{request.client.host}"}}')
+    logger.info(f'{{"event": "refresh_token_attempt", "ip": "{_client_ip(request)}"}}')
     try:
         # El token ya viene validado estrictamente por Pydantic (AliasChoices y min_length)
         refresh_token = sanitize_input(data.refresh_token.strip())
         
         # Usar Circuit Breaker para proteger contra saturación
         result = await cb_refresh.call(refresh_access_token_service, refresh_token)
-        logger.info(f'{{"event": "refresh_token_success", "ip": "{request.client.host}"}}')
+        logger.info(f'{{"event": "refresh_token_success", "ip": "{_client_ip(request)}"}}')
         return result
     except RuntimeError as e:
         if "Circuit breaker" in str(e):
-            logger.warning(f'{{"event": "refresh_circuit_open", "ip": "{request.client.host}"}}')
+            logger.warning(f'{{"event": "refresh_circuit_open", "ip": "{_client_ip(request)}"}}')
             raise HTTPException(status_code=503, detail="token_refresh_temporarily_unavailable")
         raise
     except HTTPException:
@@ -169,7 +257,7 @@ async def register_route(
 ) -> dict:
     # Safe slicing para evitar IndexError con emails cortos
     email_preview = data.email[:3] + "..." + data.email[-6:] if len(data.email) > 9 else data.email[:3] + "..."
-    logger.info(f'{{"event": "register_attempt", "ip": "{request.client.host}", "email_preview": "{email_preview}"}}')
+    logger.info(f'{{"event": "register_attempt", "ip": "{_client_ip(request)}", "email_preview": "{email_preview}"}}')
     try:
         email = sanitize_input(data.email)
         password = data.password
@@ -181,11 +269,11 @@ async def register_route(
             full_name=full_name,
             session=None,
         )
-        logger.info(f'{{"event": "register_success", "ip": "{request.client.host}"}}')
+        logger.info(f'{{"event": "register_success", "ip": "{_client_ip(request)}"}}')
         return result
     except Exception as e:
         error_str = str(e)
-        logger.error(f'{{"event": "register_error", "error": "{error_str}", "ip": "{request.client.host}"}}')
+        logger.error(f'{{"event": "register_error", "error": "{error_str}", "ip": "{_client_ip(request)}"}}')
         # Log más detallado para debuggear 422
         import traceback
         logger.error(f'Register traceback: {traceback.format_exc()}')
@@ -198,7 +286,7 @@ async def login_route(
     data: LoginSchema,
     request: Request,
 ) -> dict:
-    logger.info(f'{{"event": "login_attempt", "ip": "{request.client.host}"}}')
+    logger.info(f'{{"event": "login_attempt", "ip": "{_client_ip(request)}"}}')
     try:
         email = sanitize_input(data.email)
         password = data.password
@@ -207,7 +295,7 @@ async def login_route(
             password=password,
             session=None,
         )
-        logger.info(f'{{"event": "login_success", "ip": "{request.client.host}"}}')
+        logger.info(f'{{"event": "login_success", "ip": "{_client_ip(request)}"}}')
         return result
     except Exception as e:
         logger.error(f'{{"event": "login_error", "error": "{str(e)}"}}', exc_info=True)

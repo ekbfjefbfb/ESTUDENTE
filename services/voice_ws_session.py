@@ -314,7 +314,7 @@ class VoiceWsSession:
                     if not isinstance(delta, str) or not delta:
                         continue
                     llm_parts.append(delta)
-                    await self.send_json({"type": "llm_partial", "delta": delta, "ts": self.now_ts()})
+                    await self.send_json({"type": "llm_partial", "delta": delta, "content": delta, "ts": self.now_ts()})
                 llm_text = "".join(llm_parts).strip()
                 logger.info(f"LLM streaming complete: {len(llm_text)} chars")
             else:
@@ -327,7 +327,7 @@ class VoiceWsSession:
                 logger.info(f"LLM non-stream complete: {len(llm_text)} chars")
 
             if llm_text:
-                await self.send_json({"type": "llm_final", "text": llm_text, "ts": self.now_ts()})
+                await self.send_json({"type": "llm_final", "text": llm_text, "content": llm_text, "ts": self.now_ts()})
             else:
                 logger.warning(f"LLM returned empty text for user={user_id}")
                 return
@@ -341,7 +341,14 @@ class VoiceWsSession:
         try:
             voice = normalize_voice(self.voice_name)
             audio_data = await text_to_speech_groq(llm_text, voice=voice, speed=1.0)
-            await self.send_json({"type": "tts_audio", "audio": audio_data, "text": llm_text[:200], "voice": voice, "ts": self.now_ts()})
+            await self.send_json({
+                "type": "tts_audio",
+                "audio": audio_data,
+                "audio_url": audio_data,
+                "text": llm_text[:200],
+                "voice": voice,
+                "ts": self.now_ts(),
+            })
             logger.info(f"TTS complete: {len(audio_data)} chars of base64 audio")
         except Exception as e:
             logger.exception(f"TTS error for user={user_id}: {e}")

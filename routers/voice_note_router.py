@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from utils.auth import get_current_user
@@ -28,6 +28,14 @@ from models.voice_note_models import (
 logger = logging.getLogger("voice_note_router")
 
 router = APIRouter(prefix="/api/voice-notes", tags=["Voice Notes"])
+
+
+def _request_base_url(request: Request) -> str:
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    if forwarded_proto and forwarded_host:
+        return f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+    return str(request.base_url).rstrip("/")
 
 
 # =============================================
@@ -262,6 +270,7 @@ async def upload_chunk(
 @router.get("/{voice_note_id}/upload-status", response_model=ResumeUploadInfo)
 async def get_upload_status(
     voice_note_id: str,
+    request: Request,
     user=Depends(get_current_user)
 ):
     """
@@ -280,7 +289,7 @@ async def get_upload_status(
             chunk_size_bytes=CHUNK_SIZE_BYTES,
             total_chunks=status["total_chunks"],
             missing_chunks=status["missing_chunks"],
-            upload_url_template=f"/api/voice-notes/{voice_note_id}/chunks"
+            upload_url_template=f"{_request_base_url(request)}/api/voice-notes/{voice_note_id}/chunks"
         )
         
     except VoiceNoteError as e:
@@ -519,7 +528,7 @@ async def update_voice_note(
 # =============================================
 
 @router.get("/config/upload-params")
-async def get_upload_config(user=Depends(get_current_user)):
+async def get_upload_config(request: Request, user=Depends(get_current_user)):
     """
     ⚙️ Retorna configuración de subida para el cliente.
     
@@ -534,4 +543,8 @@ async def get_upload_config(user=Depends(get_current_user)):
         "supported_formats": ["webm", "mp4", "wav", "m4a", "aac"],
         "recommended_format": "webm",
         "checksum_algorithm": "sha256",
+        "create_url": f"{_request_base_url(request)}/api/voice-notes/create",
+        "chunk_url_template": f"{_request_base_url(request)}/api/voice-notes/{{voice_note_id}}/chunks",
+        "status_url_template": f"{_request_base_url(request)}/api/voice-notes/{{voice_note_id}}/upload-status",
+        "process_url_template": f"{_request_base_url(request)}/api/voice-notes/{{voice_note_id}}/process",
     }

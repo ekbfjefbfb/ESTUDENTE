@@ -37,6 +37,7 @@ class ChatResponse(BaseModel):
     response: str
     user_id: str
     timestamp: str
+    session_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
     message_id: Optional[str] = None
     actions: Optional[List[Dict[str, Any]]] = None

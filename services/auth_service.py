@@ -271,7 +271,9 @@ class AuthService:
             user_data = {
                 "email": email,
                 "name": payload.get("name") or payload.get("given_name") or email.split("@")[0],
-                "google_id": payload.get("sub")
+                "picture": payload.get("picture"),
+                "google_id": payload.get("sub"),
+                "oauth_provider": "google",
             }
             
             # Crear o actualizar usuario
@@ -434,6 +436,9 @@ class AuthService:
                     id=user_id,
                     username=username,
                     email=email,
+                    full_name=user_data.get("name"),
+                    profile_picture_url=user_data.get("picture"),
+                    oauth_provider=user_data.get("oauth_provider"),
                     is_active=True
                 )
                 session.add(user)
@@ -446,6 +451,16 @@ class AuthService:
                 })
             else:
                 # Actualizar usuario existente con ORM
+                full_name = user_data.get("name")
+                picture = user_data.get("picture")
+                oauth_provider = user_data.get("oauth_provider")
+
+                if full_name and user.full_name != full_name:
+                    user.full_name = full_name
+                if picture and user.profile_picture_url != picture:
+                    user.profile_picture_url = picture
+                if oauth_provider:
+                    user.oauth_provider = oauth_provider
                 session.add(user)
                 await session.commit()
                 
@@ -576,6 +591,48 @@ async def oauth_login_or_register(db_session, provider: str, id_token: str, name
             "error": str(e)
         })
         raise
+
+
+async def complete_google_oauth_login(code: str, state: str) -> Dict[str, Any]:
+    """Completa OAuth2 Authorization Code de Google y retorna tokens propios del backend."""
+    from services.google_workspace.google_auth_service import google_auth_service
+
+    oauth_payload = await google_auth_service.handle_oauth_callback(code=code, state=state)
+    user_info = dict(oauth_payload.get("user_info") or {})
+    email = str(user_info.get("email") or "").strip().lower()
+    if not email:
+        raise Exception("google_oauth_email_missing")
+
+    user_data = {
+        "email": email,
+        "name": user_info.get("name") or user_info.get("first_name") or email.split("@")[0],
+        "picture": user_info.get("picture"),
+        "google_id": user_info.get("google_id"),
+        "oauth_provider": "google",
+    }
+
+    session = await get_db_session()
+    async with session:
+        user = await auth_service._get_or_create_user(session, user_data)
+        await google_auth_service.sync_cached_credentials_to_db(email)
+
+        access_token = await create_access_token({"sub": str(user.id)})
+        refresh_token = await create_refresh_token({"sub": str(user.id)})
+
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "oauth_provider": "google",
+            "google_connected": True,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.full_name or user.username,
+                "profile_picture_url": user.profile_picture_url,
+            },
+            "google_oauth": oauth_payload,
+        }
 
 async def refresh_access_token_service(refresh_token: str) -> Dict[str, Any]:
     """Función de compatibilidad para renovar token"""

@@ -5,13 +5,13 @@ Obtiene información del usuario y mantiene acceso permanente
 
 import asyncio
 import logging
-import os
 from datetime import datetime
 from typing import Optional, Dict, Any, Tuple
 import httpx
 import json_log_formatter
 from sqlalchemy import func, select, update
 from utils.bounded_dict import BoundedDict
+from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, OAUTH_ENABLED
 
 try:
     from google.oauth2.credentials import Credentials
@@ -42,15 +42,9 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.propagate = False
 
-# =============================================
-# CONFIGURACIÓN GOOGLE OAUTH2
-# =============================================
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback")
-
 # Scopes completos para Google Workspace
 GOOGLE_SCOPES = [
+    'openid',
     'https://www.googleapis.com/auth/userinfo.email',
     'https://www.googleapis.com/auth/userinfo.profile',
     'https://www.googleapis.com/auth/drive',
@@ -207,13 +201,62 @@ class GoogleAuthService:
             if session is not None:
                 await session.close()
 
+    async def sync_cached_credentials_to_db(self, user_email: str) -> bool:
+        normalized_email = self._normalize_email(user_email)
+        if not normalized_email:
+            return False
+
+        credentials_data = await smart_cache.get(
+            self._cache_key("google_credentials", normalized_email)
+        )
+        user_info = await smart_cache.get(
+            self._cache_key("google_user_info", normalized_email)
+        ) or {"email": normalized_email}
+
+        if not isinstance(credentials_data, dict) or not credentials_data.get("token"):
+            return False
+
+        expires_at = None
+        raw_expiry = credentials_data.get("expiry")
+        if raw_expiry:
+            try:
+                expires_at = datetime.fromisoformat(raw_expiry)
+            except Exception:
+                expires_at = None
+
+        return await self._persist_credentials_to_db(
+            user_email=normalized_email,
+            user_info=user_info,
+            access_token=credentials_data.get("token"),
+            refresh_token=credentials_data.get("refresh_token"),
+            expires_at=expires_at,
+        )
+
     def _ensure_available(self):
         if not GOOGLE_WORKSPACE_LIBS_AVAILABLE:
             raise RuntimeError(f"google_workspace_unavailable: {GOOGLE_WORKSPACE_IMPORT_ERROR}")
 
     def _ensure_configured(self):
+        if not OAUTH_ENABLED:
+            raise RuntimeError("google_oauth_disabled")
         if not self.client_id or not self.client_secret or not self.redirect_uri:
             raise RuntimeError("google_oauth_not_configured")
+
+    def get_public_config(self) -> Dict[str, Any]:
+        return {
+            "enabled": bool(
+                OAUTH_ENABLED
+                and self.client_id
+                and self.client_secret
+                and self.redirect_uri
+                and GOOGLE_WORKSPACE_LIBS_AVAILABLE
+            ),
+            "redirect_uri": self.redirect_uri,
+            "client_id": self.client_id,
+            "scopes": list(self.scopes),
+            "workspace_libs_available": GOOGLE_WORKSPACE_LIBS_AVAILABLE,
+            "workspace_import_error": str(GOOGLE_WORKSPACE_IMPORT_ERROR) if GOOGLE_WORKSPACE_IMPORT_ERROR else None,
+        }
 
     async def _build_service(self, service_name: str, version: str, credentials):
         self._ensure_available()
@@ -558,6 +601,14 @@ class GoogleAuthService:
                     self._cache_key("google_credentials", normalized_email),
                     updated_credentials_data,
                     ttl=3600
+                )
+                user_info = await self.get_user_info(normalized_email) or {"email": normalized_email}
+                await self._persist_credentials_to_db(
+                    user_email=normalized_email,
+                    user_info=user_info,
+                    access_token=credentials.token,
+                    refresh_token=credentials.refresh_token,
+                    expires_at=credentials.expiry,
                 )
                 
                 logger.info({

@@ -5,6 +5,7 @@ Sistema avanzado de búsqueda semántica con embeddings, vector databases y simi
 """
 import asyncio
 import logging
+import os
 import time
 import hashlib
 from typing import Dict, Any, List
@@ -78,12 +79,38 @@ class VectorEmbeddingsManager:
         self.vector_index = None
         self.document_store: Dict[int, Dict[str, Any]] = {}
         self.initialized = False
+
+    def _normalize_embedding(self, embedding: np.ndarray) -> np.ndarray:
+        vector = np.asarray(embedding, dtype=np.float32)
+        norm = np.linalg.norm(vector)
+        if norm <= 0:
+            return vector
+        return vector / norm
+
+    def _simple_fallback_embedding(self, text: str) -> np.ndarray:
+        raw = str(text or "").lower()
+        vector = np.zeros(self.config.vector_dimension, dtype=np.float32)
+        if not raw:
+            return vector
+
+        for idx, char in enumerate(raw.encode("utf-8")):
+            vector[idx % self.config.vector_dimension] += (char % 31) / 31.0
+
+        words = raw.split()
+        for idx, word in enumerate(words):
+            word_hash = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16)
+            vector[(word_hash + idx) % self.config.vector_dimension] += 1.0
+
+        return self._normalize_embedding(vector)
         
     async def initialize(self):
         """Inicializa el modelo de embeddings"""
         try:
             if not SENTENCE_TRANSFORMERS_AVAILABLE:
-                logger.warning("⚠️ sentence-transformers no disponible. Semantic search limitado.")
+                logger.warning("⚠️ sentence-transformers no disponible. Usando fallback local.")
+                if FAISS_AVAILABLE:
+                    self.vector_index = faiss.IndexFlatIP(self.config.vector_dimension)
+                self.initialized = True
                 return
                 
             logger.info(f"🚀 Inicializando modelo de embeddings: {self.config.model_name}")
@@ -129,16 +156,20 @@ class VectorEmbeddingsManager:
             cached_embedding = await redis_get(cache_key)
             if cached_embedding:
                 logger.debug(f"Cache hit para embedding: {text[:50]}...")
-                return np.array(cached_embedding)
+                return self._normalize_embedding(np.array(cached_embedding, dtype=np.float32))
         
         try:
-            # Generar embedding en thread separado
-            loop = asyncio.get_event_loop()
-            embedding = await loop.run_in_executor(
-                None,
-                self.model.encode,
-                text
-            )
+            if self.model is None:
+                embedding = self._simple_fallback_embedding(text)
+            else:
+                # Generar embedding en thread separado
+                loop = asyncio.get_event_loop()
+                embedding = await loop.run_in_executor(
+                    None,
+                    self.model.encode,
+                    text
+                )
+                embedding = self._normalize_embedding(embedding)
             
             # Guardar en cache
             if use_cache:
@@ -165,13 +196,17 @@ class VectorEmbeddingsManager:
         start_time = time.time()
         
         try:
-            # Procesar en batch para mayor eficiencia
-            loop = asyncio.get_event_loop()
-            embeddings = await loop.run_in_executor(
-                None,
-                self.model.encode,
-                texts
-            )
+            if self.model is None:
+                embeddings = [self._simple_fallback_embedding(text) for text in texts]
+            else:
+                # Procesar en batch para mayor eficiencia
+                loop = asyncio.get_event_loop()
+                embeddings = await loop.run_in_executor(
+                    None,
+                    self.model.encode,
+                    texts
+                )
+                embeddings = [self._normalize_embedding(embedding) for embedding in embeddings]
             
             duration = time.time() - start_time
             logger.info(f"Batch de {len(texts)} embeddings generado en {duration:.3f}s")
@@ -303,6 +338,10 @@ class SemanticSearchService:
     async def _load_initial_data(self):
         """Carga datos iniciales para indexar"""
         try:
+            if str(os.getenv("SEMANTIC_SEARCH_LOAD_SAMPLE_DOCS", "")).strip().lower() not in {"1", "true", "yes"}:
+                logger.info("Semantic search sample docs disabled")
+                return
+
             # Aquí podrías cargar documentos existentes de la base de datos
             sample_docs = [
                 {

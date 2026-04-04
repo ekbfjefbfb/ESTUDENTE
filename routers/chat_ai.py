@@ -18,6 +18,24 @@ from utils.file_processing import build_message_with_files
 logger = logging.getLogger("chat_ai")
 
 
+def _dedupe_current_user_message(
+    conversation_history: List[Dict[str, Any]],
+    user_message: str,
+) -> List[Dict[str, Any]]:
+    if not conversation_history:
+        return []
+
+    normalized_user_message = str(user_message or "").strip()
+    history_copy = list(conversation_history)
+    last_message = history_copy[-1]
+    if (
+        str(last_message.get("role") or "").strip().lower() == "user"
+        and str(last_message.get("content") or "").strip() == normalized_user_message
+    ):
+        return history_copy[:-1]
+    return history_copy
+
+
 async def get_ai_response_with_streaming(
     user_id: str,
     user_message: str,
@@ -36,8 +54,11 @@ async def get_ai_response_with_streaming(
     # Detectar cambio de tema
     topic = await detect_topic_change(user_message, "")
 
-    # Obtener historial de conversación antes de agregar el mensaje actual
-    conversation_history = await get_conversation_history(user_id, limit=10)
+    # Priorizar historial persistente de la sesión activa; fallback a memoria global
+    conversation_history = list(user_context.get("chat_history") or [])
+    if not conversation_history:
+        conversation_history = await get_conversation_history(user_id, limit=10)
+    conversation_history = _dedupe_current_user_message(conversation_history, user_message)
     
     # Agregar mensaje del usuario al historial
     await add_message(user_id, "user", user_message, topic=topic)
@@ -119,8 +140,11 @@ async def get_ai_response_http(
     # Detectar cambio de tema
     topic = await detect_topic_change(user_message, "")
 
-    # Obtener historial de conversación antes de agregar el mensaje actual
-    conversation_history = await get_conversation_history(user_id, limit=10)
+    # Priorizar historial persistente de la sesión activa; fallback a memoria global
+    conversation_history = list(user_context.get("chat_history") or [])
+    if not conversation_history:
+        conversation_history = await get_conversation_history(user_id, limit=10)
+    conversation_history = _dedupe_current_user_message(conversation_history, user_message)
     
     # Agregar mensaje del usuario al historial
     await add_message(user_id, "user", user_message, topic=topic)
@@ -215,28 +239,28 @@ def _build_context_prompt(user_context: Dict[str, Any]) -> str:
 
     user_full_name = str(user_context.get("user_full_name") or "").strip()
     if user_full_name:
-        prompt_parts.append(f"👤 USUARIO: {user_full_name}")
+        prompt_parts.append(f"USUARIO: {user_full_name}")
     
     if user_context.get("tasks_today"):
-        prompt_parts.append("📋 TAREAS DE HOY:")
+        prompt_parts.append("TAREAS DE HOY:")
         for t in user_context["tasks_today"]:
             prompt_parts.append(f"  - {t.get('title', 'Sin título')}")
     
     if user_context.get("tasks_upcoming"):
-        prompt_parts.append("📅 TAREAS PRÓXIMAS:")
+        prompt_parts.append("TAREAS PROXIMAS:")
         for t in user_context["tasks_upcoming"][:5]:
             due = t.get('due_date', '')
             prompt_parts.append(f"  - {t.get('title', 'Sin título')} (vence: {due})")
     
     if user_context.get("recent_sessions"):
-        prompt_parts.append("🎙️ SESIONES RECIENTES:")
+        prompt_parts.append("SESIONES RECIENTES:")
         for s in user_context["recent_sessions"][:3]:
             prompt_parts.append(f"  - {s.get('title', 'Sin título')}")
     
     web_search_results = user_context.get("web_search_results")
     if web_search_results:
         prompt_parts.append(
-            "🌐 RESULTADOS DE BÚSQUEDA (APIs reales; úsalos como base, cita fuente cuando puedas):"
+            "RESULTADOS DE BUSQUEDA (APIs reales; usalos como base, cita fuente cuando puedas):"
         )
         for i, r in enumerate(web_search_results[:5], 1):
             title = r.get("title", "Sin título")
@@ -249,12 +273,12 @@ def _build_context_prompt(user_context: Dict[str, Any]) -> str:
     
     youtube_transcript = user_context.get("youtube_transcript")
     if youtube_transcript:
-        prompt_parts.append("📺 TRANSCRIPCIÓN DE YOUTUBE:")
+        prompt_parts.append("TRANSCRIPCION DE YOUTUBE:")
         prompt_parts.append(f"  {youtube_transcript[:500]}")
     
     web_extract = user_context.get("web_extract")
     if web_extract:
-        prompt_parts.append("📄 CONTENIDO WEB EXTRAÍDO:")
+        prompt_parts.append("CONTENIDO WEB EXTRAIDO:")
         prompt_parts.append(f"  {web_extract[:500]}")
     
     return "\n".join(prompt_parts)
@@ -343,7 +367,7 @@ def _build_system_prompt(
         "• Académico y Cercano: Sé profesional pero motivador. Usa LaTeX ($...$) para fórmulas impecables.\n"
         "• Pedagogía Directa: No rellenes con texto inútil. Explica el 'por qué' antes del 'cómo'.\n"
         "• Memoria Total: Recuerda lo que habéis hablado antes para mantener el hilo de la clase.\n"
-        "• Emojis: Solo uno cuando sume claridad o empatía (ej. 📐, 🧪, 🧠).\n"
+        "• Emojis: No uses emojis salvo que el usuario ya esté hablando con ellos y sean realmente necesarios.\n"
         "• Honestidad: No inventes datos. Si un cálculo requiere al equipo de expertos, actívalo.\n"
     )
 

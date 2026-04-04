@@ -12,7 +12,7 @@ import time
 
 from fastapi import WebSocket, WebSocketDisconnect, HTTPException
 
-from routers.chat_context import get_user_context_for_chat
+from routers.chat_context import get_user_context_for_chat, invalidate_user_context
 from routers.chat_search import perform_web_search, prioritize_sources_with_images
 from routers.chat_ai import get_ai_response_with_streaming
 from routers.chat_ws_utils import (
@@ -38,6 +38,21 @@ _WS_CONNECT_RULES = (
 
 def _should_auto_rename_session(session_info: Any) -> bool:
     return getattr(session_info, "title", None) == "Nueva Conversación"
+
+
+def _has_vision_attachments(image_contents: List[Dict[str, Any]]) -> bool:
+    return bool(image_contents)
+
+
+def _merge_message_with_document_texts(message: str, text_contents: List[str]) -> str:
+    docs = [str(item or "").strip() for item in (text_contents or []) if str(item or "").strip()]
+    if not docs:
+        return str(message or "")
+    merged_docs = "\n\n".join(docs)[:12000]
+    base_message = str(message or "").strip()
+    if not base_message:
+        return f"Contexto documental adjunto:\n{merged_docs}"
+    return f"{base_message}\n\nContexto documental adjunto:\n{merged_docs}"
 
 
 async def handle_chat_websocket(websocket: WebSocket, user_id: str):
@@ -270,7 +285,7 @@ async def _process_chat_message(
 
     # Procesar MEDIA (Imágenes y Documentos)
     from utils.file_processing import process_base64_files
-    image_contents, text_contents = await process_base64_files(
+    image_contents, text_contents, attachment_metadata = await process_base64_files(
         images_base64=images_raw,
         docs_base64=docs_raw
     )
@@ -309,7 +324,7 @@ async def _process_chat_message(
         chat_session_service.add_message(
             db=db, session_id=session_id, user_id=user_id,
             role="user", content=user_message,
-            media_metadata={"images": images_raw, "docs": docs_raw},
+            media_metadata=attachment_metadata,
             request_id=request_id
         )
         if not session_id:
@@ -324,6 +339,16 @@ async def _process_chat_message(
     finally:
         db.close()
 
+    invalidate_user_context(user_id)
+    await _ws_send_json(
+        websocket,
+        {
+            "type": "session",
+            "request_id": request_id,
+            "session_id": session_id,
+        },
+    )
+
     # Get user context (NOW with SQL History if session_id is present)
     user_context = await get_user_context_for_chat(user_id, session_id=session_id)
     chat_history = user_context.get("chat_history", [])
@@ -331,12 +356,15 @@ async def _process_chat_message(
     should_web_search = _should_web_search(
         user_id=user_id, message=user_message, force=force_web
     )
-    logger.info(f"chat_ws_start request_id={request_id} user_id={user_id} web_search={should_web_search}")
+    effective_web_search = should_web_search and not (image_contents or text_contents)
+    logger.info(f"chat_ws_start request_id={request_id} user_id={user_id} web_search={effective_web_search}")
 
     # --- ORQUESTACIÓN AUTÓNOMA (Nivel Dios) ---
     # El Scout decide si necesitamos agentes o chat normal usando el HISTORIAL
-    if scout.should_use_agents(user_message, history=chat_history):
-        task_desc = user_message.strip()
+    agent_input_message = _merge_message_with_document_texts(user_message, text_contents)
+    should_use_agents = scout.should_use_agents(agent_input_message, history=chat_history) and not _has_vision_attachments(image_contents)
+    if should_use_agents:
+        task_desc = agent_input_message.strip()
         
         await _ws_send_status(websocket, "Activando equipo de investigacion academica...", request_id=request_id)
         
@@ -410,6 +438,7 @@ async def _process_chat_message(
                     {
                         "type": "complete",
                         "request_id": request_id,
+                        "session_id": session_id,
                         "text": agent_text,
                         "memory_id": memory_id,
                         "sources": [],
@@ -420,7 +449,7 @@ async def _process_chat_message(
             else:
                 await _ws_send_json(
                     websocket,
-                    {"type": "done", "request_id": request_id, "agent_mode": True},
+                    {"type": "done", "request_id": request_id, "session_id": session_id, "agent_mode": True},
                 )
             return # Finalizar aquí para peticiones agénticas automáticas
         except asyncio.TimeoutError:
@@ -453,7 +482,7 @@ async def _process_chat_message(
     
     # Web search
     ddg_sources: List[Dict[str, Any]] = []
-    if should_web_search:
+    if effective_web_search:
         await _ws_send_status(websocket, "Buscando fuentes academicas actualizadas...", request_id=request_id)
         search_sources, _ = await perform_web_search(
             user_id=user_id,
@@ -546,6 +575,7 @@ async def _process_chat_message(
             role="assistant", content=text,
             request_id=request_id
         )
+        invalidate_user_context(user_id)
         
         # Simple Naming logic: rename if session title is default
         session_info = db.query(ChatSession).filter(
@@ -585,6 +615,7 @@ async def _process_chat_message(
         {
             "type": "complete",
             "request_id": request_id,
+            "session_id": session_id,
             "text": text,
             "memory_id": memory_id,
             "sources": sources,

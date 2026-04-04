@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import (
     APIRouter,
@@ -15,6 +15,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
@@ -56,6 +57,18 @@ from routers.chat_ws_utils import (
     _ws_auth_user_id, _ws_send_json, _ws_heartbeat,
     _estimate_duration_ms_from_bytes, _tail_bytes_for_pcm16
 )
+from utils.file_processing import SUPPORTED_IMAGE_TYPES, SUPPORTED_DOCUMENT_TYPES, MAX_FILE_SIZE_BYTES
+from config import (
+    BACKEND_PUBLIC_URL,
+    CHAT_VOICE_WS_PUBLIC_URL,
+    DEEPGRAM_AGENT_OPENAI_PUBLIC_URL,
+    DEEPGRAM_AGENT_PUBLIC_URL,
+    GOOGLE_OAUTH_AUTHORIZE_PATH,
+    GOOGLE_OAUTH_CALLBACK_PATH,
+    GOOGLE_OAUTH_EXCHANGE_PATH,
+    GOOGLE_REDIRECT_URI,
+    OAUTH_ENABLED,
+)
 
 logger = logging.getLogger("unified_chat_router")
 router = APIRouter(prefix="/unified-chat", tags=["Chat IA"])
@@ -65,11 +78,37 @@ _VOICE_WS_CONNECT_RULES = (
 )
 
 
-# ============== HTTP ENDPOINTS ==============
+def _request_public_base_url(request: Request) -> str:
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    if forwarded_proto and forwarded_host:
+        return f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+    if BACKEND_PUBLIC_URL:
+        return BACKEND_PUBLIC_URL.rstrip("/")
+    return str(request.base_url).rstrip("/")
 
-@router.get("/info")
-async def chat_info():
-    """Información del servidor de chat para frontend"""
+
+def _ws_url_from_http_base(base_url: str, path: str) -> str:
+    normalized_base = str(base_url or "").rstrip("/")
+    if normalized_base.startswith("https://"):
+        return f"wss://{normalized_base[len('https://'):]}{path}"
+    if normalized_base.startswith("http://"):
+        return f"ws://{normalized_base[len('http://'):]}{path}"
+    return f"{normalized_base}{path}"
+
+
+def _build_client_config(request: Request) -> Dict[str, Any]:
+    base_url = _request_public_base_url(request)
+    try:
+        from services.google_workspace.google_auth_service import google_auth_service
+
+        google_config = google_auth_service.get_public_config()
+    except Exception:
+        google_config = {
+            "enabled": bool(OAUTH_ENABLED),
+            "redirect_uri": GOOGLE_REDIRECT_URI,
+        }
+
     return {
         "service": "unified-chat",
         "version": "6.0",
@@ -80,14 +119,70 @@ async def chat_info():
             "voice_chat": True,
             "websocket": True,
             "context_monitoring": True,
-            "auto_context_refresh": True
+            "auto_context_refresh": True,
+            "multipart_chat": True,
+            "google_oauth": bool(google_config.get("enabled")),
+            "deepgram_agent_proxy": True,
         },
         "limits": {
             "max_context_tokens": 32000,
             "context_threshold_percent": 85,
-            "max_audio_size_mb": 10
+            "max_audio_size_mb": 10,
+            "max_file_size_mb": round(MAX_FILE_SIZE_BYTES / (1024 * 1024), 2),
+        },
+        "multipart": {
+            "fields": {
+                "message": "text",
+                "files": "list[file]",
+                "images": "list[file]",
+                "documents": "list[file]",
+                "force_web_search": "bool",
+                "session_id": "string",
+            },
+            "supported_image_types": sorted(SUPPORTED_IMAGE_TYPES),
+            "supported_document_types": sorted(SUPPORTED_DOCUMENT_TYPES),
+        },
+        "frontend": {
+            "message_url": f"{base_url}/api/unified-chat/message",
+            "message_json_url": f"{base_url}/api/unified-chat/message/json",
+            "history_url_template": f"{base_url}/api/unified-chat/sessions/{{session_id}}/history",
+            "ws_url_template": f"{_ws_url_from_http_base(base_url, '/api/unified-chat/ws/{user_id}')}?token={{jwt}}",
+            "voice_ws_url": CHAT_VOICE_WS_PUBLIC_URL or _ws_url_from_http_base(base_url, "/api/unified-chat/voice/ws"),
+        },
+        "voice_agent": {
+            "provider": "deepgram-custom-llm",
+            "chat_url": DEEPGRAM_AGENT_PUBLIC_URL or f"{base_url}/api/deepgram/chat",
+            "openai_compatible_url": DEEPGRAM_AGENT_OPENAI_PUBLIC_URL or f"{base_url}/api/deepgram/v1/chat/completions",
+            "auth": {
+                "type": "bearer",
+                "header": "Authorization",
+                "format": "Bearer <access_token>",
+            },
+        },
+        "oauth": {
+            "google": {
+                "enabled": bool(google_config.get("enabled")),
+                "authorize_url": f"{base_url}{GOOGLE_OAUTH_AUTHORIZE_PATH}",
+                "exchange_code_url": f"{base_url}{GOOGLE_OAUTH_EXCHANGE_PATH}",
+                "callback_url": f"{base_url}{GOOGLE_OAUTH_CALLBACK_PATH}",
+                "redirect_uri": google_config.get("redirect_uri") or GOOGLE_REDIRECT_URI,
+            }
         },
     }
+
+
+# ============== HTTP ENDPOINTS ==============
+
+@router.get("/info")
+async def chat_info(request: Request):
+    """Información del servidor de chat para frontend"""
+    return _build_client_config(request)
+
+
+@router.get("/client-config")
+async def chat_client_config(request: Request):
+    """Configuración explícita para frontend móvil/web."""
+    return _build_client_config(request)
 
 
 @router.get("/health")

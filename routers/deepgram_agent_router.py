@@ -1,10 +1,8 @@
 """
-🎙️ Deepgram Agent Proxy Router
-------------------------------
-Este router expone una API compatible con OpenAI Chat Completions para que
-el Voice Agent de Deepgram (app móvil) lo use como "Custom LLM Provider".
+Deepgram Agent Proxy Router.
 
-Separa la lógica de autenticación JWT y formato de flujo en Streaming (SSE).
+Expone una API compatible con OpenAI Chat Completions para que
+el Voice Agent de Deepgram o el frontend la usen como Custom LLM Provider.
 """
 
 import json
@@ -13,13 +11,18 @@ import uuid
 import logging
 from typing import List, Dict, Any, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from utils.auth import get_current_user_optional, AuthUser
 from services.groq_ai_service import _execute_chat_core, _get_user_personal_context
-from config import GROQ_MODEL_FAST
+from config import (
+    BACKEND_PUBLIC_URL,
+    DEEPGRAM_AGENT_OPENAI_PUBLIC_URL,
+    DEEPGRAM_AGENT_PUBLIC_URL,
+    GROQ_MODEL_FAST,
+)
 
 logger = logging.getLogger("deepgram_agent_router")
 
@@ -37,7 +40,7 @@ class OpenAI_Message(BaseModel):
 
 class OpenAIChatRequest(BaseModel):
     model: Optional[str] = GROQ_MODEL_FAST
-    messages: List[OpenAI_Message]
+    messages: List[OpenAI_Message] = Field(..., min_length=1)
     stream: Optional[bool] = False
     temperature: Optional[float] = 0.5
     max_tokens: Optional[int] = 500
@@ -95,22 +98,48 @@ REGLAS ESTRICTAS DE RESPUESTA POR VOZ:
 3. Tus respuestas deben ser CORTAS. Idealmente 1 a 3 oraciones máximo (under 130 caracteres) al menos que te pidan más detalles explícitamente.
 4. Usa comas y puntos frecuentemente para hacer que la voz sintetizada haga pausas respiratorias.
 5. No des rellenos ("Claro, te explico", "Aquí tienes la respuesta"). Ve directo al grano.
+6. No uses emojis ni símbolos decorativos.
 """
 
 
 # ==========================================
-# 🚀 Endpoints
+# Endpoints
 # ==========================================
 
-@router.post("/chat")
-async def deepgram_custom_llm(
+
+def _request_base_url(request: Request) -> str:
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    if forwarded_proto and forwarded_host:
+        return f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+    if BACKEND_PUBLIC_URL:
+        return BACKEND_PUBLIC_URL.rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
+@router.get("/config")
+async def deepgram_config(request: Request) -> Dict[str, Any]:
+    base_url = _request_base_url(request)
+    return {
+        "success": True,
+        "provider": "deepgram-custom-llm",
+        "chat_url": DEEPGRAM_AGENT_PUBLIC_URL or f"{base_url}/api/deepgram/chat",
+        "openai_compatible_url": DEEPGRAM_AGENT_OPENAI_PUBLIC_URL or f"{base_url}/api/deepgram/v1/chat/completions",
+        "auth_header": "Authorization: Bearer <access_token>",
+        "streaming_format": "text/event-stream",
+    }
+
+
+async def _handle_deepgram_chat(
     request: Request,
     payload: OpenAIChatRequest
 ):
     """
-    Endpoint nativo para que Deepgram Voice Agent (Mobile) lo consuma.
-    Emula la API de OpenAI y puentea los bytes de Groq inyectando memoria.
+    Endpoint nativo para que Deepgram Voice Agent o el frontend consuman
+    el backend como proveedor compatible con OpenAI Chat Completions.
     """
+    if not payload.messages:
+        raise HTTPException(status_code=400, detail="messages_required")
     # 1. Autenticación (Deepgram manda el Header: Authorization: Bearer <token>)
     auth_header = request.headers.get("Authorization")
     user: Optional[AuthUser] = await get_current_user_optional(auth_header)
@@ -118,7 +147,7 @@ async def deepgram_custom_llm(
     # Tolerancia: Si el token falla, seguimos como anónimo, pero advertimos.
     user_id = user.get("user_id") if user else None
     if not user_id:
-        logger.warning("Deepgram Voice Agent Agent is querying without a valid User Token.")
+        logger.warning("Deepgram Voice Agent is querying without a valid user token.")
 
     # 2. Reconstruir los mensajes
     msgs: List[Dict[str, Any]] = [{"role": m.role, "content": m.content} for m in payload.messages]
@@ -148,6 +177,7 @@ async def deepgram_custom_llm(
             temperature=payload.temperature,
             max_tokens=payload.max_tokens,
             stream=False,
+            forced_model=req_model,
             use_web_search=True
         )
         # Formateo JSON plano OpenAI
@@ -176,6 +206,7 @@ async def deepgram_custom_llm(
                 temperature=payload.temperature,
                 max_tokens=payload.max_tokens,
                 stream=True,
+                forced_model=req_model,
                 use_web_search=True
             )
             
@@ -198,6 +229,23 @@ async def deepgram_custom_llm(
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "Connection": "keep-alive"
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         }
     )
+
+
+@router.post("/chat")
+async def deepgram_custom_llm(
+    request: Request,
+    payload: OpenAIChatRequest
+):
+    return await _handle_deepgram_chat(request=request, payload=payload)
+
+
+@router.post("/v1/chat/completions")
+async def deepgram_openai_compatible_chat(
+    request: Request,
+    payload: OpenAIChatRequest
+):
+    return await _handle_deepgram_chat(request=request, payload=payload)
