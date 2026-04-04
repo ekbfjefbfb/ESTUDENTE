@@ -489,11 +489,14 @@ async def metrics():
 app.include_router(auth_routes.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(auth_google_router.router)
 
-# Chat e IA
-app.include_router(unified_chat_router.router, prefix="/api", tags=["💬 Chat IA"])
+# Chat e IA (NUEVO v6.0 - Alias /api y /api/unified-chat)
+# Alias Moderno (para /api/sessions, /api/message, etc)
+app.include_router(unified_chat_router.router, prefix="/api", tags=["💬 Chat IA (Modern)"], include_in_schema=False)
+# Alias Legacy/Full (para /api/unified-chat/info, /api/unified-chat/health)
+app.include_router(unified_chat_router.router, prefix="/api/unified-chat", tags=["💬 Chat IA (Legacy)"])
 
 # Compatibilidad legacy: algunos clientes conectan sin prefijo /api (p.ej. WebSockets)
-app.include_router(unified_chat_router.router, prefix="", tags=["💬 Chat IA (legacy)"])
+app.include_router(unified_chat_router.router, prefix="", tags=["💬 Chat IA (WS Legacy)"], include_in_schema=False)
 
 # Documents
 app.include_router(apa7_pdf_router.router, tags=["Documents"])

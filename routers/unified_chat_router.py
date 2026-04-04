@@ -71,7 +71,7 @@ from config import (
 )
 
 logger = logging.getLogger("unified_chat_router")
-router = APIRouter(prefix="/unified-chat", tags=["Chat IA"])
+router = APIRouter(tags=["Chat IA"])
 _VOICE_WS_CONNECT_RULES = (
     RateLimitRule(name="voice_ws_connect_ip", scope="ip", max_requests=20, window_seconds=60, block_seconds=120),
     RateLimitRule(name="voice_ws_connect_user", scope="user", max_requests=8, window_seconds=60, block_seconds=120),
