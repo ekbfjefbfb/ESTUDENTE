@@ -117,13 +117,9 @@ CORS_HEADERS = ["*"]
 # =========================
 # Configuración OAuth
 # =========================
-OAUTH_ENABLED = str(_first_env("OAUTH_ENABLED", default="false")).lower() in ("true", "1", "t", "yes")
-GOOGLE_CLIENT_ID = _first_env("GOOGLE_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_AUTH_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = _first_env(
-    "GOOGLE_CLIENT_SECRET",
-    "GOOGLE_OAUTH_CLIENT_SECRET",
-    "GOOGLE_AUTH_CLIENT_SECRET",
-)
+OAUTH_ENABLED = True
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "555574254344-pdma0t3sed1qb3e7o46mpbp56cva6bpo.apps.googleusercontent.com")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = _first_env(
     "GOOGLE_REDIRECT_URI",
     "GOOGLE_OAUTH_REDIRECT_URI",

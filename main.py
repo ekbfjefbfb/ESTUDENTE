@@ -85,6 +85,7 @@ from routers import (
 from routers import image_analysis_router
 from routers import deepgram_agent_router
 from routers import document_router
+from routers import auth_google_router
 
 # Middlewares
 from middlewares.rate_limit_middleware import RateLimitMiddleware
@@ -486,6 +487,7 @@ async def metrics():
 
 # Autenticación
 app.include_router(auth_routes.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(auth_google_router.router)
 
 # Chat e IA
 app.include_router(unified_chat_router.router, prefix="/api", tags=["💬 Chat IA"])
