@@ -324,6 +324,365 @@
       "actor_name": "Alberto",
       "kind": "repo_branch",
       "message": "rama main (d994833f)"
+    },
+    {
+      "id": "git-commit-24ac067c4bf488ef5ad9e7fb11adb7e49c6ab720",
+      "at": "2026-04-06T23:25:10Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "24ac067c: IRIS DASHBOARD EXPLOIT: Intercepting Gunicorn to forcefully override broken Render UI start commands (Root fix) v6.2",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/24ac067c4bf488ef5ad9e7fb11adb7e49c6ab720"
+    },
+    {
+      "id": "git-branch-24ac067c4bf488ef-origin-main",
+      "at": "2026-04-06T23:25:10Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_branch",
+      "message": "rama origin/main (24ac067c)"
+    },
+    {
+      "id": "git-commit-b2685b54ec38389d102b59045416c8ee2041a998",
+      "at": "2026-04-06T23:10:58Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "b2685b54: IRIS SYSTEM DEPLOY: Force Render rebuild to apply Dashboard settings v6.1",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/b2685b54ec38389d102b59045416c8ee2041a998"
+    },
+    {
+      "id": "git-commit-5748c8b7a936376e7a43c5b46815d85e18077f29",
+      "at": "2026-04-04T20:22:29Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "5748c8b7: IRIS MEMORY RESCUE: Relaxed chat_session constraints (group_id, session_type nullable) v34.5",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/5748c8b7a936376e7a43c5b46815d85e18077f29"
+    },
+    {
+      "id": "git-commit-4c9d1e32d69bbeb4288f7307490733e1b66cce55",
+      "at": "2026-04-04T19:18:38Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "4c9d1e32: IRIS CHAT RESCUE: Rebuilt root infrastructure (chat_sessions updated_at, chat_messages table) v34.4",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/4c9d1e32d69bbeb4288f7307490733e1b66cce55"
+    },
+    {
+      "id": "git-commit-38f946f1e6cf01b742ae45e2d9e64a7c12ed1f43",
+      "at": "2026-04-04T18:48:56Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "38f946f1: IRIS SYSTEM RESCUE: Fixed DB multiple heads, missing columns, and routing alias (v34.1)",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/38f946f1e6cf01b742ae45e2d9e64a7c12ed1f43"
+    },
+    {
+      "id": "git-commit-0ee323799f541613c458ebe445374625bb80ae4f",
+      "at": "2026-04-04T01:05:30Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "0ee32379: IRIS VIP LOGIN: Integrated Google One-Tap with automatic Enterprise Plan onboarding",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/0ee323799f541613c458ebe445374625bb80ae4f"
+    },
+    {
+      "id": "git-commit-ca04b4b17b69204a39b8cefa6be7af8b9206132d",
+      "at": "2026-04-04T00:58:51Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "ca04b4b1: IRIS SENIOR REFACTOR: Unified session persistence and root resolution in WebSocket",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/ca04b4b17b69204a39b8cefa6be7af8b9206132d"
+    },
+    {
+      "id": "git-commit-402fbc1691bbecd1a9228be2e05561f92f42aae2",
+      "at": "2026-04-04T00:43:09Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "402fbc16: Fix websocket payload handling and google oauth cleanup",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/402fbc1691bbecd1a9228be2e05561f92f42aae2"
+    },
+    {
+      "id": "git-commit-0f5fcd1c04eeec7b7711386cec9a282ca45d54d8",
+      "at": "2026-04-04T00:36:48Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "0f5fcd1c: Harden chat media, oauth, and voice frontend config",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/0f5fcd1c04eeec7b7711386cec9a282ca45d54d8"
+    },
+    {
+      "id": "git-commit-b7cf235393a14c36dca389ff363b9bfff181ed6a",
+      "at": "2026-04-04T00:15:52Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "b7cf2353: Harden oauth, cache, and websocket flows",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/b7cf235393a14c36dca389ff363b9bfff181ed6a"
+    },
+    {
+      "id": "git-commit-83b2f75e98d0ee4f0161a0788be78988ccbc129f",
+      "at": "2026-04-04T00:03:57Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "83b2f75e: Audit and harden backend production flows",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/83b2f75e98d0ee4f0161a0788be78988ccbc129f"
+    },
+    {
+      "id": "git-commit-cf4fc527554b41aaab2de5a87dc74b27aa7b8fd1",
+      "at": "2026-04-03T23:46:22Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "cf4fc527: Harden backend production readiness and async integrations",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/cf4fc527554b41aaab2de5a87dc74b27aa7b8fd1"
+    },
+    {
+      "id": "git-commit-576a1d1767697133629109b911ac703cf00cd187",
+      "at": "2026-04-03T20:27:23Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "576a1d17: IRIS FINAL SYNC: Full Multi-Session Persistence, AI Naming, Agent Orchestration and Secure Handlers",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/576a1d1767697133629109b911ac703cf00cd187"
+    },
+    {
+      "id": "git-commit-2497e05d1e8256c96732a489bf1fc5c77c28a9f6",
+      "at": "2026-04-03T19:44:10Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "2497e05d: IRIS MULTI-SESSION v32.0: Persistent history, AI Naming and Multipart refinement",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/2497e05d1e8256c96732a489bf1fc5c77c28a9f6"
+    },
+    {
+      "id": "git-commit-8a2eb75fdfe7f68c2c55b3618dfe20a6760b6583",
+      "at": "2026-04-03T18:58:24Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "8a2eb75f: OMNI-CAPABLE FIX: Full document/image support for WS & HTTP + Agent Stability v31.4",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/8a2eb75fdfe7f68c2c55b3618dfe20a6760b6583"
+    },
+    {
+      "id": "git-commit-69eeedaf170388d77e43f6ef4335053a7c4e822e",
+      "at": "2026-04-03T18:56:49Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "69eeedaf: FIX: NoneType role in agents + Full support for JSON/Base64 media v31.3",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/69eeedaf170388d77e43f6ef4335053a7c4e822e"
+    },
+    {
+      "id": "git-commit-ebc1962ac7767ef91200984b9d24286d4604cecf",
+      "at": "2026-04-03T18:32:55Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "ebc1962a: FIX ROOT: import time and thread-safe loop capture for Iris v30.0",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/ebc1962ac7767ef91200984b9d24286d4604cecf"
+    },
+    {
+      "id": "git-commit-c97c97a9d52fe31b17aa5a9f298d8b334f761e53",
+      "at": "2026-04-03T15:47:16Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "c97c97a9: fix: Final Precision Stability Armor. Enabled Continuity Mode and Deduplication across all chat paths. Verified history and fallback awareness.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/c97c97a9d52fe31b17aa5a9f298d8b334f761e53"
+    },
+    {
+      "id": "git-commit-209258da91cbc710ef53c672e78765f375c53903",
+      "at": "2026-04-03T15:45:40Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "209258da: fix: Ultimate Stability Armor. Deduplication, smart fallback, and context hygiene to prevent AI loops and repetitions.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/209258da91cbc710ef53c672e78765f375c53903"
+    },
+    {
+      "id": "git-commit-b337b8eff39c9f115d2f14c089ce79367e01b86d",
+      "at": "2026-04-03T15:43:48Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "b337b8ef: fix: Restored conversation memory in streaming and disabled destructive topic-cache clearing. Iris is no longer repetitive and intro rules now respect history.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/b337b8eff39c9f115d2f14c089ce79367e01b86d"
+    },
+    {
+      "id": "git-commit-92054cc035af033ab2c9c032e2fd317b30e458fa",
+      "at": "2026-04-03T15:31:05Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "92054cc0: feat: Hybrid Resilience Armor v23.0. Pedagogical error messages with hidden technical debug info for development. Unified Iris identity during fallbacks.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/92054cc035af033ab2c9c032e2fd317b30e458fa"
+    },
+    {
+      "id": "git-commit-5922e1d7106b19b71b37f5a689db2763eee9f572",
+      "at": "2026-04-03T15:27:51Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "5922e1d7: fix: Resolve NameError length_rule in chat_ai.py and restore LLM streaming stability.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/5922e1d7106b19b71b37f5a689db2763eee9f572"
+    },
+    {
+      "id": "git-commit-b45f2cd1bba9923f6ed552d14e35090ec814d82c",
+      "at": "2026-04-03T15:14:05Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "b45f2cd1: feat: Subtle Iris Identity v21.0. Reverted to generic 'Tutor' labels in stream and adjusted prompts for natural name disclosure.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/b45f2cd1bba9923f6ed552d14e35090ec814d82c"
+    },
+    {
+      "id": "git-commit-3f1676b7f0027e28792cf47e2d1e92e108a2d779",
+      "at": "2026-04-03T15:08:02Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "3f1676b7: feat: Project Iris v20.0. Unified AI identity under the name 'Iris' across all core modules and streaming states.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/3f1676b7f0027e28792cf47e2d1e92e108a2d779"
+    },
+    {
+      "id": "git-commit-8e0810b231098305f4b7b3ff4008fba59e1765d3",
+      "at": "2026-04-03T14:57:26Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "8e0810b2: feat: Elite Academic Tutor v17.2. Global synchronization of empathy, LaTeX formulas, orjson speed boost, and token batching.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/8e0810b231098305f4b7b3ff4008fba59e1765d3"
+    },
+    {
+      "id": "git-commit-71afde5a6e14b775641f8c8ad517fb4912977cc0",
+      "at": "2026-04-03T14:51:01Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "71afde5a: feat: Incredible Helper Persona v16.0. Integrated empathy labeling, analogies, and actionable academic value.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/71afde5a6e14b775641f8c8ad517fb4912977cc0"
+    },
+    {
+      "id": "git-commit-4d1c3736e5ac185dbd1f45e14588c2a4ed8198b6",
+      "at": "2026-04-03T14:46:08Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "4d1c3736: feat: Autonomous Pedagogical Tutor v15.0. Integrated self-correction, academic feedback, and deep student memory.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/4d1c3736e5ac185dbd1f45e14588c2a4ed8198b6"
+    },
+    {
+      "id": "git-commit-d15ea71bf96d73528fc7685fdd9b3096e8af284f",
+      "at": "2026-04-03T01:31:49Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "d15ea71b: feat: Balanced God-Level Optimization. Locked T=0.0 with 6 reasoning turns for perfect speed/intelligence balance.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/d15ea71bf96d73528fc7685fdd9b3096e8af284f"
+    },
+    {
+      "id": "git-commit-e3ecc5d352696116504809753edd5700fb878ca3",
+      "at": "2026-04-03T01:27:17Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "e3ecc5d3: feat: Autonomous Research Agents v12.0. Integrated search_web tool and resilient heartbeat streaming.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/e3ecc5d352696116504809753edd5700fb878ca3"
+    },
+    {
+      "id": "git-commit-6a5776450e524898715b85d5e6b9997c09011bb7",
+      "at": "2026-04-03T01:18:28Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "6a577645: feat: Contextual Memory and Multipart Resilience v11.0. Fix 422 errors and robust conversation threads.",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/6a5776450e524898715b85d5e6b9997c09011bb7"
+    },
+    {
+      "id": "git-commit-b9d514c504d14e25ad26189117d6adb4c223aa88",
+      "at": "2026-04-03T00:54:52Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "b9d514c5: fix: agentic resilience with heartbeat keep-alive and synchronize timers v9.8.5",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/b9d514c504d14e25ad26189117d6adb4c223aa88"
+    },
+    {
+      "id": "git-commit-d7e235808d96981ae45ad594d0c4b64f0c0b53d9",
+      "at": "2026-04-03T00:43:12Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "d7e23580: fix: core authentication syntax and user context resilience v9.5.1",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/d7e235808d96981ae45ad594d0c4b64f0c0b53d9"
+    },
+    {
+      "id": "git-commit-97c8036bfd304d957b3df89f5a9529c839759cb8",
+      "at": "2026-04-03T00:23:05Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "97c8036b: fix: rollback sessions on error + agent await + timeout",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/97c8036bfd304d957b3df89f5a9529c839759cb8"
+    },
+    {
+      "id": "git-commit-e9f0fe9196b7385ccf1e2e16422a71014777256a",
+      "at": "2026-04-02T23:54:07Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "e9f0fe91: Fix NameError: define messages variable before use and fix streaming logic",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/e9f0fe9196b7385ccf1e2e16422a71014777256a"
+    },
+    {
+      "id": "git-commit-cf2c950cb56e5362a4eb7f10cc6a1995c83b6f86",
+      "at": "2026-04-02T23:39:57Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "cf2c950c: fix: SmartCache resilience and final agentic orchestration tuning",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/cf2c950cb56e5362a4eb7f10cc6a1995c83b6f86"
+    },
+    {
+      "id": "git-commit-1715430c63656084d1fe9241670aca9f58333a75",
+      "at": "2026-04-02T23:32:35Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "1715430c: feat: Omnipresencia Agéntica Total - Infiltración en Voz, Sesiones y Memoria Semántica",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/1715430c63656084d1fe9241670aca9f58333a75"
+    },
+    {
+      "id": "git-commit-7a39569c0f409f5a658fcb8493c3e7e1eab88a1b",
+      "at": "2026-04-02T23:29:41Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "7a39569c: feat: Omnipresencia Agéntica v8.0 - Integración en Documentos y Búsqueda Profunda",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/7a39569c0f409f5a658fcb8493c3e7e1eab88a1b"
+    },
+    {
+      "id": "git-commit-0f825b3e01e72db4cb1ce4df39b5c76c1a6f997e",
+      "at": "2026-04-02T23:26:43Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "0f825b3e: feat: Orquestación Autónoma v7.0 y Aislamiento Multi-Usuario Nivel Dios",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/0f825b3e01e72db4cb1ce4df39b5c76c1a6f997e"
+    },
+    {
+      "id": "git-commit-5efdf3454b00fc2c4c6f3baaa4c7471578aa3d5e",
+      "at": "2026-04-02T23:22:06Z",
+      "actor_id": "ekbfjefbfb",
+      "actor_name": "ekbfjefbfb",
+      "kind": "repo_commit",
+      "message": "5efdf345: chore: actualizar requirements.txt con dependencias certificadas para AutoGen (Producción Render)",
+      "url": "https://github.com/ekbfjefbfb/ESTUDENTE/commit/5efdf3454b00fc2c4c6f3baaa4c7471578aa3d5e"
     }
   ]
 }

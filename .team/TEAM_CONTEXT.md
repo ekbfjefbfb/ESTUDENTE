@@ -54,23 +54,31 @@
 
 ## Últimos eventos
 
-- `2026-11-23T15:44:35+00:00` · **RAMA** · @Alberto — rama main (d994833f)
-- `2026-11-23T15:44:35+00:00` · **RAMA** · @Alberto — rama origin/main (d994833f)
-- `2026-11-23T15:44:35+00:00` · **GIT** · @Alberto — d994833f: feat: base del proyecto local
-- `2026-11-23T15:44:35.240824889+00:00` · **EQUIPO** · @Alberto — Alberto se unió al espacio de equipo
-- `2026-11-23T15:44:35.269231991+00:00` · **TAREA CREADA** · @Alberto · JET-VNRKNH — creó «Pulir la bandeja de tareas» para @Alberto
-- `2026-11-23T15:44:35.535758051+00:00` · **TAREA TOMADA** · @Alberto · JET-VNRKNH — tomó «Pulir la bandeja de tareas» y comenzó a trabajar
-- `2026-11-23T15:44:35.676501060+00:00` · **AVANCE** · @Alberto · JET-VNRKNH — avanzó «Pulir la bandeja de tareas»: Scroll y estados revisados; falta pulir el espaciado.
-- `2026-11-23T15:44:35.813754412+00:00` · **TAREA CREADA** · @Alberto · JET-52KWHJ — creó «Validar la terminal con OpenCode» para @Alberto
-- `2026-11-23T15:44:35.949960719+00:00` · **TAREA CREADA** · @Alberto · JET-NURE3K — creó «Preparar la conexión con GitHub» para @Alberto
-- `2026-11-23T15:44:36.088636953+00:00` · **TAREA CREADA** · @Alberto · JET-G6WKVN — creó «Preparar migración de datos» para @Carlos Ruiz
-- `2026-11-23T15:44:36.227558800+00:00` · **TAREA CREADA** · @Alberto · JET-EF3EEC — creó «Revisar accesibilidad del editor» para @Beto Lima
-- `2026-11-23T15:44:36.366147559+00:00` · **TAREA CREADA** · @Alberto · JET-QF5K38 — creó «Crear estructura del repositorio» para @Alberto
-- `2026-11-23T15:44:36.638182423+00:00` · **TAREA TOMADA** · @Alberto · JET-QF5K38 — tomó «Crear estructura del repositorio» y comenzó a trabajar
-- `2026-11-23T15:44:36.776756086+00:00` · **AVANCE** · @Alberto · JET-QF5K38 — avanzó «Crear estructura del repositorio»: Workspace y CI listos.
-- `2026-11-23T15:44:36.917423086+00:00` · **COMPLETADA** · @Alberto · JET-QF5K38 — completó «Crear estructura del repositorio», rama chore/bootstrap, commit d994833, PR
-- `2026-11-23T15:47:16.564578778+00:00` · **COMPLETADA** · @Alberto · JET-VNRKNH — completó «Pulir la bandeja de tareas», rama feat/bandeja, commit d994833f
-- `2026-11-23T16:51:57.308383186+00:00` · **TAREA TOMADA** · @Alberto · JET-52KWHJ — tomó «Validar la terminal con OpenCode» y comenzó a trabajar
+- `2026-04-02T23:22:06+00:00` · **GIT** · @ekbfjefbfb — 5efdf345: chore: actualizar requirements.txt con dependencias certificadas para AutoGen (Producción Render)
+- `2026-04-02T23:26:43+00:00` · **GIT** · @ekbfjefbfb — 0f825b3e: feat: Orquestación Autónoma v7.0 y Aislamiento Multi-Usuario Nivel Dios
+- `2026-04-02T23:29:41+00:00` · **GIT** · @ekbfjefbfb — 7a39569c: feat: Omnipresencia Agéntica v8.0 - Integración en Documentos y Búsqueda Profunda
+- `2026-04-02T23:32:35+00:00` · **GIT** · @ekbfjefbfb — 1715430c: feat: Omnipresencia Agéntica Total - Infiltración en Voz, Sesiones y Memoria Semántica
+- `2026-04-02T23:39:57+00:00` · **GIT** · @ekbfjefbfb — cf2c950c: fix: SmartCache resilience and final agentic orchestration tuning
+- `2026-04-02T23:54:07+00:00` · **GIT** · @ekbfjefbfb — e9f0fe91: Fix NameError: define messages variable before use and fix streaming logic
+- `2026-04-03T00:23:05+00:00` · **GIT** · @ekbfjefbfb — 97c8036b: fix: rollback sessions on error + agent await + timeout
+- `2026-04-03T00:43:12+00:00` · **GIT** · @ekbfjefbfb — d7e23580: fix: core authentication syntax and user context resilience v9.5.1
+- `2026-04-03T00:54:52+00:00` · **GIT** · @ekbfjefbfb — b9d514c5: fix: agentic resilience with heartbeat keep-alive and synchronize timers v9.8.5
+- `2026-04-03T01:18:28+00:00` · **GIT** · @ekbfjefbfb — 6a577645: feat: Contextual Memory and Multipart Resilience v11.0. Fix 422 errors and robust conversation threads.
+- `2026-04-03T01:27:17+00:00` · **GIT** · @ekbfjefbfb — e3ecc5d3: feat: Autonomous Research Agents v12.0. Integrated search_web tool and resilient heartbeat streaming.
+- `2026-04-03T01:31:49+00:00` · **GIT** · @ekbfjefbfb — d15ea71b: feat: Balanced God-Level Optimization. Locked T=0.0 with 6 reasoning turns for perfect speed/intelligence balance.
+- `2026-04-03T14:46:08+00:00` · **GIT** · @ekbfjefbfb — 4d1c3736: feat: Autonomous Pedagogical Tutor v15.0. Integrated self-correction, academic feedback, and deep student memory.
+- `2026-04-03T14:51:01+00:00` · **GIT** · @ekbfjefbfb — 71afde5a: feat: Incredible Helper Persona v16.0. Integrated empathy labeling, analogies, and actionable academic value.
+- `2026-04-03T14:57:26+00:00` · **GIT** · @ekbfjefbfb — 8e0810b2: feat: Elite Academic Tutor v17.2. Global synchronization of empathy, LaTeX formulas, orjson speed boost, and token batching.
+- `2026-04-03T15:08:02+00:00` · **GIT** · @ekbfjefbfb — 3f1676b7: feat: Project Iris v20.0. Unified AI identity under the name 'Iris' across all core modules and streaming states.
+- `2026-04-03T15:14:05+00:00` · **GIT** · @ekbfjefbfb — b45f2cd1: feat: Subtle Iris Identity v21.0. Reverted to generic 'Tutor' labels in stream and adjusted prompts for natural name disclosure.
+- `2026-04-03T15:27:51+00:00` · **GIT** · @ekbfjefbfb — 5922e1d7: fix: Resolve NameError length_rule in chat_ai.py and restore LLM streaming stability.
+- `2026-04-03T15:31:05+00:00` · **GIT** · @ekbfjefbfb — 92054cc0: feat: Hybrid Resilience Armor v23.0. Pedagogical error messages with hidden technical debug info for development. Unified Iris identity during fallbacks.
+- `2026-04-03T15:43:48+00:00` · **GIT** · @ekbfjefbfb — b337b8ef: fix: Restored conversation memory in streaming and disabled destructive topic-cache clearing. Iris is no longer repetitive and intro rules now respect history.
+- `2026-04-03T15:45:40+00:00` · **GIT** · @ekbfjefbfb — 209258da: fix: Ultimate Stability Armor. Deduplication, smart fallback, and context hygiene to prevent AI loops and repetitions.
+- `2026-04-03T15:47:16+00:00` · **GIT** · @ekbfjefbfb — c97c97a9: fix: Final Precision Stability Armor. Enabled Continuity Mode and Deduplication across all chat paths. Verified history and fallback awareness.
+- `2026-04-03T18:32:55+00:00` · **GIT** · @ekbfjefbfb — ebc1962a: FIX ROOT: import time and thread-safe loop capture for Iris v30.0
+- `2026-04-03T18:56:49+00:00` · **GIT** · @ekbfjefbfb — 69eeedaf: FIX: NoneType role in agents + Full support for JSON/Base64 media v31.3
+- `2026-04-03T18:58:24+00:00` · **GIT** · @ekbfjefbfb — 8a2eb75f: OMNI-CAPABLE FIX: Full document/image support for WS & HTTP + Agent Stability v31.4
 
 ## Equipo
 
