@@ -1,0 +1,329 @@
+{
+  "schema_version": 1,
+  "project": "Equipo",
+  "created_at": "2026-11-23T15:44:35.232090623Z",
+  "updated_at": "2026-11-23T17:39:22.775546725Z",
+  "developers": {
+    "alberto": {
+      "id": "alberto",
+      "name": "Alberto",
+      "email": "alberto@local",
+      "aliases": [
+        "alberto"
+      ],
+      "role": "lead",
+      "joined_at": "2026-11-23T15:44:35.240824889Z",
+      "last_seen": "2026-11-23T17:39:22.775545718Z"
+    },
+    "beto-lima": {
+      "id": "beto-lima",
+      "name": "Beto Lima",
+      "aliases": [],
+      "role": "developer",
+      "joined_at": "2026-11-23T15:44:36.227549452Z"
+    },
+    "carlos-ruiz": {
+      "id": "carlos-ruiz",
+      "name": "Carlos Ruiz",
+      "aliases": [],
+      "role": "developer",
+      "joined_at": "2026-11-23T15:44:36.088630402Z"
+    }
+  },
+  "tasks": {
+    "JET-52KWHJ": {
+      "id": "JET-52KWHJ",
+      "title": "Validar la terminal con OpenCode",
+      "context": "Abrir OpenCode desde la barra de la terminal y comprobar que el PTY responde.",
+      "status": "in_progress",
+      "priority": "high",
+      "assignee_id": "alberto",
+      "assignee_name": "Alberto",
+      "created_by_id": "alberto",
+      "created_by_name": "Alberto",
+      "branch": "feat/terminal",
+      "files": [
+        "src/terminal.rs"
+      ],
+      "created_at": "2026-11-23T15:44:35.813754412Z",
+      "updated_at": "2026-11-23T16:51:57.308383186Z",
+      "started_at": "2026-11-23T16:51:57.308383186Z",
+      "notes": []
+    },
+    "JET-EF3EEC": {
+      "id": "JET-EF3EEC",
+      "title": "Revisar accesibilidad del editor",
+      "context": "Auditar navegación por teclado y contraste del editor.",
+      "status": "open",
+      "priority": "normal",
+      "assignee_id": "beto-lima",
+      "assignee_name": "Beto Lima",
+      "created_by_id": "alberto",
+      "created_by_name": "Alberto",
+      "branch": "audit/a11y",
+      "files": [
+        "src/editor.rs"
+      ],
+      "created_at": "2026-11-23T15:44:36.227558800Z",
+      "updated_at": "2026-11-23T15:44:36.227558800Z",
+      "notes": []
+    },
+    "JET-G6WKVN": {
+      "id": "JET-G6WKVN",
+      "title": "Preparar migración de datos",
+      "context": "Script reversible y prueba en staging antes del release.",
+      "status": "open",
+      "priority": "high",
+      "assignee_id": "carlos-ruiz",
+      "assignee_name": "Carlos Ruiz",
+      "created_by_id": "alberto",
+      "created_by_name": "Alberto",
+      "branch": "chore/datos",
+      "files": [
+        "migrations/0093.sql"
+      ],
+      "created_at": "2026-11-23T15:44:36.088636953Z",
+      "updated_at": "2026-11-23T15:44:36.088636953Z",
+      "notes": []
+    },
+    "JET-NURE3K": {
+      "id": "JET-NURE3K",
+      "title": "Preparar la conexión con GitHub",
+      "context": "Configurar origin y validar la sincronización de la rama team-sync.",
+      "status": "open",
+      "priority": "normal",
+      "assignee_id": "alberto",
+      "assignee_name": "Alberto",
+      "created_by_id": "alberto",
+      "created_by_name": "Alberto",
+      "branch": "feat/github",
+      "files": [
+        "src/sync.rs"
+      ],
+      "created_at": "2026-11-23T15:44:35.949960719Z",
+      "updated_at": "2026-11-23T15:44:35.949960719Z",
+      "notes": []
+    },
+    "JET-QF5K38": {
+      "id": "JET-QF5K38",
+      "title": "Crear estructura del repositorio",
+      "context": "Inicializar workspace, formato y CI mínima.",
+      "status": "done",
+      "priority": "normal",
+      "assignee_id": "alberto",
+      "assignee_name": "Alberto",
+      "created_by_id": "alberto",
+      "created_by_name": "Alberto",
+      "branch": "chore/bootstrap",
+      "files": [],
+      "created_at": "2026-11-23T15:44:36.366147559Z",
+      "updated_at": "2026-11-23T15:44:36.917423086Z",
+      "started_at": "2026-11-23T15:44:36.638182423Z",
+      "completed_at": "2026-11-23T15:44:36.917423086Z",
+      "completed_by_id": "alberto",
+      "completed_by_name": "Alberto",
+      "completed_branch": "chore/bootstrap",
+      "commit": "d994833",
+      "pr": "https://github.com/acme/equipo/pull/1",
+      "notes": [
+        {
+          "id": "586900d6-1130-45de-a2b5-b37fe1d5f769",
+          "author_id": "alberto",
+          "author_name": "Alberto",
+          "body": "Workspace y CI listos.",
+          "created_at": "2026-11-23T15:44:36.776756086Z"
+        },
+        {
+          "id": "750697f0-5ff5-4f11-8b50-e1789df4afe4",
+          "author_id": "alberto",
+          "author_name": "Alberto",
+          "body": "Estructura lista y verificada.",
+          "created_at": "2026-11-23T15:44:36.917423086Z"
+        }
+      ]
+    },
+    "JET-VNRKNH": {
+      "id": "JET-VNRKNH",
+      "title": "Pulir la bandeja de tareas",
+      "context": "Revisar jerarquía, scroll independiente y estados vacíos de la bandeja.",
+      "status": "done",
+      "priority": "urgent",
+      "assignee_id": "alberto",
+      "assignee_name": "Alberto",
+      "created_by_id": "alberto",
+      "created_by_name": "Alberto",
+      "branch": "feat/bandeja",
+      "files": [
+        "src/board.rs"
+      ],
+      "created_at": "2026-11-23T15:44:35.269231991Z",
+      "updated_at": "2026-11-23T15:47:16.564578778Z",
+      "started_at": "2026-11-23T15:44:35.535758051Z",
+      "completed_at": "2026-11-23T15:47:16.564578778Z",
+      "completed_by_id": "alberto",
+      "completed_by_name": "Alberto",
+      "completed_branch": "feat/bandeja",
+      "commit": "d994833f",
+      "notes": [
+        {
+          "id": "9ca42b18-8c38-482a-ad22-ab85afd7bce5",
+          "author_id": "alberto",
+          "author_name": "Alberto",
+          "body": "Scroll y estados revisados; falta pulir el espaciado.",
+          "created_at": "2026-11-23T15:44:35.676501060Z"
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "id": "e62edae5-1b7a-4562-8548-0b9f548e2d5d",
+      "at": "2026-11-23T16:51:57.308383186Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_taken",
+      "task_id": "JET-52KWHJ",
+      "message": "tomó «Validar la terminal con OpenCode» y comenzó a trabajar"
+    },
+    {
+      "id": "04608c97-815b-4a28-a14c-299fd9584b6e",
+      "at": "2026-11-23T15:47:16.564578778Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_completed",
+      "task_id": "JET-VNRKNH",
+      "message": "completó «Pulir la bandeja de tareas», rama feat/bandeja, commit d994833f"
+    },
+    {
+      "id": "afb35887-7d87-4736-a2d2-d4b31698c507",
+      "at": "2026-11-23T15:44:36.917423086Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_completed",
+      "task_id": "JET-QF5K38",
+      "message": "completó «Crear estructura del repositorio», rama chore/bootstrap, commit d994833, PR"
+    },
+    {
+      "id": "cab84680-2a56-47af-bd0f-a60b9a4ff328",
+      "at": "2026-11-23T15:44:36.776756086Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "note_added",
+      "task_id": "JET-QF5K38",
+      "message": "avanzó «Crear estructura del repositorio»: Workspace y CI listos."
+    },
+    {
+      "id": "567c3d12-2e01-40e2-ba20-328d6229422f",
+      "at": "2026-11-23T15:44:36.638182423Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_taken",
+      "task_id": "JET-QF5K38",
+      "message": "tomó «Crear estructura del repositorio» y comenzó a trabajar"
+    },
+    {
+      "id": "ca3032d6-a61a-4395-b14e-f0e761410a28",
+      "at": "2026-11-23T15:44:36.366147559Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_created",
+      "task_id": "JET-QF5K38",
+      "message": "creó «Crear estructura del repositorio» para @Alberto"
+    },
+    {
+      "id": "f84837a2-2e57-4b2b-a336-fb1a106beaa1",
+      "at": "2026-11-23T15:44:36.227558800Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_created",
+      "task_id": "JET-EF3EEC",
+      "message": "creó «Revisar accesibilidad del editor» para @Beto Lima"
+    },
+    {
+      "id": "c49798dc-8d57-4dc7-80b7-f65fe34c6493",
+      "at": "2026-11-23T15:44:36.088636953Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_created",
+      "task_id": "JET-G6WKVN",
+      "message": "creó «Preparar migración de datos» para @Carlos Ruiz"
+    },
+    {
+      "id": "6b619f77-9406-4033-91e9-b8989e9b99f5",
+      "at": "2026-11-23T15:44:35.949960719Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_created",
+      "task_id": "JET-NURE3K",
+      "message": "creó «Preparar la conexión con GitHub» para @Alberto"
+    },
+    {
+      "id": "b218ed29-5be3-4972-b937-3f59048541ed",
+      "at": "2026-11-23T15:44:35.813754412Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_created",
+      "task_id": "JET-52KWHJ",
+      "message": "creó «Validar la terminal con OpenCode» para @Alberto"
+    },
+    {
+      "id": "1f9d5d8a-9618-4963-80fd-fe51df701bf0",
+      "at": "2026-11-23T15:44:35.676501060Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "note_added",
+      "task_id": "JET-VNRKNH",
+      "message": "avanzó «Pulir la bandeja de tareas»: Scroll y estados revisados; falta pulir el espaciado."
+    },
+    {
+      "id": "99311c95-4cf1-48aa-9bc2-96825344e1c4",
+      "at": "2026-11-23T15:44:35.535758051Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_taken",
+      "task_id": "JET-VNRKNH",
+      "message": "tomó «Pulir la bandeja de tareas» y comenzó a trabajar"
+    },
+    {
+      "id": "d580a81a-2bad-47f0-bece-62539f37aa70",
+      "at": "2026-11-23T15:44:35.269231991Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_created",
+      "task_id": "JET-VNRKNH",
+      "message": "creó «Pulir la bandeja de tareas» para @Alberto"
+    },
+    {
+      "id": "a975fa27-f58b-4a1f-8bab-64b7381a2d2f",
+      "at": "2026-11-23T15:44:35.240824889Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "developer_joined",
+      "message": "Alberto se unió al espacio de equipo"
+    },
+    {
+      "id": "git-commit-d994833f660a4669d58b1d7991ef934a913f4ceb",
+      "at": "2026-11-23T15:44:35Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "repo_commit",
+      "message": "d994833f: feat: base del proyecto local"
+    },
+    {
+      "id": "git-branch-d994833f660a4669-origin-main",
+      "at": "2026-11-23T15:44:35Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "repo_branch",
+      "message": "rama origin/main (d994833f)"
+    },
+    {
+      "id": "git-branch-d994833f660a4669-main",
+      "at": "2026-11-23T15:44:35Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "repo_branch",
+      "message": "rama main (d994833f)"
+    }
+  ]
+}
