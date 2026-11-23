@@ -2,7 +2,7 @@
   "schema_version": 1,
   "project": "Equipo",
   "created_at": "2026-11-23T15:44:35.232090623Z",
-  "updated_at": "2026-11-23T17:39:22.775546725Z",
+  "updated_at": "2026-11-23T17:40:18.372362754Z",
   "developers": {
     "alberto": {
       "id": "alberto",
@@ -90,7 +90,7 @@
       "id": "JET-NURE3K",
       "title": "Preparar la conexión con GitHub",
       "context": "Configurar origin y validar la sincronización de la rama team-sync.",
-      "status": "open",
+      "status": "in_progress",
       "priority": "normal",
       "assignee_id": "alberto",
       "assignee_name": "Alberto",
@@ -101,7 +101,8 @@
         "src/sync.rs"
       ],
       "created_at": "2026-11-23T15:44:35.949960719Z",
-      "updated_at": "2026-11-23T15:44:35.949960719Z",
+      "updated_at": "2026-11-23T17:40:18.372354340Z",
+      "started_at": "2026-11-23T17:40:18.372354340Z",
       "notes": []
     },
     "JET-QF5K38": {
@@ -176,6 +177,15 @@
     }
   },
   "events": [
+    {
+      "id": "0037668d-d4fe-4bbd-a0ed-12580c90697f",
+      "at": "2026-11-23T17:40:18.372354340Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_taken",
+      "task_id": "JET-NURE3K",
+      "message": "tomó «Preparar la conexión con GitHub» y comenzó a trabajar"
+    },
     {
       "id": "e62edae5-1b7a-4562-8548-0b9f548e2d5d",
       "at": "2026-11-23T16:51:57.308383186Z",
