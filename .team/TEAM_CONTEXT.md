@@ -1,9 +1,9 @@
 # JET · Contexto compartido del equipo
 
 > Archivo generado automáticamente por JET. No lo edites a mano.
-> Proyecto: **Equipo** · Actualizado: `2026-11-23T17:40:46.264558068+00:00`
+> Proyecto: **Equipo** · Actualizado: `2026-11-23T17:40:47.970937975+00:00`
 
-**Resumen:** 2 abiertas · 1 en curso · 1 bloqueadas · 2 completadas · 3 personas
+**Resumen:** 2 abiertas · 2 en curso · 0 bloqueadas · 2 completadas · 3 personas
 
 ## Reglas obligatorias para agentes de IA
 
@@ -23,7 +23,7 @@
   - Contexto: Abrir OpenCode desde la barra de la terminal y comprobar que el PTY responde.
   - Prioridad: Alta
   - Archivos sensibles: src/terminal.rs
-- **JET-NURE3K** · Preparar la conexión con GitHub — `Bloqueada` · rama `feat/github`
+- **JET-NURE3K** · Preparar la conexión con GitHub — `En curso` · rama `feat/github`
   - Contexto: Configurar origin y validar la sincronización de la rama team-sync.
   - Archivos sensibles: src/sync.rs
 
@@ -42,7 +42,7 @@
 
 ## Bloqueos de archivos y ramas
 
-- **BLOQUEO** `src/sync.rs` → JET-NURE3K (@Alberto, Bloqueada)
+- **BLOQUEO** `src/sync.rs` → JET-NURE3K (@Alberto, En curso)
 - **BLOQUEO** `src/terminal.rs` → JET-52KWHJ (@Alberto, En curso)
 - **RAMA** `feat/github` → JET-NURE3K (@Alberto)
 - **RAMA** `feat/terminal` → JET-52KWHJ (@Alberto)

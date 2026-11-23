@@ -2,7 +2,7 @@
   "schema_version": 1,
   "project": "Equipo",
   "created_at": "2026-11-23T15:44:35.232090623Z",
-  "updated_at": "2026-11-23T17:40:46.264558068Z",
+  "updated_at": "2026-11-23T17:40:47.970937975Z",
   "developers": {
     "alberto": {
       "id": "alberto",
@@ -90,7 +90,7 @@
       "id": "JET-NURE3K",
       "title": "Preparar la conexión con GitHub",
       "context": "Configurar origin y validar la sincronización de la rama team-sync.",
-      "status": "blocked",
+      "status": "in_progress",
       "priority": "normal",
       "assignee_id": "alberto",
       "assignee_name": "Alberto",
@@ -101,7 +101,7 @@
         "src/sync.rs"
       ],
       "created_at": "2026-11-23T15:44:35.949960719Z",
-      "updated_at": "2026-11-23T17:40:46.264548787Z",
+      "updated_at": "2026-11-23T17:40:47.970929088Z",
       "started_at": "2026-11-23T17:40:18.372354340Z",
       "notes": []
     },
@@ -177,6 +177,15 @@
     }
   },
   "events": [
+    {
+      "id": "03fe3f1d-8bdf-4f38-b2c1-d64e8cd18d82",
+      "at": "2026-11-23T17:40:47.970929088Z",
+      "actor_id": "alberto",
+      "actor_name": "Alberto",
+      "kind": "task_unblocked",
+      "task_id": "JET-NURE3K",
+      "message": "desbloqueó «Preparar la conexión con GitHub»"
+    },
     {
       "id": "5995e797-e9ff-484f-8c9b-203038296b72",
       "at": "2026-11-23T17:40:46.264548787Z",
